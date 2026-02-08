@@ -1,0 +1,21 @@
+# Environment variables (secrets)
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Windows
+nul
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
