@@ -214,7 +214,7 @@ class OpenAIClient:
         timeout: int = 180,
         max_retries: int = 5,
     ):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+        self.api_key = (api_key or os.getenv("OPENAI_API_KEY", "")).strip()
         self.base_url = "https://api.openai.com/v1"
         self.timeout = timeout
         self.max_retries = max_retries
@@ -535,7 +535,7 @@ class OpenRouterClient:
         timeout: int = 180,
         max_retries: int = 5,
     ):
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY", "")
+        self.api_key = (api_key or os.getenv("OPENROUTER_API_KEY", "")).strip()
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
@@ -1033,8 +1033,8 @@ def get_llm_client() -> UnifiedLLMClient:
     global _global_client
     if _global_client is None:
         _global_client = UnifiedLLMClient(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openai_api_key=(os.getenv("OPENAI_API_KEY") or "").strip(),
+            openrouter_api_key=(os.getenv("OPENROUTER_API_KEY") or "").strip(),
             enable_fallback=True,
         )
     return _global_client
