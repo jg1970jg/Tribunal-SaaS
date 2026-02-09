@@ -10,13 +10,17 @@ Servidor principal com:
 ============================================================
 """
 
+import io
 import os
 import logging
 from contextlib import asynccontextmanager
+from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from auth_service import get_current_user, get_supabase, get_supabase_admin
 from src.engine import (
@@ -175,3 +179,240 @@ async def analyze(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erro interno do servidor.",
         )
+
+
+# ============================================================
+# EXPORTAÇÃO DE RELATÓRIOS (PDF / DOCX)
+# ============================================================
+
+class ExportRequest(BaseModel):
+    analysis_result: Dict[str, Any]
+
+
+def _build_pdf(data: Dict[str, Any]) -> bytes:
+    """Gera PDF profissional a partir do resultado da análise."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib.colors import HexColor
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
+    )
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        topMargin=2 * cm, bottomMargin=2 * cm,
+        leftMargin=2 * cm, rightMargin=2 * cm,
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        "TribunalTitle", parent=styles["Title"],
+        fontSize=20, textColor=HexColor("#1a1a2e"), spaceAfter=20,
+    ))
+    styles.add(ParagraphStyle(
+        "SectionHead", parent=styles["Heading1"],
+        fontSize=14, textColor=HexColor("#16213e"), spaceBefore=16, spaceAfter=8,
+    ))
+    styles.add(ParagraphStyle(
+        "BodyText2", parent=styles["BodyText"],
+        fontSize=10, leading=14, spaceAfter=6,
+    ))
+
+    elements = []
+
+    # Título
+    elements.append(Paragraph("Relatório de Análise Jurídica — Tribunal AI", styles["TribunalTitle"]))
+    elements.append(Spacer(1, 10))
+
+    # Metadados
+    meta = [
+        ["Run ID", data.get("run_id", "N/A")],
+        ["Área de Direito", data.get("area_direito", "N/A")],
+        ["Início", data.get("timestamp_inicio", "N/A")],
+        ["Fim", data.get("timestamp_fim", "N/A")],
+        ["Total Tokens", str(data.get("total_tokens", 0))],
+    ]
+    t = Table(meta, colWidths=[5 * cm, 12 * cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), HexColor("#e8e8e8")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.5, HexColor("#cccccc")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(t)
+    elements.append(Spacer(1, 16))
+
+    # Veredicto Final
+    simbolo = data.get("simbolo_final", "")
+    veredicto = data.get("veredicto_final", "Sem veredicto")
+    elements.append(Paragraph("Veredicto Final", styles["SectionHead"]))
+    elements.append(Paragraph(f"{simbolo} {veredicto}", styles["BodyText2"]))
+    elements.append(Spacer(1, 10))
+
+    # Fase 1 — Extração
+    elements.append(Paragraph("Fase 1 — Extração", styles["SectionHead"]))
+    f1 = data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", "")
+    for line in (f1 or "Sem dados de extração.").split("\n"):
+        if line.strip():
+            safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            elements.append(Paragraph(safe, styles["BodyText2"]))
+    elements.append(Spacer(1, 10))
+
+    # Fase 2 — Auditoria
+    elements.append(Paragraph("Fase 2 — Auditoria", styles["SectionHead"]))
+    f2 = data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", "")
+    for line in (f2 or "Sem dados de auditoria.").split("\n"):
+        if line.strip():
+            safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            elements.append(Paragraph(safe, styles["BodyText2"]))
+    elements.append(Spacer(1, 10))
+
+    # Fase 3 — Julgamento
+    elements.append(Paragraph("Fase 3 — Julgamento", styles["SectionHead"]))
+    for p in data.get("fase3_pareceres", []):
+        conteudo = p.get("conteudo", "") if isinstance(p, dict) else ""
+        modelo = p.get("modelo", "") if isinstance(p, dict) else ""
+        if modelo:
+            elements.append(Paragraph(f"<b>{modelo}</b>", styles["BodyText2"]))
+        for line in conteudo.split("\n"):
+            if line.strip():
+                safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                elements.append(Paragraph(safe, styles["BodyText2"]))
+        elements.append(Spacer(1, 6))
+
+    # Fase 4 — Presidente
+    elements.append(Paragraph("Fase 4 — Decisão do Presidente", styles["SectionHead"]))
+    f4 = data.get("fase3_presidente", "")
+    for line in (f4 or "Sem decisão do presidente.").split("\n"):
+        if line.strip():
+            safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            elements.append(Paragraph(safe, styles["BodyText2"]))
+
+    # Rodapé
+    elements.append(Spacer(1, 30))
+    elements.append(Paragraph(
+        "Gerado automaticamente por Tribunal AI — Este documento não substitui aconselhamento jurídico.",
+        ParagraphStyle("Footer", parent=styles["Normal"], fontSize=7, textColor=HexColor("#999999")),
+    ))
+
+    doc.build(elements)
+    return buf.getvalue()
+
+
+def _build_docx(data: Dict[str, Any]) -> bytes:
+    """Gera DOCX profissional a partir do resultado da análise."""
+    from docx import Document
+    from docx.shared import Pt, Cm, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+
+    style = doc.styles["Normal"]
+    style.font.size = Pt(10)
+    style.font.name = "Calibri"
+
+    # Título
+    title = doc.add_heading("Relatório de Análise Jurídica — Tribunal AI", level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Metadados (tabela)
+    table = doc.add_table(rows=5, cols=2)
+    table.style = "Light Grid Accent 1"
+    meta_rows = [
+        ("Run ID", data.get("run_id", "N/A")),
+        ("Área de Direito", data.get("area_direito", "N/A")),
+        ("Início", data.get("timestamp_inicio", "N/A")),
+        ("Fim", data.get("timestamp_fim", "N/A")),
+        ("Total Tokens", str(data.get("total_tokens", 0))),
+    ]
+    for i, (label, value) in enumerate(meta_rows):
+        table.rows[i].cells[0].text = label
+        table.rows[i].cells[1].text = str(value) if value else "N/A"
+        for cell in table.rows[i].cells:
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.size = Pt(9)
+
+    doc.add_paragraph("")
+
+    # Veredicto Final
+    doc.add_heading("Veredicto Final", level=1)
+    simbolo = data.get("simbolo_final", "")
+    veredicto = data.get("veredicto_final", "Sem veredicto")
+    p = doc.add_paragraph(f"{simbolo} {veredicto}")
+    p.runs[0].bold = True
+
+    # Fase 1
+    doc.add_heading("Fase 1 — Extração", level=1)
+    f1 = data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", "")
+    doc.add_paragraph(f1 or "Sem dados de extração.")
+
+    # Fase 2
+    doc.add_heading("Fase 2 — Auditoria", level=1)
+    f2 = data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", "")
+    doc.add_paragraph(f2 or "Sem dados de auditoria.")
+
+    # Fase 3
+    doc.add_heading("Fase 3 — Julgamento", level=1)
+    for p_data in data.get("fase3_pareceres", []):
+        if isinstance(p_data, dict):
+            modelo = p_data.get("modelo", "")
+            conteudo = p_data.get("conteudo", "")
+            if modelo:
+                doc.add_heading(modelo, level=2)
+            doc.add_paragraph(conteudo)
+
+    # Fase 4
+    doc.add_heading("Fase 4 — Decisão do Presidente", level=1)
+    f4 = data.get("fase3_presidente", "")
+    doc.add_paragraph(f4 or "Sem decisão do presidente.")
+
+    # Rodapé
+    doc.add_paragraph("")
+    footer = doc.add_paragraph(
+        "Gerado automaticamente por Tribunal AI — "
+        "Este documento não substitui aconselhamento jurídico."
+    )
+    footer.runs[0].font.size = Pt(7)
+    footer.runs[0].font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+@app.post("/export/pdf")
+async def export_pdf(req: ExportRequest):
+    """Exporta o resultado da análise como PDF."""
+    try:
+        pdf_bytes = _build_pdf(req.analysis_result)
+        run_id = req.analysis_result.get("run_id", "relatorio")
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=relatorio_{run_id}.pdf"},
+        )
+    except Exception as e:
+        logger.exception("Erro ao gerar PDF")
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF: {e}")
+
+
+@app.post("/export/docx")
+async def export_docx(req: ExportRequest):
+    """Exporta o resultado da análise como DOCX."""
+    try:
+        docx_bytes = _build_docx(req.analysis_result)
+        run_id = req.analysis_result.get("run_id", "relatorio")
+        return StreamingResponse(
+            io.BytesIO(docx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename=relatorio_{run_id}.docx"},
+        )
+    except Exception as e:
+        logger.exception("Erro ao gerar DOCX")
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar DOCX: {e}")
