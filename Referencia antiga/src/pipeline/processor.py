@@ -2428,7 +2428,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         pareceres_concat = "\n\n".join([
             f"## JUIZ {i+1} ({o.model_name})\n"
             f"Recomendação: {o.recommendation.value}\n"
-            f"Confiança média: {sum(p.confidence for p in o.decision_points) / len(o.decision_points) if o.decision_points else 0:.0%}\n"
+            f"Confiança média: {sum(float(p.confidence) for p in o.decision_points) / len(o.decision_points) if o.decision_points else 0:.0%}\n"
             f"{o.to_markdown()}\n---"
             for i, o in enumerate(judge_opinions)
         ])
@@ -2761,6 +2761,10 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             perguntas_utilizador=perguntas,
             timestamp_inicio=timestamp_inicio,
         )
+
+        # Inicializar variáveis usadas após o try/except principal
+        final_decision = None
+        judge_opinions = None
 
         try:
             # Fase 1: Extração (SEM perguntas) + Agregador LOSSLESS

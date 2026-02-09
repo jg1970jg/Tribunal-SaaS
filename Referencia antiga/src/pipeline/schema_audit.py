@@ -108,7 +108,7 @@ class Citation:
             extractor_id=data.get("extractor_id"),
             method=data.get("method", "text"),
             excerpt=data.get("excerpt", ""),
-            confidence=data.get("confidence", 1.0),
+            confidence=float(data.get("confidence", 1.0)),
         )
 
 
@@ -373,7 +373,7 @@ class JudgePoint:
             legal_basis=data.get("legal_basis", []),
             risks=data.get("risks", []),
             alternatives=data.get("alternatives", []),
-            confidence=data.get("confidence", 0.8),
+            confidence=float(data.get("confidence", 0.8)),
             finding_refs=data.get("finding_refs", []),
             is_determinant=data.get("is_determinant", False),
         )
@@ -623,7 +623,7 @@ class FinalDecision:
             model_name=data.get("model_name", ""),
             final_answer=data.get("final_answer", ""),
             decision_type=DecisionType(data.get("decision_type", "inconclusivo")),
-            confidence=data.get("confidence", 0.8),
+            confidence=float(data.get("confidence", 0.8)),
             decision_points_final=[JudgePoint.from_dict(p) for p in data.get("decision_points_final", [])],
             proofs=[Citation.from_dict(p) for p in data.get("proofs", [])],
             unreadable_parts=data.get("unreadable_parts", []),
