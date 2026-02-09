@@ -504,7 +504,9 @@ PRIORIDADE: Validade legal > Inconsistências críticas > Completude > Sugestõe
 
 REGRA NÃO-NEGOCIÁVEL: Na dúvida, MANTÉM. Melhor redundância que perda de críticas."""
 
-    SYSTEM_CHEFE_JSON = """És o CHEFE da Fase 2. Recebes auditorias da mesma extração feitas por múltiplos modelos.
+    SYSTEM_CHEFE_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+
+És o CHEFE da Fase 2. Recebes auditorias da mesma extração feitas por múltiplos modelos.
 Deves consolidar todas as auditorias num ÚNICO relatório JSON estruturado.
 
 DADOS DE ENTRADA:
@@ -592,7 +594,9 @@ REGRAS CRÍTICAS:
     # PROMPTS JSON PARA FASES 2-4 (PROVENIÊNCIA ESTRUTURADA)
     # =========================================================================
 
-    SYSTEM_AUDITOR_JSON = """És um auditor jurídico especializado em Direito Português.
+    SYSTEM_AUDITOR_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+
+És um auditor jurídico especializado em Direito Português.
 A tua tarefa é auditar a extração de informação e produzir um relatório JSON estruturado.
 
 DADOS DE ENTRADA:
@@ -641,7 +645,9 @@ REGRAS CRÍTICAS:
 6. Se um finding se baseia em múltiplos items, lista TODOS os item_ids relevantes
 7. Sê crítico e rigoroso - verifica se os items extraídos são precisos e completos"""
 
-    SYSTEM_JUIZ_JSON = """És um juiz especializado em Direito Português.
+    SYSTEM_JUIZ_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+
+És um juiz especializado em Direito Português.
 Com base na análise e auditoria fornecidas, emite um parecer jurídico em formato JSON.
 
 DEVES devolver APENAS um JSON válido com a seguinte estrutura:
@@ -688,7 +694,9 @@ REGRAS:
 5. is_determinant: true se o ponto é CRUCIAL para a decisão (ex: prova de facto essencial)
    - IMPORTANTE: pontos determinantes SEM citations serão marcados como SEM_PROVA"""
 
-    SYSTEM_JUIZ_JSON_QA = """És um juiz especializado em Direito Português.
+    SYSTEM_JUIZ_JSON_QA = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+
+És um juiz especializado em Direito Português.
 Com base na análise e auditoria fornecidas, emite um parecer jurídico em formato JSON.
 
 DEVES devolver APENAS um JSON válido com a seguinte estrutura:
@@ -708,7 +716,9 @@ DEVES devolver APENAS um JSON válido com a seguinte estrutura:
 IMPORTANTE: O campo qa_responses DEVE conter respostas a todas as perguntas do utilizador.
 Cita sempre artigos específicos da legislação portuguesa."""
 
-    SYSTEM_PRESIDENTE_JSON = """És o Presidente do Tribunal, responsável pela verificação final.
+    SYSTEM_PRESIDENTE_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+
+És o Presidente do Tribunal, responsável pela verificação final.
 Analisa os pareceres dos juízes e emite o veredicto final em formato JSON.
 
 DEVES devolver APENAS um JSON válido com a seguinte estrutura:
@@ -755,7 +765,9 @@ REGRAS:
 3. Cada prova em proofs DEVE ter start_char/end_char
 4. Resolve conflitos entre juízes em conflicts_resolved"""
 
-    SYSTEM_PRESIDENTE_JSON_QA = """És o Presidente do Tribunal, responsável pela verificação final.
+    SYSTEM_PRESIDENTE_JSON_QA = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+
+És o Presidente do Tribunal, responsável pela verificação final.
 Analisa os pareceres e consolida as respostas Q&A em formato JSON.
 
 DEVES devolver APENAS um JSON válido com:
@@ -2236,7 +2248,7 @@ AUDITORIAS EM MARKDOWN (para contexto):
 Consolida estas {n_auditores} auditorias num ÚNICO relatório JSON LOSSLESS.
 Área do Direito: {area}
 
-Retorna APENAS JSON válido no formato especificado."""
+CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanation, or markdown before or after the JSON. Start your response with {{ and end with }}."""
 
         chefe_result = self._call_llm(
             model=self.chefe_model,
@@ -2321,7 +2333,9 @@ Retorna APENAS JSON válido no formato especificado."""
 
 {chefe_fase2}
 
-Emite parecer jurídico em JSON.{bloco_qa}"""
+Emite parecer jurídico em JSON.{bloco_qa}
+
+CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanation, or markdown before or after the JSON. Start your response with {{ and end with }}."""
 
         # Escolher prompt
         system_prompt = self.SYSTEM_JUIZ_JSON_QA if perguntas else self.SYSTEM_JUIZ_JSON
@@ -2442,7 +2456,9 @@ Emite parecer jurídico em JSON.{bloco_qa}"""
 
 {pareceres_concat}
 
-Emite VEREDICTO FINAL em JSON.{bloco_qa}"""
+Emite VEREDICTO FINAL em JSON.{bloco_qa}
+
+CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanation, or markdown before or after the JSON. Start your response with {{ and end with }}."""
 
         system_prompt = self.SYSTEM_PRESIDENTE_JSON_QA if perguntas else self.SYSTEM_PRESIDENTE_JSON
 
