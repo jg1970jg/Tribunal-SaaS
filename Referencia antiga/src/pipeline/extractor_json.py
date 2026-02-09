@@ -18,6 +18,61 @@ logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 
+def extract_json_from_text(text: str) -> dict | list | None:
+    """
+    Tenta extrair JSON válido de texto que pode conter markdown,
+    texto explicativo antes/depois, etc.
+    """
+    if not text or not text.strip():
+        return None
+
+    text = text.strip()
+
+    # 1. Tentar parse directo
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Extrair de bloco markdown ```json ... ```
+    md_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
+    if md_match:
+        try:
+            return json.loads(md_match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Encontrar primeiro { e último }
+    first_brace = text.find('{')
+    last_brace = text.rfind('}')
+    if first_brace != -1 and last_brace > first_brace:
+        try:
+            return json.loads(text[first_brace:last_brace + 1])
+        except json.JSONDecodeError:
+            pass
+
+    # 4. Encontrar primeiro [ e último ]
+    first_bracket = text.find('[')
+    last_bracket = text.rfind(']')
+    if first_bracket != -1 and last_bracket > first_bracket:
+        try:
+            return json.loads(text[first_bracket:last_bracket + 1])
+        except json.JSONDecodeError:
+            pass
+
+    # 5. Remover prefixo comum e tentar de novo
+    for prefix in ["Here is", "Here's", "Below is", "The following", "json\n", "JSON\n"]:
+        idx = text.lower().find(prefix.lower())
+        if idx != -1:
+            remaining = text[idx + len(prefix):].strip()
+            try:
+                return json.loads(remaining)
+            except json.JSONDecodeError:
+                pass
+
+    return None
+
+
 # ============================================================================
 # PROMPT PARA EXTRATORES (JSON ESTRUTURADO)
 # ============================================================================
@@ -120,20 +175,8 @@ def parse_extractor_output(
         "raw_output": output,
     }
 
-    # Tentar extrair JSON do output
-    json_data = None
-
-    # Tentar parse direto
-    try:
-        json_data = json.loads(output)
-    except json.JSONDecodeError:
-        # Tentar encontrar JSON no texto
-        json_match = re.search(r'\{[\s\S]*\}', output)
-        if json_match:
-            try:
-                json_data = json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
+    # Tentar extrair JSON do output (robusto: markdown, texto antes/depois, etc.)
+    json_data = extract_json_from_text(output)
 
     if not json_data:
         result["validation_errors"].append("Não foi possível extrair JSON válido do output")

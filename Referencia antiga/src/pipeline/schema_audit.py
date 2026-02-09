@@ -755,6 +755,8 @@ def parse_json_safe(
     """
     Tenta extrair JSON de output LLM de forma robusta.
 
+    Usa extract_json_from_text que lida com markdown, texto antes/depois, etc.
+
     Args:
         output: String de output do LLM
         context: Contexto para mensagens de erro
@@ -762,29 +764,13 @@ def parse_json_safe(
     Returns:
         (json_data ou None, lista de erros)
     """
+    from src.pipeline.extractor_json import extract_json_from_text
+
     errors = []
+    result = extract_json_from_text(output)
 
-    # 1. Tentar parse direto
-    try:
-        return json.loads(output), []
-    except json.JSONDecodeError as e:
-        errors.append(f"Parse direto falhou: {str(e)[:100]}")
-
-    # 2. Tentar encontrar JSON com regex
-    json_match = re.search(r'\{[\s\S]*\}', output)
-    if json_match:
-        try:
-            return json.loads(json_match.group()), errors
-        except json.JSONDecodeError as e:
-            errors.append(f"Parse regex falhou: {str(e)[:100]}")
-
-    # 3. Tentar remover markdown code blocks
-    cleaned = re.sub(r'```json\s*', '', output)
-    cleaned = re.sub(r'```\s*', '', cleaned)
-    try:
-        return json.loads(cleaned.strip()), errors
-    except json.JSONDecodeError as e:
-        errors.append(f"Parse após limpeza falhou: {str(e)[:100]}")
+    if result is not None:
+        return result, errors
 
     errors.append(f"Não foi possível extrair JSON válido ({context})")
     return None, errors

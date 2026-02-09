@@ -147,18 +147,9 @@ def parse_unified_output(
     unreadable = []
     errors = []
 
-    # Tentar extrair JSON
-    json_data = None
-    try:
-        json_data = json.loads(output)
-    except json.JSONDecodeError:
-        # Tentar encontrar JSON no texto
-        json_match = re.search(r'\{[\s\S]*\}', output)
-        if json_match:
-            try:
-                json_data = json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
+    # Tentar extrair JSON (robusto: markdown, texto antes/depois, etc.)
+    from src.pipeline.extractor_json import extract_json_from_text
+    json_data = extract_json_from_text(output)
 
     if not json_data:
         errors.append(f"Não foi possível extrair JSON do output do {extractor_id}")
