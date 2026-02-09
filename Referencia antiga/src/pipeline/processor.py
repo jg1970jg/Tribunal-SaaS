@@ -2830,6 +2830,30 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             result.fase2_chefe_consolidado = consolidado_f2
             result.fase2_chefe = consolidado_f2  # Backwards compat
 
+            # FALLBACK: Se Chefe produziu 0 findings, usar auditorias individuais
+            if chefe_report and hasattr(chefe_report, 'consolidated_findings'):
+                if not chefe_report.consolidated_findings or len(chefe_report.consolidated_findings) == 0:
+                    logger.warning(
+                        "Chefe Auditor com 0 findings consolidados - "
+                        "usando auditorias individuais (bruto) como input para Fase 3"
+                    )
+                    consolidado_f2 = bruto_f2
+                    if audit_reports:
+                        # Tentar reconstruir markdown dos auditores individuais
+                        partes = []
+                        for r in audit_reports:
+                            md = r.to_markdown() if hasattr(r, 'to_markdown') else str(r)
+                            partes.append(md)
+                        if partes:
+                            consolidado_f2 = (
+                                f"# AUDITORIAS INDIVIDUAIS (fallback - Chefe com 0 findings)\n\n"
+                                + "\n\n---\n\n".join(partes)
+                            )
+                            logger.info(
+                                f"Fallback: {len(audit_reports)} auditorias individuais "
+                                f"usadas como input para Fase 3"
+                            )
+
             # Fase 3: Julgamento (COM perguntas)
             judge_opinions = None
             if USE_UNIFIED_PROVENANCE:
