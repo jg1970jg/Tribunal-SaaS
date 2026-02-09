@@ -64,6 +64,9 @@ async def get_current_user(
     Dependency do FastAPI que valida o token JWT do Supabase
     via HTTP call ao endpoint /auth/v1/user.
 
+    Tenta primeiro com SUPABASE_KEY (legacy anon key).
+    Se falhar (401), tenta com SUPABASE_PUBLISHABLE_KEY (nova key do Lovable).
+
     Returns:
         Dict com dados do utilizador (id, email)
 
@@ -89,8 +92,36 @@ async def get_current_user(
                 timeout=10.0,
             )
 
-        if resp.status_code != 200:
-            raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
+            if resp.status_code != 200:
+                logger.error(
+                    f"Supabase /auth/v1/user falhou: status={resp.status_code}, "
+                    f"body={resp.text[:500]}"
+                )
+
+                # Tentar com publishable key se existir
+                pub_key = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "")
+                if pub_key and pub_key != supabase_key:
+                    logger.info("Tentando com SUPABASE_PUBLISHABLE_KEY...")
+                    resp = await client.get(
+                        f"{supabase_url}/auth/v1/user",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "apikey": pub_key,
+                        },
+                        timeout=10.0,
+                    )
+                    if resp.status_code == 200:
+                        user_data = resp.json()
+                        return {
+                            "id": user_data.get("id", ""),
+                            "email": user_data.get("email", ""),
+                        }
+                    logger.error(
+                        f"Fallback também falhou: status={resp.status_code}, "
+                        f"body={resp.text[:500]}"
+                    )
+
+                raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
 
         user_data = resp.json()
         return {
