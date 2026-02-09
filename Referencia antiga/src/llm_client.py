@@ -464,7 +464,52 @@ class OpenAIClient:
 
             # Extrair resposta (formato diferente!)
             # Responses API retorna: {"output_text": "...", "usage": {...}}
+            # MAS pode também retornar output como array em vez de output_text
+            logger.info(f"[RESPONSES-API] Raw response keys: {list(raw_response.keys())}")
+            logger.info(f"[RESPONSES-API] output_text type: {type(raw_response.get('output_text'))}")
+            logger.info(f"[RESPONSES-API] output type: {type(raw_response.get('output'))}")
+
             output_text = raw_response.get("output_text", "")
+
+            # Se output_text está vazio, tentar extrair de output array
+            if not output_text and "output" in raw_response:
+                raw_output = raw_response["output"]
+                logger.warning(f"[RESPONSES-API] output_text vazio! output é: {type(raw_output)}")
+                logger.warning(f"[RESPONSES-API] output value (first 1000 chars): {str(raw_output)[:1000]}")
+                if isinstance(raw_output, list):
+                    for item in raw_output:
+                        if isinstance(item, dict):
+                            # Formato: {"type": "message", "content": [{"type": "output_text", "text": "..."}]}
+                            if item.get("type") == "message":
+                                content_list = item.get("content", [])
+                                if isinstance(content_list, list):
+                                    for c in content_list:
+                                        if isinstance(c, dict) and c.get("type") == "output_text":
+                                            output_text = c.get("text", "")
+                                            logger.info(f"[RESPONSES-API] Extraído de output[].content[]: {len(output_text)} chars")
+                                            break
+                                elif isinstance(content_list, str):
+                                    output_text = content_list
+                                    logger.info(f"[RESPONSES-API] Extraído de output[].content (str): {len(output_text)} chars")
+                            # Formato simples: {"type": "text", "text": "..."}
+                            elif item.get("type") == "text" and "text" in item:
+                                output_text = item["text"]
+                                logger.info(f"[RESPONSES-API] Extraído de output[].text: {len(output_text)} chars")
+                        elif isinstance(item, str):
+                            output_text = item
+                            logger.info(f"[RESPONSES-API] Extraído de output[] (str): {len(output_text)} chars")
+                        if output_text:
+                            break
+                elif isinstance(raw_output, str):
+                    output_text = raw_output
+                    logger.info(f"[RESPONSES-API] output é string directa: {len(output_text)} chars")
+
+            if not output_text:
+                logger.error(f"[RESPONSES-API] FALHA: output_text VAZIO após todas as tentativas!")
+                logger.error(f"[RESPONSES-API] Raw response (first 2000 chars): {str(raw_response)[:2000]}")
+
+            logger.info(f"[RESPONSES-API] Final output_text: {len(output_text)} chars, first 200: {output_text[:200]!r}")
+
             usage = raw_response.get("usage", {})
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000

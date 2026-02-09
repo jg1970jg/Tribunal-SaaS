@@ -24,23 +24,30 @@ def extract_json_from_text(text: str) -> dict | list | None:
     texto explicativo antes/depois, etc.
     """
     if not text or not text.strip():
+        logger.warning(f"[JSON-EXTRACT] Input vazio ou None: {text!r}")
         return None
 
     text = text.strip()
 
+    logger.info(f"[JSON-EXTRACT] Input length: {len(text)} chars")
+    logger.info(f"[JSON-EXTRACT] First 500 chars: {text[:500]!r}")
+    logger.info(f"[JSON-EXTRACT] Last 200 chars: {text[-200:]!r}")
+
     # 1. Tentar parse directo
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        logger.debug(f"[JSON-EXTRACT] Estratégia 1 falhou: {e}")
 
     # 2. Extrair de bloco markdown ```json ... ```
     md_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
     if md_match:
         try:
             return json.loads(md_match.group(1).strip())
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug(f"[JSON-EXTRACT] Estratégia 2 falhou: {e}")
+    else:
+        logger.debug(f"[JSON-EXTRACT] Estratégia 2: nenhum bloco markdown encontrado")
 
     # 3. Encontrar primeiro { e último }
     first_brace = text.find('{')
@@ -48,8 +55,10 @@ def extract_json_from_text(text: str) -> dict | list | None:
     if first_brace != -1 and last_brace > first_brace:
         try:
             return json.loads(text[first_brace:last_brace + 1])
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug(f"[JSON-EXTRACT] Estratégia 3 falhou: {e}")
+    else:
+        logger.debug(f"[JSON-EXTRACT] Estratégia 3: nenhum par {{}} encontrado")
 
     # 4. Encontrar primeiro [ e último ]
     first_bracket = text.find('[')
@@ -57,8 +66,10 @@ def extract_json_from_text(text: str) -> dict | list | None:
     if first_bracket != -1 and last_bracket > first_bracket:
         try:
             return json.loads(text[first_bracket:last_bracket + 1])
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug(f"[JSON-EXTRACT] Estratégia 4 falhou: {e}")
+    else:
+        logger.debug(f"[JSON-EXTRACT] Estratégia 4: nenhum par [] encontrado")
 
     # 5. Remover prefixo comum e tentar de novo
     for prefix in ["Here is", "Here's", "Below is", "The following", "json\n", "JSON\n"]:
@@ -67,8 +78,11 @@ def extract_json_from_text(text: str) -> dict | list | None:
             remaining = text[idx + len(prefix):].strip()
             try:
                 return json.loads(remaining)
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.debug(f"[JSON-EXTRACT] Estratégia 5 falhou (prefix={prefix!r}): {e}")
+
+    logger.warning(f"[JSON-EXTRACT] TODAS AS 5 ESTRATÉGIAS FALHARAM para input de {len(text)} chars")
+    logger.warning(f"[JSON-EXTRACT] Tipo de chars no início: {[c for c in text[:20]]}")
 
     return None
 
