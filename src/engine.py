@@ -20,6 +20,7 @@ Verificacao de saldo:
 ============================================================
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -153,6 +154,10 @@ def exigir_saldo_minimo(user_id: str, minimo: float = SALDO_MINIMO) -> float:
     """
     Verifica se o utilizador tem saldo suficiente.
 
+    Se SKIP_WALLET_CHECK=true nas env vars, ignora a verificacao
+    e retorna saldo fictico (para ambientes onde a service_role key
+    nao funciona, ex: Supabase gerido pelo Lovable Cloud).
+
     Args:
         user_id: UUID do utilizador
         minimo: Saldo minimo exigido (default: 2.00 EUR)
@@ -163,6 +168,10 @@ def exigir_saldo_minimo(user_id: str, minimo: float = SALDO_MINIMO) -> float:
     Raises:
         InsufficientBalanceError: Se saldo < minimo
     """
+    if os.environ.get("SKIP_WALLET_CHECK", "").lower() == "true":
+        print(f"[SALDO] SKIP_WALLET_CHECK ativo - ignorando verificação de saldo")
+        return 999.99
+
     saldo = verificar_saldo(user_id)
 
     if saldo < minimo:
