@@ -58,6 +58,12 @@ async def lifespan(app: FastAPI):
         get_supabase_admin()
         print(f"[OK] Supabase (service_role) conectado.")
 
+    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
+    if not jwt_secret:
+        print("[AVISO] SUPABASE_JWT_SECRET não definida - autenticação JWT falhará")
+    else:
+        print(f"[OK] JWT secret configurado ({len(jwt_secret)} chars)")
+
     print("[OK] Tribunal SaaS V2 - Servidor iniciado.")
 
     yield
