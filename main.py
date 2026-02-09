@@ -14,7 +14,7 @@ import io
 import os
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, UploadFile, File, HTTPException, status
@@ -416,3 +416,153 @@ async def export_docx(req: ExportRequest):
     except Exception as e:
         logger.exception("Erro ao gerar DOCX")
         raise HTTPException(status_code=500, detail=f"Erro ao gerar DOCX: {e}")
+
+
+# ============================================================
+# PERGUNTAS PÓS-ANÁLISE (POST /ask)
+# ============================================================
+
+ASK_MODELS = [
+    "openai/gpt-5.2",
+    "anthropic/claude-opus-4.5",
+    "google/gemini-3-pro-preview",
+]
+
+ASK_SYSTEM_PROMPT = (
+    "És um jurista especializado em Direito Português. "
+    "Com base na análise jurídica fornecida, responde à pergunta do utilizador "
+    "de forma clara e fundamentada, citando legislação quando aplicável."
+)
+
+CONSOLIDATION_SYSTEM_PROMPT = (
+    "Recebeste 3 respostas de juristas diferentes à mesma pergunta. "
+    "Consolida-as numa única resposta coerente, mantendo os pontos de consenso "
+    "e assinalando divergências. Cita legislação mencionada. "
+    "Responde em português de Portugal."
+)
+
+
+class AskRequest(BaseModel):
+    question: str
+    analysis_result: Dict[str, Any]
+
+
+def _build_ask_context(data: Dict[str, Any]) -> str:
+    """Extrai contexto relevante do resultado da análise para a pergunta."""
+    parts = []
+
+    area = data.get("area_direito", "")
+    if area:
+        parts.append(f"Área de Direito: {area}")
+
+    veredicto = data.get("veredicto_final", "")
+    simbolo = data.get("simbolo_final", "")
+    if veredicto:
+        parts.append(f"Veredicto: {simbolo} {veredicto}")
+
+    f1 = data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", "")
+    if f1:
+        # Limitar a 3000 chars para não exceder contexto
+        parts.append(f"EXTRAÇÃO:\n{f1[:3000]}")
+
+    f2 = data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", "")
+    if f2:
+        parts.append(f"AUDITORIA:\n{f2[:3000]}")
+
+    f4 = data.get("fase3_presidente", "")
+    if f4:
+        parts.append(f"DECISÃO PRESIDENTE:\n{f4[:3000]}")
+
+    return "\n\n".join(parts) if parts else "Sem contexto de análise disponível."
+
+
+@app.post("/ask")
+async def ask_question(req: AskRequest):
+    """
+    Pergunta pós-análise: envia a pergunta a 3 LLMs com contexto
+    da análise anterior e consolida as respostas.
+    """
+    from src.llm_client import get_llm_client
+
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(status_code=422, detail="A pergunta não pode estar vazia.")
+
+    context = _build_ask_context(req.analysis_result)
+
+    prompt = f"""ANÁLISE JURÍDICA ANTERIOR:
+
+{context}
+
+PERGUNTA DO UTILIZADOR:
+{question}
+
+Responde de forma clara, citando legislação quando aplicável."""
+
+    llm = get_llm_client()
+    individual_responses: List[Dict[str, str]] = []
+
+    # Enviar a 3 LLMs
+    for model in ASK_MODELS:
+        try:
+            resp = llm.chat_simple(
+                model=model,
+                prompt=prompt,
+                system_prompt=ASK_SYSTEM_PROMPT,
+                temperature=0.3,
+                max_tokens=4096,
+            )
+            individual_responses.append({
+                "model": model,
+                "response": resp.content,
+            })
+        except Exception as e:
+            logger.warning(f"Modelo {model} falhou no /ask: {e}")
+            individual_responses.append({
+                "model": model,
+                "response": f"[Erro: modelo indisponível]",
+            })
+
+    # Consolidar respostas
+    if len([r for r in individual_responses if not r["response"].startswith("[Erro")]) == 0:
+        raise HTTPException(
+            status_code=503,
+            detail="Nenhum modelo conseguiu responder. Tente novamente.",
+        )
+
+    respostas_texto = "\n\n".join([
+        f"## {r['model']}:\n{r['response']}"
+        for r in individual_responses
+        if not r["response"].startswith("[Erro")
+    ])
+
+    consolidation_prompt = f"""PERGUNTA: {question}
+
+RESPOSTAS DOS 3 JURISTAS:
+
+{respostas_texto}
+
+Consolida estas respostas numa única resposta final coerente."""
+
+    try:
+        consolidated = llm.chat_simple(
+            model=ASK_MODELS[0],  # gpt-5.2 como consolidador
+            prompt=consolidation_prompt,
+            system_prompt=CONSOLIDATION_SYSTEM_PROMPT,
+            temperature=0.2,
+            max_tokens=4096,
+        )
+        answer = consolidated.content
+    except Exception as e:
+        logger.warning(f"Consolidação falhou: {e}")
+        # Fallback: usar a primeira resposta válida
+        answer = next(
+            (r["response"] for r in individual_responses if not r["response"].startswith("[Erro")),
+            "Não foi possível gerar resposta.",
+        )
+
+    return {
+        "question": question,
+        "answer": answer,
+        "individual_responses": individual_responses,
+    }
