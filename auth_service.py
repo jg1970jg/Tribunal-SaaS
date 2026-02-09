@@ -6,9 +6,9 @@ Verifica tokens JWT do Supabase para proteger a API.
 Utilizadores sem token válido são rejeitados.
 
 Validação:
-  - HTTP call ao Supabase Auth API (/auth/v1/user)
-  - Envia o token do utilizador + apikey (anon key)
-  - Supabase valida e devolve os dados do user
+  - HTTP call à edge function validate-user do Supabase
+  - Envia o token do utilizador no header Authorization
+  - Edge function valida e devolve {user_id, email}
 ============================================================
 """
 
@@ -62,10 +62,7 @@ async def get_current_user(
 ) -> dict:
     """
     Dependency do FastAPI que valida o token JWT do Supabase
-    via HTTP call ao endpoint /auth/v1/user.
-
-    Tenta primeiro com SUPABASE_KEY (legacy anon key).
-    Se falhar (401), tenta com SUPABASE_PUBLISHABLE_KEY (nova key do Lovable).
+    via edge function validate-user.
 
     Returns:
         Dict com dados do utilizador (id, email)
@@ -75,57 +72,29 @@ async def get_current_user(
     """
     token = credentials.credentials
 
-    supabase_url = os.environ.get("SUPABASE_URL", "")
-    supabase_key = os.environ.get("SUPABASE_KEY", "")
-
-    if not supabase_url or not supabase_key:
-        raise HTTPException(status_code=500, detail="Configuração Supabase em falta.")
+    validate_url = os.environ.get(
+        "VALIDATE_USER_URL",
+        "https://drpuexbgdfdnhabctfhi.supabase.co/functions/v1/validate-user",
+    )
 
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{supabase_url}/auth/v1/user",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "apikey": supabase_key,
-                },
+                validate_url,
+                headers={"Authorization": f"Bearer {token}"},
                 timeout=10.0,
             )
 
             if resp.status_code != 200:
                 logger.error(
-                    f"Supabase /auth/v1/user falhou: status={resp.status_code}, "
+                    f"validate-user falhou: status={resp.status_code}, "
                     f"body={resp.text[:500]}"
                 )
-
-                # Tentar com publishable key se existir
-                pub_key = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "")
-                if pub_key and pub_key != supabase_key:
-                    logger.info("Tentando com SUPABASE_PUBLISHABLE_KEY...")
-                    resp = await client.get(
-                        f"{supabase_url}/auth/v1/user",
-                        headers={
-                            "Authorization": f"Bearer {token}",
-                            "apikey": pub_key,
-                        },
-                        timeout=10.0,
-                    )
-                    if resp.status_code == 200:
-                        user_data = resp.json()
-                        return {
-                            "id": user_data.get("id", ""),
-                            "email": user_data.get("email", ""),
-                        }
-                    logger.error(
-                        f"Fallback também falhou: status={resp.status_code}, "
-                        f"body={resp.text[:500]}"
-                    )
-
                 raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
 
         user_data = resp.json()
         return {
-            "id": user_data.get("id", ""),
+            "id": user_data.get("user_id", ""),
             "email": user_data.get("email", ""),
         }
 
