@@ -77,11 +77,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS - permitir frontend (ajustar origens em produção)
+# CORS - permitir frontend Lovable e qualquer subdomínio
 app.add_middleware(
     CORSMiddleware,
+    allow_origin_regex=r"https://.*\.lovableproject\.com",
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
