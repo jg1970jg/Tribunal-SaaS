@@ -48,7 +48,7 @@ from src.llm_client import get_llm_client
 from src.utils.perguntas import parse_perguntas, validar_perguntas
 from src.utils.metadata_manager import gerar_titulo_automatico
 
-from auth_service import get_supabase
+from auth_service import get_supabase_admin
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +94,16 @@ class MissingApiKeyError(EngineError):
 # VERIFICACAO DE SALDO
 # ============================================================
 
+SALDO_INICIAL = 0.00  # EUR - saldo atribuido a novos utilizadores
+
+
 def verificar_saldo(user_id: str) -> float:
     """
     Consulta o saldo do utilizador na tabela user_wallets do Supabase.
+    Usa a service_role key para ignorar RLS.
+
+    Se o utilizador nao tiver wallet (novo utilizador), cria uma
+    automaticamente com saldo inicial.
 
     Args:
         user_id: UUID do utilizador (de auth.users)
@@ -108,22 +115,32 @@ def verificar_saldo(user_id: str) -> float:
         EngineError: Se nao conseguir consultar o Supabase
     """
     try:
-        sb = get_supabase()
+        sb = get_supabase_admin()
+
+        # Consultar wallet (sem .single() para evitar PGRST116 em 0 rows)
         response = (
             sb.table("user_wallets")
             .select("balance")
             .eq("user_id", user_id)
-            .single()
             .execute()
         )
 
-        if response.data is None:
-            raise EngineError(
-                f"Wallet nao encontrada para user_id={user_id}. "
-                f"O utilizador pode nao ter perfil criado."
+        # Se o utilizador nao tem wallet, criar uma automaticamente
+        if not response.data:
+            logger.info(f"Wallet nao encontrada para {user_id[:8]}... Criando nova wallet.")
+            insert_response = (
+                sb.table("user_wallets")
+                .insert({"user_id": user_id, "balance": SALDO_INICIAL})
+                .execute()
             )
+            if not insert_response.data:
+                raise EngineError(
+                    f"Nao foi possivel criar wallet para user_id={user_id}."
+                )
+            print(f"[WALLET] Nova wallet criada para {user_id[:8]}... com {SALDO_INICIAL:.2f} EUR")
+            return SALDO_INICIAL
 
-        saldo = float(response.data["balance"])
+        saldo = float(response.data[0]["balance"])
         return saldo
 
     except EngineError:

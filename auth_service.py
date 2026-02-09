@@ -15,12 +15,15 @@ from supabase import create_client, Client
 # Esquema Bearer: extrai o token do header "Authorization: Bearer <token>"
 security = HTTPBearer()
 
-# Cliente Supabase (inicializado uma vez)
+# Cliente Supabase com anon key (para validar tokens JWT dos utilizadores)
 _supabase: Client | None = None
+
+# Cliente Supabase com service_role key (para operações de servidor: wallets, análises)
+_supabase_admin: Client | None = None
 
 
 def get_supabase() -> Client:
-    """Retorna o cliente Supabase (singleton)."""
+    """Retorna o cliente Supabase com anon key (para autenticação JWT)."""
     global _supabase
     if _supabase is None:
         url = os.environ.get("SUPABASE_URL", "")
@@ -29,6 +32,20 @@ def get_supabase() -> Client:
             raise RuntimeError("SUPABASE_URL e SUPABASE_KEY devem estar definidos.")
         _supabase = create_client(url, key)
     return _supabase
+
+
+def get_supabase_admin() -> Client:
+    """Retorna o cliente Supabase com service_role key (ignora RLS)."""
+    global _supabase_admin
+    if _supabase_admin is None:
+        url = os.environ.get("SUPABASE_URL", "")
+        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        if not url or not key:
+            raise RuntimeError(
+                "SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY devem estar definidos."
+            )
+        _supabase_admin = create_client(url, key)
+    return _supabase_admin
 
 
 async def get_current_user(

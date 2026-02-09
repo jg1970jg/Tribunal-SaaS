@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from auth_service import get_current_user, get_supabase
+from auth_service import get_current_user, get_supabase, get_supabase_admin
 from src.engine import (
     executar_analise_documento,
     InsufficientBalanceError,
@@ -44,13 +44,19 @@ async def lifespan(app: FastAPI):
     # Validar que as variáveis obrigatórias existem
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_KEY", "")
+    service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
     if not supabase_url or not supabase_key:
         print("[AVISO] SUPABASE_URL ou SUPABASE_KEY não definidos no .env")
     else:
-        # Testar conexão criando o cliente
         get_supabase()
-        print(f"[OK] Supabase conectado: {supabase_url[:40]}...")
+        print(f"[OK] Supabase (anon) conectado: {supabase_url[:40]}...")
+
+    if not service_role_key:
+        print("[AVISO] SUPABASE_SERVICE_ROLE_KEY não definida - operações de servidor falharão")
+    else:
+        get_supabase_admin()
+        print(f"[OK] Supabase (service_role) conectado.")
 
     print("[OK] Tribunal SaaS V2 - Servidor iniciado.")
 
