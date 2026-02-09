@@ -121,6 +121,8 @@ async def analyze(
     area_direito: str = Form("Civil"),
     perguntas_raw: str = Form(""),
     titulo: str = Form(""),
+    chefe_model_key: str = Form("gpt-5.2"),
+    presidente_model_key: str = Form("gpt-5.2"),
     user: dict = Depends(get_current_user),
 ):
     """
@@ -141,6 +143,8 @@ async def analyze(
             area_direito=area_direito,
             perguntas_raw=perguntas_raw,
             titulo=titulo,
+            chefe_model_key=chefe_model_key,
+            presidente_model_key=presidente_model_key,
         )
 
         return resultado.to_dict()
