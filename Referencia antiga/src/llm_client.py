@@ -9,6 +9,12 @@ FUNCIONALIDADES:
 3. ✅ Fallback automático (se OpenAI falhar → OpenRouter)
 4. ✅ Detecção automática de modelo
 5. ✅ Logging detalhado
+
+CHANGELOG:
+- 2026-02-10: Fix respostas corrompidas OpenRouter (defensive JSON parsing)
+- 2026-02-10: Detectar conteúdo vazio como falha (permite retry)
+- 2026-02-10: Validação robusta do body HTTP antes de json.loads()
+- 2026-02-10: Safe JSON parse em _make_request para ambos os clientes
 """
 
 import base64
@@ -37,6 +43,9 @@ def _is_retryable_http_error(exception: BaseException) -> bool:
 
     NÃO faz retry em erros de cliente (400, 401, 403, 404) pois nunca vão funcionar.
     Faz retry em erros de servidor (429, 500, 502, 503, 504) e timeouts.
+
+    FIX 2026-02-10: Também faz retry em ValueError/JSONDecodeError
+    (respostas corrompidas que vieram com HTTP 200 mas body inválido).
     """
     if isinstance(exception, httpx.TimeoutException):
         return True
@@ -44,7 +53,66 @@ def _is_retryable_http_error(exception: BaseException) -> bool:
         status = exception.response.status_code
         # Retry apenas em rate limit (429) e erros de servidor (5xx)
         return status == 429 or status >= 500
+    # FIX 2026-02-10: Retry em JSON corrompido (HTTP 200 mas body inválido)
+    if isinstance(exception, (ValueError, json.JSONDecodeError)):
+        return True
     return False
+
+
+def _safe_parse_json(response: httpx.Response, context: str = "") -> Dict[str, Any]:
+    """
+    FIX 2026-02-10: Parse JSON defensivo com validação do body.
+
+    Verifica:
+    1. Response tem body não-vazio
+    2. Body começa com { ou [ (é JSON válido)
+    3. json.loads() não falha
+
+    Se falhar, lança ValueError (que é retryable).
+    """
+    body = response.text.strip()
+
+    if not body:
+        raise ValueError(
+            f"[{context}] Resposta HTTP {response.status_code} com body VAZIO. "
+            f"Headers: {dict(response.headers)}"
+        )
+
+    # Verificar se parece JSON (deve começar com { ou [)
+    if not body.startswith(("{", "[")):
+        # Truncar para log
+        preview = body[:500] if len(body) > 500 else body
+        raise ValueError(
+            f"[{context}] Resposta HTTP {response.status_code} não é JSON válido. "
+            f"Começa com: {preview!r}"
+        )
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as e:
+        preview = body[:500] if len(body) > 500 else body
+        raise ValueError(
+            f"[{context}] JSON parse falhou: {e}. "
+            f"Body ({len(body)} chars): {preview!r}"
+        ) from e
+
+    # Verificar se é um objecto (dict) — respostas válidas são sempre dicts
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"[{context}] JSON válido mas não é objecto (é {type(data).__name__}). "
+            f"Valor: {str(data)[:200]}"
+        )
+
+    # Verificar se a API retornou um erro no body
+    if "error" in data and not data.get("choices") and not data.get("output"):
+        error_msg = data.get("error", {})
+        if isinstance(error_msg, dict):
+            error_msg = error_msg.get("message", str(error_msg))
+        logger.warning(f"[{context}] API retornou erro no body: {error_msg}")
+        # Não lançar excepção aqui — deixar o chamador decidir
+
+    return data
+
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -274,7 +342,8 @@ class OpenAIClient:
         response = self._client.post(url, json=payload)
         response.raise_for_status()
 
-        return response.json()
+        # FIX 2026-02-10: Parse JSON defensivo
+        return _safe_parse_json(response, context=f"OpenAI-Chat/{clean_model}")
 
     @retry(
         retry=retry_if_exception(_is_retryable_http_error),
@@ -321,7 +390,8 @@ class OpenAIClient:
         response = self._client.post(url, json=payload)
         response.raise_for_status()
 
-        return response.json()
+        # FIX 2026-02-10: Parse JSON defensivo
+        return _safe_parse_json(response, context=f"OpenAI-Responses/{clean_model}")
 
     def chat(
         self,
@@ -356,12 +426,34 @@ class OpenAIClient:
             # Extrair resposta
             choice = raw_response.get("choices", [{}])[0]
             message = choice.get("message", {})
+            content = message.get("content", "")
             usage = raw_response.get("usage", {})
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
+            # FIX 2026-02-10: Detectar conteúdo vazio como falha
+            if not content or not content.strip():
+                logger.warning(
+                    f"[OpenAI] Resposta com content VAZIO para {model}. "
+                    f"Finish reason: {choice.get('finish_reason', 'N/A')}"
+                )
+                self._stats["failed_calls"] += 1
+                return LLMResponse(
+                    content="",
+                    model=raw_response.get("model", model),
+                    role="assistant",
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    total_tokens=usage.get("total_tokens", 0),
+                    latency_ms=latency_ms,
+                    raw_response=raw_response,
+                    error="Resposta com conteúdo vazio (content empty)",
+                    success=False,
+                    api_used="openai"
+                )
+
             response = LLMResponse(
-                content=message.get("content", ""),
+                content=content,
                 model=raw_response.get("model", model),
                 role=message.get("role", "assistant"),
                 prompt_tokens=usage.get("prompt_tokens", 0),
@@ -504,9 +596,27 @@ class OpenAIClient:
                     output_text = raw_output
                     logger.info(f"[RESPONSES-API] output é string directa: {len(output_text)} chars")
 
-            if not output_text:
+            # FIX 2026-02-10: Se output_text continua vazio, marcar como falha
+            if not output_text or not output_text.strip():
                 logger.error(f"[RESPONSES-API] FALHA: output_text VAZIO após todas as tentativas!")
                 logger.error(f"[RESPONSES-API] Raw response (first 2000 chars): {str(raw_response)[:2000]}")
+                self._stats["failed_calls"] += 1
+
+                usage = raw_response.get("usage", {})
+                latency_ms = (datetime.now() - start_time).total_seconds() * 1000
+                return LLMResponse(
+                    content="",
+                    model=raw_response.get("model", model),
+                    role="assistant",
+                    prompt_tokens=usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("output_tokens", 0) or usage.get("completion_tokens", 0),
+                    total_tokens=usage.get("total_tokens", 0),
+                    latency_ms=latency_ms,
+                    raw_response=raw_response,
+                    error="Responses API retornou conteúdo vazio após todas as tentativas de extração",
+                    success=False,
+                    api_used="openai (responses)"
+                )
 
             logger.info(f"[RESPONSES-API] Final output_text: {len(output_text)} chars, first 200: {output_text[:200]!r}")
 
@@ -647,7 +757,8 @@ class OpenRouterClient:
         response = self._client.post(url, json=payload)
         response.raise_for_status()
 
-        return response.json()
+        # FIX 2026-02-10: Parse JSON defensivo (em vez de response.json() directo)
+        return _safe_parse_json(response, context=f"OpenRouter/{clean_model}")
 
     def chat(
         self,
@@ -680,12 +791,37 @@ class OpenRouterClient:
             # Extrair resposta
             choice = raw_response.get("choices", [{}])[0]
             message = choice.get("message", {})
+            content = message.get("content", "")
             usage = raw_response.get("usage", {})
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
+            # FIX 2026-02-10: Detectar conteúdo vazio como falha
+            # Isto permite que _call_with_retry no processor.py faça retry
+            if not content or not content.strip():
+                finish_reason = choice.get("finish_reason", "N/A")
+                logger.warning(
+                    f"[OpenRouter] Resposta com content VAZIO para {model}. "
+                    f"Finish reason: {finish_reason}. "
+                    f"Raw choices: {raw_response.get('choices', [])}"
+                )
+                self._stats["failed_calls"] += 1
+                return LLMResponse(
+                    content="",
+                    model=raw_response.get("model", model),
+                    role="assistant",
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    total_tokens=usage.get("total_tokens", 0),
+                    latency_ms=latency_ms,
+                    raw_response=raw_response,
+                    error=f"Resposta com conteúdo vazio (finish_reason={finish_reason})",
+                    success=False,
+                    api_used="openrouter"
+                )
+
             response = LLMResponse(
-                content=message.get("content", ""),
+                content=content,
                 model=raw_response.get("model", model),
                 role=message.get("role", "assistant"),
                 prompt_tokens=usage.get("prompt_tokens", 0),
