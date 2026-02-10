@@ -631,7 +631,8 @@ REGRAS CRÍTICAS:
 4. NUNCA perder findings únicos - marcar como consensus_level: "unico"
 5. Manter TODAS as citations originais com source_auditor
 6. Divergências reais entre auditores devem ir para "divergences"
-7. Se parsing falhar em algum auditor, registar em "errors" mas continuar"""
+7. Se parsing falhar em algum auditor, registar em "errors" mas continuar
+8. CRÍTICO - EXCERPT: Ao consolidar citations, manter SEMPRE o excerpt ORIGINAL do auditor. NÃO reescrever excerpts. Se o excerpt original estiver vazio, deixar vazio."""
 
     # =========================================================================
     # PROMPTS JSON PARA FASES 2-4 (PROVENIÊNCIA ESTRUTURADA)
@@ -686,7 +687,9 @@ REGRAS CRÍTICAS:
 4. severity: critico (bloqueia decisão), alto (afeta significativamente), medio (relevante), baixo (informativo)
 5. finding_type: facto (verificável no documento), inferencia (dedução lógica), hipotese (requer verificação)
 6. Se um finding se baseia em múltiplos items, lista TODOS os item_ids relevantes
-7. Sê crítico e rigoroso - verifica se os items extraídos são precisos e completos"""
+7. Sê crítico e rigoroso - verifica se os items extraídos são precisos e completos
+8. CRÍTICO - EXCERPT: O campo "excerpt" nas citations DEVE ser uma cópia LITERAL e EXACTA do texto do documento entre start_char e end_char. NÃO parafrasear, NÃO resumir, NÃO reformular. Copiar carácter por carácter do documento original.
+9. Se não conseguires determinar o texto exacto para o excerpt, coloca uma string vazia ("") - NUNCA inventes ou reescrevas o texto."""
 
     SYSTEM_JUIZ_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
@@ -735,7 +738,9 @@ REGRAS:
 3. confidence: 0.0 a 1.0 indicando certeza na conclusão
 4. recommendation: procedente, improcedente, parcialmente_procedente, ou inconclusivo
 5. is_determinant: true se o ponto é CRUCIAL para a decisão (ex: prova de facto essencial)
-   - IMPORTANTE: pontos determinantes SEM citations serão marcados como SEM_PROVA"""
+   - IMPORTANTE: pontos determinantes SEM citations serão marcados como SEM_PROVA
+6. CRÍTICO - EXCERPT: O campo "excerpt" nas citations DEVE ser uma cópia LITERAL e EXACTA do texto do documento. NÃO parafrasear, NÃO resumir, NÃO reformular. Copiar carácter por carácter.
+7. Se não conseguires determinar o texto exacto, coloca uma string vazia ("") no excerpt."""
 
     SYSTEM_JUIZ_JSON_QA = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
@@ -806,7 +811,8 @@ REGRAS:
 1. decision_type: procedente, improcedente, parcialmente_procedente, ou inconclusivo
 2. confidence: 0.0 a 1.0
 3. Cada prova em proofs DEVE ter start_char/end_char
-4. Resolve conflitos entre juízes em conflicts_resolved"""
+4. Resolve conflitos entre juízes em conflicts_resolved
+5. CRÍTICO - EXCERPT: O campo "excerpt" em proofs e citations DEVE ser uma cópia LITERAL e EXACTA do texto do documento. NÃO parafrasear. Copiar carácter por carácter."""
 
     SYSTEM_PRESIDENTE_JSON_QA = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
