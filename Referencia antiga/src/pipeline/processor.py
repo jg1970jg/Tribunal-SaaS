@@ -3060,8 +3060,21 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             verificacoes = self._verificar_legislacao(presidente)
             result.verificacoes_legais = verificacoes
 
-            # Determinar veredicto
-            veredicto, simbolo, status = self._determinar_veredicto(presidente)
+            # Determinar veredicto — preferir decision_type do JSON (mais fiável)
+            if final_decision and hasattr(final_decision, 'decision_type'):
+                dt = final_decision.decision_type
+                veredicto_map = {
+                    DecisionType.PROCEDENTE: ("PROCEDENTE", SIMBOLOS_VERIFICACAO["aprovado"], "aprovado"),
+                    DecisionType.IMPROCEDENTE: ("IMPROCEDENTE", SIMBOLOS_VERIFICACAO["rejeitado"], "rejeitado"),
+                    DecisionType.PARCIALMENTE_PROCEDENTE: ("PARCIALMENTE PROCEDENTE", SIMBOLOS_VERIFICACAO["atencao"], "atencao"),
+                    DecisionType.INCONCLUSIVO: ("INCONCLUSIVO", SIMBOLOS_VERIFICACAO["atencao"], "atencao"),
+                }
+                veredicto, simbolo, status = veredicto_map.get(
+                    dt, ("INCONCLUSIVO", SIMBOLOS_VERIFICACAO["atencao"], "atencao")
+                )
+                logger.info(f"Veredicto extraído do JSON: {dt.value} → {veredicto}")
+            else:
+                veredicto, simbolo, status = self._determinar_veredicto(presidente)
             result.veredicto_final = veredicto
             result.simbolo_final = simbolo
             result.status_final = status

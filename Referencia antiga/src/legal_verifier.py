@@ -127,7 +127,7 @@ class LegalVerifier:
 
     # Padrão para extrair artigos
     ARTIGO_PATTERN = re.compile(
-        r"art(?:igo)?[.º°]?\s*(\d+)[.º°]?(?:-([A-Z]))?",
+        r"art(?:igo)?[.º°]?\s*(\d+)\.?[º°]?(?:-([A-Z]))?",
         re.IGNORECASE
     )
 
@@ -218,7 +218,7 @@ class LegalVerifier:
         numero = None
         alinea = None
 
-        num_match = re.search(r"n[.º°]?\s*(\d+)", texto_lower)
+        num_match = re.search(r"n\.?[º°]?\s*(\d+)", texto_lower)
         if num_match:
             numero = num_match.group(1)
 
@@ -252,7 +252,11 @@ class LegalVerifier:
 
         # Padrão abrangente para encontrar citações
         padroes = [
-            r"art(?:igo)?[.º°]?\s*\d+[.º°]?(?:-[A-Z])?\s*(?:(?:do|da|n[.º°])[\s\S]{0,50})?",
+            # Padrão principal: art. Nº + contexto (do/da/n.º/,) + até 80 chars para capturar diploma
+            r"art(?:igo)?[.º°]?\s*\d+\.?[º°]?(?:-[A-Z])?(?:[,\s]+(?:n\.?[º°]?\s*\d+|al[ií]nea\s*[a-z]\)?))*[,\s]*(?:(?:do|da|dos|das)\s+)?(?:[\s\S]{0,80}?)(?=\.|;|\n|$)",
+            # Padrão simples: art. Nº + abreviatura diploma (CC, CPC, CT, etc.) logo a seguir
+            r"art(?:igo)?[.º°]?\s*\d+\.?[º°]?(?:-[A-Z])?\s*(?:,\s*n\.?[º°]?\s*\d+)?\s+(?:CC|CPC|CPP|CP|CT|CRP|NRAU|CIRS|RJUE|CSC|CPA)\b",
+            # Padrão inverso: diploma + art.
             r"(?:código|lei|decreto)[^,.\n]{0,100}art(?:igo)?[.º°]?\s*\d+",
         ]
 

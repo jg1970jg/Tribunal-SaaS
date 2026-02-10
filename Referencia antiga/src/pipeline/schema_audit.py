@@ -98,7 +98,11 @@ class Citation:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'Citation':
+    def from_dict(cls, data) -> 'Citation':
+        if isinstance(data, str):
+            data = {"excerpt": data}
+        if not isinstance(data, dict):
+            data = {"excerpt": str(data)}
         return cls(
             doc_id=data.get("doc_id", ""),
             chunk_id=data.get("chunk_id"),
@@ -364,17 +368,25 @@ class JudgePoint:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'JudgePoint':
+    def from_dict(cls, data) -> 'JudgePoint':
+        # Se for string em vez de dict, converter para dict mínimo
+        if isinstance(data, str):
+            data = {"conclusion": data, "point_id": f"point_str_{uuid.uuid4().hex[:6]}"}
+        if not isinstance(data, dict):
+            data = {"conclusion": str(data), "point_id": f"point_auto_{uuid.uuid4().hex[:6]}"}
+        # Se não tiver conclusion, usar str(data) como fallback
+        if not data.get("conclusion"):
+            data["conclusion"] = str({k: v for k, v in data.items() if k != "citations"})[:200]
         return cls(
             point_id=data.get("point_id", ""),
             conclusion=data.get("conclusion", ""),
             rationale=data.get("rationale", ""),
-            citations=[Citation.from_dict(c) for c in data.get("citations", [])],
-            legal_basis=data.get("legal_basis", []),
-            risks=data.get("risks", []),
-            alternatives=data.get("alternatives", []),
+            citations=[Citation.from_dict(c) for c in data.get("citations", []) if isinstance(c, dict)],
+            legal_basis=data.get("legal_basis", []) if isinstance(data.get("legal_basis"), list) else [],
+            risks=data.get("risks", []) if isinstance(data.get("risks"), list) else [],
+            alternatives=data.get("alternatives", []) if isinstance(data.get("alternatives"), list) else [],
             confidence=float(data.get("confidence", 0.8)),
-            finding_refs=data.get("finding_refs", []),
+            finding_refs=data.get("finding_refs", []) if isinstance(data.get("finding_refs"), list) else [],
             is_determinant=data.get("is_determinant", False),
         )
 
@@ -404,14 +416,18 @@ class Disagreement:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'Disagreement':
+    def from_dict(cls, data) -> 'Disagreement':
+        if isinstance(data, str):
+            data = {"reason": data, "target_id": "", "target_type": "finding"}
+        if not isinstance(data, dict):
+            data = {"reason": str(data), "target_id": "", "target_type": "finding"}
         return cls(
             disagreement_id=data.get("disagreement_id", ""),
             target_id=data.get("target_id", ""),
             target_type=data.get("target_type", "finding"),
             reason=data.get("reason", ""),
             alternative_view=data.get("alternative_view", ""),
-            citations=[Citation.from_dict(c) for c in data.get("citations", [])],
+            citations=[Citation.from_dict(c) for c in data.get("citations", []) if isinstance(c, dict)],
         )
 
 
@@ -447,16 +463,29 @@ class JudgeOpinion:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'JudgeOpinion':
+        # Validar recommendation - pode vir como string inválida
+        try:
+            recommendation = DecisionType(data.get("recommendation", "inconclusivo"))
+        except ValueError:
+            recommendation = DecisionType.INCONCLUSIVO
+        # decision_points pode conter strings ou dicts - JudgePoint.from_dict lida com ambos
+        raw_points = data.get("decision_points", [])
+        if not isinstance(raw_points, list):
+            raw_points = []
+        # disagreements pode conter strings ou dicts
+        raw_disagree = data.get("disagreements", [])
+        if not isinstance(raw_disagree, list):
+            raw_disagree = []
         return cls(
             judge_id=data.get("judge_id", ""),
             model_name=data.get("model_name", ""),
             run_id=data.get("run_id", ""),
-            recommendation=DecisionType(data.get("recommendation", "inconclusivo")),
-            decision_points=[JudgePoint.from_dict(p) for p in data.get("decision_points", [])],
-            disagreements=[Disagreement.from_dict(d) for d in data.get("disagreements", [])],
-            qa_responses=data.get("qa_responses", []),
-            errors=data.get("errors", []),
-            warnings=data.get("warnings", []),
+            recommendation=recommendation,
+            decision_points=[JudgePoint.from_dict(p) for p in raw_points],
+            disagreements=[Disagreement.from_dict(d) for d in raw_disagree],
+            qa_responses=data.get("qa_responses", []) if isinstance(data.get("qa_responses"), list) else [],
+            errors=data.get("errors", []) if isinstance(data.get("errors"), list) else [],
+            warnings=data.get("warnings", []) if isinstance(data.get("warnings"), list) else [],
         )
 
     def to_markdown(self) -> str:
@@ -538,14 +567,18 @@ class ConflictResolution:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'ConflictResolution':
+    def from_dict(cls, data) -> 'ConflictResolution':
+        if isinstance(data, str):
+            data = {"resolution": data, "reasoning": data}
+        if not isinstance(data, dict):
+            data = {"resolution": str(data), "reasoning": str(data)}
         return cls(
             conflict_id=data.get("conflict_id", ""),
-            conflicting_ids=data.get("conflicting_ids", []),
+            conflicting_ids=data.get("conflicting_ids", []) if isinstance(data.get("conflicting_ids"), list) else [],
             resolution=data.get("resolution", ""),
             chosen_value=data.get("chosen_value", ""),
             reasoning=data.get("reasoning", ""),
-            citations=[Citation.from_dict(c) for c in data.get("citations", [])],
+            citations=[Citation.from_dict(c) for c in data.get("citations", []) if isinstance(c, dict)],
         )
 
 
@@ -617,23 +650,38 @@ class FinalDecision:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'FinalDecision':
+        # Validar decision_type - pode vir como string inválida
+        try:
+            decision_type = DecisionType(data.get("decision_type", "inconclusivo"))
+        except ValueError:
+            decision_type = DecisionType.INCONCLUSIVO
+        # Listas que podem conter strings em vez de dicts - from_dict lida com ambos
+        raw_points = data.get("decision_points_final", [])
+        if not isinstance(raw_points, list):
+            raw_points = []
+        raw_proofs = data.get("proofs", [])
+        if not isinstance(raw_proofs, list):
+            raw_proofs = []
+        raw_conflicts = data.get("conflicts_resolved", [])
+        if not isinstance(raw_conflicts, list):
+            raw_conflicts = []
         return cls(
             decision_id=data.get("decision_id", ""),
             run_id=data.get("run_id", ""),
             model_name=data.get("model_name", ""),
             final_answer=data.get("final_answer", ""),
-            decision_type=DecisionType(data.get("decision_type", "inconclusivo")),
+            decision_type=decision_type,
             confidence=float(data.get("confidence", 0.8)),
-            decision_points_final=[JudgePoint.from_dict(p) for p in data.get("decision_points_final", [])],
-            proofs=[Citation.from_dict(p) for p in data.get("proofs", [])],
-            unreadable_parts=data.get("unreadable_parts", []),
-            conflicts_resolved=[ConflictResolution.from_dict(c) for c in data.get("conflicts_resolved", [])],
-            conflicts_unresolved=data.get("conflicts_unresolved", []),
-            qa_final=data.get("qa_final", []),
-            judges_consulted=data.get("judges_consulted", []),
-            auditors_consulted=data.get("auditors_consulted", []),
-            errors=data.get("errors", []),
-            warnings=data.get("warnings", []),
+            decision_points_final=[JudgePoint.from_dict(p) for p in raw_points],
+            proofs=[Citation.from_dict(p) for p in raw_proofs],
+            unreadable_parts=data.get("unreadable_parts", []) if isinstance(data.get("unreadable_parts"), list) else [],
+            conflicts_resolved=[ConflictResolution.from_dict(c) for c in raw_conflicts],
+            conflicts_unresolved=data.get("conflicts_unresolved", []) if isinstance(data.get("conflicts_unresolved"), list) else [],
+            qa_final=data.get("qa_final", []) if isinstance(data.get("qa_final"), list) else [],
+            judges_consulted=data.get("judges_consulted", []) if isinstance(data.get("judges_consulted"), list) else [],
+            auditors_consulted=data.get("auditors_consulted", []) if isinstance(data.get("auditors_consulted"), list) else [],
+            errors=data.get("errors", []) if isinstance(data.get("errors"), list) else [],
+            warnings=data.get("warnings", []) if isinstance(data.get("warnings"), list) else [],
         )
 
     def generate_markdown(self) -> str:
