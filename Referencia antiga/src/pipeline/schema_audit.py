@@ -9,6 +9,11 @@ REGRAS:
 1. Cada finding/point DEVE ter pelo menos 1 citation
 2. Se parsing falhar, criar instância mínima com errors (não abortar)
 3. Reutilizar SourceSpan de schema_unified.py
+
+CHANGELOG:
+- 2026-02-10: Fix campos vazios no generate_markdown (FinalDecision, JudgeOpinion)
+- 2026-02-10: Filtrar INTEGRITY_WARNING dos erros visíveis no Markdown
+- 2026-02-10: Melhor fallback para campos vazios em ConflictResolution/Disagreement
 """
 
 import json
@@ -280,10 +285,11 @@ class AuditReport:
             "",
         ]
 
-        # Erros/Warnings
-        if self.errors:
+        # Erros/Warnings (filtrar INTEGRITY_WARNING - são internos)
+        visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
+        if visible_errors:
             lines.append("## ⚠️ Erros")
-            for err in self.errors:
+            for err in visible_errors:
                 lines.append(f"- {err}")
             lines.append("")
 
@@ -497,9 +503,11 @@ class JudgeOpinion:
             "",
         ]
 
-        if self.errors:
+        # FIX 2026-02-10: Filtrar INTEGRITY_WARNING dos erros visíveis
+        visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
+        if visible_errors:
             lines.append("## ⚠️ Erros")
-            for err in self.errors:
+            for err in visible_errors:
                 lines.append(f"- {err}")
             lines.append("")
 
@@ -516,15 +524,18 @@ class JudgeOpinion:
             if point.risks:
                 lines.append(f"**Riscos:** {', '.join(point.risks)}")
 
-        # Disagreements
-        if self.disagreements:
-            lines.append(f"\n## Desacordos ({len(self.disagreements)})")
-            for d in self.disagreements:
+        # FIX 2026-02-10: Disagreements - filtrar vazios
+        non_empty_disagreements = [d for d in self.disagreements if d.reason or d.alternative_view]
+        if non_empty_disagreements:
+            lines.append(f"\n## Desacordos ({len(non_empty_disagreements)})")
+            for d in non_empty_disagreements:
                 lines.extend([
                     f"\n### Discorda de {d.target_type} {d.target_id}",
-                    f"**Razão:** {d.reason}",
-                    f"**Visão alternativa:** {d.alternative_view}",
                 ])
+                if d.reason:
+                    lines.append(f"**Razão:** {d.reason}")
+                if d.alternative_view:
+                    lines.append(f"**Visão alternativa:** {d.alternative_view}")
 
         # Q&A
         if self.qa_responses:
@@ -685,7 +696,11 @@ class FinalDecision:
         )
 
     def generate_markdown(self) -> str:
-        """Gera Markdown a partir da estrutura JSON."""
+        """
+        Gera Markdown a partir da estrutura JSON.
+
+        FIX 2026-02-10: Filtra campos vazios, INTEGRITY_WARNINGs, e melhora formatação.
+        """
         lines = [
             "# DECISÃO FINAL DO PRESIDENTE",
             "",
@@ -701,13 +716,14 @@ class FinalDecision:
             "",
         ]
 
-        # Erros
-        if self.errors:
+        # FIX 2026-02-10: Filtrar INTEGRITY_WARNING dos erros visíveis
+        visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
+        if visible_errors:
             lines.extend([
                 "## ⚠️ Erros Encontrados",
                 "",
             ])
-            for err in self.errors:
+            for err in visible_errors:
                 lines.append(f"- {err}")
             lines.append("")
 
@@ -718,29 +734,41 @@ class FinalDecision:
                 "",
             ])
             for i, point in enumerate(self.decision_points_final, 1):
+                # FIX 2026-02-10: Garantir que conclusion não está vazia
+                conclusion = point.conclusion or "(Conclusão não disponível)"
+                rationale = point.rationale or "(Fundamentação não disponível)"
                 lines.extend([
-                    f"### {i}. {point.conclusion}",
+                    f"### {i}. {conclusion}",
                     "",
-                    f"**Fundamentação:** {point.rationale}",
+                    f"**Fundamentação:** {rationale}",
                     "",
                 ])
                 if point.legal_basis:
                     lines.append(f"**Base Legal:** {', '.join(point.legal_basis)}")
                     lines.append("")
+                if point.confidence and point.confidence != 0.8:  # Só mostrar se diferente do default
+                    lines.append(f"**Confiança:** {point.confidence:.0%}")
+                    lines.append("")
 
-        # Conflitos resolvidos
-        if self.conflicts_resolved:
+        # FIX 2026-02-10: Conflitos resolvidos - filtrar vazios
+        non_empty_conflicts = [c for c in self.conflicts_resolved
+                               if c.chosen_value or c.reasoning or c.resolution]
+        if non_empty_conflicts:
             lines.extend([
                 "## Conflitos Resolvidos",
                 "",
             ])
-            for conflict in self.conflicts_resolved:
-                lines.extend([
-                    f"### {conflict.conflict_id}",
-                    f"**Valor escolhido:** {conflict.chosen_value}",
-                    f"**Razão:** {conflict.reasoning}",
-                    "",
-                ])
+            for conflict in non_empty_conflicts:
+                # Usar resolution como título se conflict_id é genérico
+                title = conflict.resolution or conflict.conflict_id or "Conflito"
+                lines.append(f"### {title}")
+                if conflict.chosen_value:
+                    lines.append(f"**Valor escolhido:** {conflict.chosen_value}")
+                if conflict.reasoning:
+                    lines.append(f"**Razão:** {conflict.reasoning}")
+                if conflict.conflicting_ids:
+                    lines.append(f"**IDs em conflito:** {', '.join(conflict.conflicting_ids)}")
+                lines.append("")
 
         # Conflitos não resolvidos
         if self.conflicts_unresolved:
@@ -749,7 +777,9 @@ class FinalDecision:
                 "",
             ])
             for conflict in self.conflicts_unresolved:
-                lines.append(f"- {conflict.get('description', 'Conflito sem descrição')}")
+                desc = conflict.get('description', '') if isinstance(conflict, dict) else str(conflict)
+                if desc:
+                    lines.append(f"- {desc}")
             lines.append("")
 
         # Partes não processadas
@@ -770,10 +800,12 @@ class FinalDecision:
                 "",
             ])
             for i, qa in enumerate(self.qa_final, 1):
+                question = qa.get('question', 'Pergunta') if isinstance(qa, dict) else str(qa)
+                answer = qa.get('final_answer', qa.get('answer', 'Sem resposta')) if isinstance(qa, dict) else str(qa)
                 lines.extend([
-                    f"### {i}. {qa.get('question', 'Pergunta')}",
+                    f"### {i}. {question}",
                     "",
-                    qa.get('final_answer', 'Sem resposta'),
+                    answer,
                     "",
                 ])
 
