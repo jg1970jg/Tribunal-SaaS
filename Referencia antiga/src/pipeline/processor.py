@@ -218,8 +218,17 @@ class PipelineResult:
             "timestamp_fim": self.timestamp_fim.isoformat() if self.timestamp_fim else None,
             "total_tokens": self.total_tokens,
             "total_latencia_ms": self.total_latencia_ms,
+            "duracao_total_s": round(
+                (self.timestamp_fim - self.timestamp_inicio).total_seconds(), 1
+            ) if self.timestamp_fim else 0.0,
             "sucesso": self.sucesso,
             "erro": self.erro,
+            # Metadados do documento
+            "documento_texto": self.documento.text[:50000] if self.documento and self.documento.text else "",
+            "documento_filename": self.documento.filename if self.documento else "",
+            "documento_chars": self.documento.num_chars if self.documento else 0,
+            "documento_palavras": self.documento.num_words if self.documento else 0,
+            "documento_paginas": getattr(self.documento, 'num_pages', None) if self.documento else None,
         }
 
 
@@ -2962,14 +2971,14 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                 audit_reports, bruto_f2, consolidado_f2, chefe_report = self._fase2_auditoria_unified(
                     consolidado_f1, area_direito, run_id
                 )
-                # Criar FaseResult para compatibilidade
+                # Criar FaseResult para compatibilidade (estimar tokens do conteúdo)
                 auditorias = [
                     FaseResult(
                         fase="auditoria",
                         modelo=r.model_name,
                         role=f"auditor_{r.auditor_id}",
                         conteudo=r.to_markdown(),
-                        tokens_usados=0,
+                        tokens_usados=len(r.to_markdown()) // 3,
                         latencia_ms=0,
                         sucesso=len(r.errors) == 0,
                     )
@@ -3014,14 +3023,14 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                 judge_opinions, respostas_qa = self._fase3_julgamento_unified(
                     consolidado_f2, area_direito, perguntas, run_id
                 )
-                # Criar FaseResult para compatibilidade
+                # Criar FaseResult para compatibilidade (estimar tokens do conteúdo)
                 pareceres = [
                     FaseResult(
                         fase="julgamento",
                         modelo=o.model_name,
                         role=f"juiz_{o.judge_id}",
                         conteudo=o.to_markdown(),
-                        tokens_usados=0,
+                        tokens_usados=len(o.to_markdown()) // 3,
                         latencia_ms=0,
                         sucesso=len(o.errors) == 0,
                     )
@@ -3060,7 +3069,10 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             # Calcular totais
             todos_resultados = extracoes + auditorias + pareceres
             result.total_tokens = sum(r.tokens_usados for r in todos_resultados)
-            result.total_latencia_ms = sum(r.latencia_ms for r in todos_resultados)
+            # Adicionar tokens do presidente (não está em pareceres)
+            result.total_tokens += len(presidente) // 3 if presidente else 0
+            # Latência real = tempo decorrido desde o início do pipeline
+            result.total_latencia_ms = (datetime.now() - result.timestamp_inicio).total_seconds() * 1000
 
             result.sucesso = True
             self._reportar_progresso("concluido", 100, "Pipeline concluido!")

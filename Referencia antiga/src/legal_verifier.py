@@ -66,9 +66,10 @@ class VerificacaoLegal:
     mensagem: str = ""
 
     def to_dict(self) -> Dict:
+        artigo = self.citacao.artigo.replace("ºº", "º") if self.citacao.artigo else ""
         return {
             "diploma": self.citacao.diploma,
-            "artigo": self.citacao.artigo,
+            "artigo": artigo,
             "texto_original": self.citacao.texto_original,
             "texto_normalizado": self.citacao.texto_normalizado,
             "existe": self.existe,
@@ -99,19 +100,26 @@ class LegalVerifier:
     # Padrões de normalização para diplomas portugueses
     DIPLOMA_PATTERNS = {
         r"c[óo]digo\s*civil": "Código Civil",
-        r"cc": "Código Civil",
+        r"\bcc\b": "Código Civil",
         r"c[óo]digo\s*penal": "Código Penal",
-        r"cp": "Código Penal",
+        r"\bcp\b": "Código Penal",
         r"c[óo]digo\s*(?:do\s*)?trabalho": "Código do Trabalho",
-        r"ct": "Código do Trabalho",
+        r"\bct\b": "Código do Trabalho",
         r"c[óo]digo\s*(?:de\s*)?processo\s*civil": "Código de Processo Civil",
-        r"cpc": "Código de Processo Civil",
+        r"\bcpc\b": "Código de Processo Civil",
         r"c[óo]digo\s*(?:de\s*)?processo\s*penal": "Código de Processo Penal",
-        r"cpp": "Código de Processo Penal",
+        r"\bcpp\b": "Código de Processo Penal",
         r"constitui[çc][ãa]o": "Constituição da República Portuguesa",
-        r"crp": "Constituição da República Portuguesa",
+        r"\bcrp\b": "Constituição da República Portuguesa",
         r"c[óo]digo\s*comercial": "Código Comercial",
-        r"ccom": "Código Comercial",
+        r"\bccom\b": "Código Comercial",
+        r"\bnrau\b": "Lei n.º 6/2006",
+        r"\bcirs?\b": "Código do IRS",
+        r"c[óo]digo\s*(?:do\s*)?irs": "Código do IRS",
+        r"\brjue\b": "Decreto-Lei n.º 555/99",
+        r"\bcsc\b": "Código das Sociedades Comerciais",
+        r"c[óo]digo\s*(?:das\s*)?sociedades": "Código das Sociedades Comerciais",
+        r"\bcpa\b": "Código do Procedimento Administrativo",
         r"lei\s*(?:n[.º°]?\s*)?(\d+[/-]\d+)": r"Lei n.º \1",
         r"decreto[- ]lei\s*(?:n[.º°]?\s*)?(\d+[/-]\d+)": r"Decreto-Lei n.º \1",
         r"dl\s*(?:n[.º°]?\s*)?(\d+[/-]\d+)": r"Decreto-Lei n.º \1",
@@ -198,9 +206,13 @@ class LegalVerifier:
         artigo_num = artigo_match.group(1)
         artigo_letra = artigo_match.group(2) if artigo_match.lastindex >= 2 else None
 
+        # Garantir que artigo termina com exactamente um º (nunca ºº)
         artigo = f"{artigo_num}º"
         if artigo_letra:
             artigo += f"-{artigo_letra}"
+        # Sanitizar: remover qualquer duplicação de º
+        while "ºº" in artigo:
+            artigo = artigo.replace("ºº", "º")
 
         # Extrair número e alínea se presentes
         numero = None
