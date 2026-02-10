@@ -3,6 +3,7 @@
 CONTROLO DE CUSTOS - Tribunal GoldenMaster
 ============================================================
 Monitoriza e controla custos/tokens por execução do pipeline.
+Preços DINÂMICOS via OpenRouter API com cache de 24h.
 Bloqueia execução se limites forem excedidos.
 ============================================================
 """
@@ -14,38 +15,275 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from threading import Lock
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# PREÇOS POR MODELO (USD por 1M tokens) — Atualizado Fev 2026
+# PREÇOS HARDCODED — FALLBACK de último recurso (Fev 2026)
 # ============================================================
-# Fontes: platform.openai.com/docs/pricing, platform.claude.com/docs/en/about-claude/pricing,
-#          ai.google.dev/gemini-api/docs/pricing, docs.x.ai/developers/models,
-#          api-docs.deepseek.com/quick_start/pricing
-MODEL_PRICING = {
-    # OpenAI (Fev 2026)
+HARDCODED_PRICING = {
     "openai/gpt-4o": {"input": 2.50, "output": 10.00},
     "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "openai/gpt-5.2": {"input": 1.75, "output": 14.00},
     "openai/gpt-5.2-pro": {"input": 21.00, "output": 168.00},
-    # Anthropic (Fev 2026 — Opus 4.5 desceu 66% vs Opus 4)
     "anthropic/claude-opus-4.5": {"input": 5.00, "output": 25.00},
-    "anthropic/claude-3-5-sonnet": {"input": 3.00, "output": 15.00},
+    "anthropic/claude-3-5-sonnet": {"input": 6.00, "output": 30.00},
     "anthropic/claude-3.5-haiku": {"input": 0.25, "output": 1.25},
-    # Google (Fev 2026)
     "google/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
     "google/gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
-    # DeepSeek (V3.2 — set 2025)
     "deepseek/deepseek-chat": {"input": 0.28, "output": 0.42},
-    # Qwen
     "qwen/qwen-235b-instruct": {"input": 0.20, "output": 0.60},
-    # xAI (Fev 2026)
     "x-ai/grok-4.1-fast": {"input": 0.20, "output": 0.50},
     "x-ai/grok-4.1": {"input": 0.20, "output": 0.50},
-    # Default para modelos desconhecidos
     "default": {"input": 1.00, "output": 4.00},
 }
+
+# Alias: MODEL_PRICING aponta para hardcoded para retrocompatibilidade
+MODEL_PRICING = HARDCODED_PRICING
+
+
+# ============================================================
+# DYNAMIC PRICING — Preços reais via OpenRouter API
+# ============================================================
+class DynamicPricing:
+    """
+    Busca preços reais da OpenRouter API com cache de 24h.
+
+    Hierarquia de fontes:
+    1. [PRECO-LIVE] — OpenRouter API (fresh fetch)
+    2. [PRECO-CACHE] — Cache em memória (<24h ou stale se API down)
+    3. [PRECO-HARDCODED] — Tabela hardcoded (último recurso)
+    """
+
+    OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
+    CACHE_TTL_HOURS = 24
+    FETCH_TIMEOUT = 15  # segundos
+
+    # Cache de classe (partilhado entre todas as instâncias/runs)
+    _cache: Dict[str, Dict[str, float]] = {}
+    _cache_timestamp: Optional[datetime] = None
+    _cache_lock = Lock()
+    _models_used: Dict[str, Dict] = {}  # {model: {input, output, fonte}}
+
+    @classmethod
+    def fetch_openrouter_prices(cls) -> bool:
+        """
+        Busca preços de TODOS os modelos da OpenRouter API.
+
+        Returns:
+            True se fetch bem-sucedido, False caso contrário.
+        """
+        try:
+            logger.info("[PRECO] Buscando preços da OpenRouter API...")
+            client = httpx.Client(timeout=cls.FETCH_TIMEOUT)
+            response = client.get(cls.OPENROUTER_URL)
+            client.close()
+
+            if response.status_code != 200:
+                logger.warning(f"[PRECO] OpenRouter API retornou status {response.status_code}")
+                return False
+
+            data = response.json()
+            models = data.get("data", [])
+            if not models:
+                logger.warning("[PRECO] OpenRouter API retornou lista vazia")
+                return False
+
+            new_cache = {}
+            for model in models:
+                model_id = model.get("id", "")
+                pricing = model.get("pricing")
+                if not model_id or not pricing:
+                    continue
+
+                prompt_str = pricing.get("prompt", "0")
+                completion_str = pricing.get("completion", "0")
+
+                try:
+                    # Preços vêm em USD/token — converter para USD/1M tokens
+                    input_per_1m = float(prompt_str) * 1_000_000
+                    output_per_1m = float(completion_str) * 1_000_000
+                except (ValueError, TypeError):
+                    continue
+
+                if input_per_1m > 0 or output_per_1m > 0:
+                    new_cache[model_id.lower()] = {
+                        "input": round(input_per_1m, 4),
+                        "output": round(output_per_1m, 4),
+                    }
+
+            with cls._cache_lock:
+                cls._cache = new_cache
+                cls._cache_timestamp = datetime.now()
+
+            logger.info(
+                f"[PRECO-LIVE] Carregados preços de {len(new_cache)} modelos da OpenRouter "
+                f"(timestamp: {cls._cache_timestamp.strftime('%H:%M:%S')})"
+            )
+            return True
+
+        except httpx.TimeoutException:
+            logger.warning("[PRECO] Timeout ao buscar preços da OpenRouter API")
+            return False
+        except Exception as e:
+            logger.warning(f"[PRECO] Erro ao buscar preços da OpenRouter API: {e}")
+            return False
+
+    @classmethod
+    def _is_cache_valid(cls) -> bool:
+        """Verifica se o cache está dentro do TTL."""
+        if not cls._cache_timestamp or not cls._cache:
+            return False
+        age_hours = (datetime.now() - cls._cache_timestamp).total_seconds() / 3600
+        return age_hours < cls.CACHE_TTL_HOURS
+
+    @classmethod
+    def _is_cache_stale(cls) -> bool:
+        """Verifica se existe cache (mesmo que expirado)."""
+        return bool(cls._cache) and cls._cache_timestamp is not None
+
+    @classmethod
+    def get_pricing(cls, model: str) -> Dict:
+        """
+        Retorna preço para um modelo com hierarquia:
+        1. Cache válido (<24h) → [PRECO-LIVE] ou [PRECO-CACHE]
+        2. Se cache expirado → tentar fetch → [PRECO-LIVE]
+        3. Se fetch falhar → cache stale → [PRECO-CACHE]
+        4. Se sem cache → hardcoded → [PRECO-HARDCODED]
+
+        Returns:
+            {"input": float, "output": float, "fonte": str}
+        """
+        model_clean = model.lower().strip()
+
+        # 1. Cache válido
+        if cls._is_cache_valid():
+            price = cls._lookup_in_cache(model_clean)
+            if price:
+                result = {**price, "fonte": "openrouter_live"}
+                cls._track_model(model_clean, result)
+                return result
+
+        # 2. Cache expirado — tentar refresh
+        if not cls._is_cache_valid():
+            fetched = cls.fetch_openrouter_prices()
+            if fetched:
+                price = cls._lookup_in_cache(model_clean)
+                if price:
+                    result = {**price, "fonte": "openrouter_live"}
+                    cls._track_model(model_clean, result)
+                    return result
+
+        # 3. Cache stale (API down mas temos dados antigos)
+        if cls._is_cache_stale():
+            price = cls._lookup_in_cache(model_clean)
+            if price:
+                age_hours = (datetime.now() - cls._cache_timestamp).total_seconds() / 3600
+                logger.warning(
+                    f"[PRECO-CACHE] Usando cache de {age_hours:.1f}h para {model} "
+                    f"(API indisponível)"
+                )
+                result = {**price, "fonte": f"cache_{age_hours:.0f}h"}
+                cls._track_model(model_clean, result)
+                return result
+
+        # 4. Fallback hardcoded
+        price = cls._lookup_hardcoded(model_clean)
+        logger.warning(f"[PRECO-HARDCODED] Usando preço hardcoded para {model}")
+        result = {**price, "fonte": "hardcoded"}
+        cls._track_model(model_clean, result)
+        return result
+
+    @classmethod
+    def _normalize(cls, name: str) -> str:
+        """Normaliza nome de modelo para comparação (3-5 == 3.5)."""
+        return name.replace("-", ".").replace("_", ".")
+
+    @classmethod
+    def _lookup_in_cache(cls, model_clean: str) -> Optional[Dict[str, float]]:
+        """Procura preço no cache (exact → normalized → partial)."""
+        with cls._cache_lock:
+            # Exact match
+            if model_clean in cls._cache:
+                return cls._cache[model_clean]
+
+            # Normalized match (3-5 == 3.5, etc.)
+            model_norm = cls._normalize(model_clean)
+            for key in cls._cache:
+                if cls._normalize(key) == model_norm:
+                    return cls._cache[key]
+
+            # Partial match
+            for key in cls._cache:
+                if key in model_clean or model_clean in key:
+                    return cls._cache[key]
+
+        return None
+
+    @classmethod
+    def _lookup_hardcoded(cls, model_clean: str) -> Dict[str, float]:
+        """Procura preço na tabela hardcoded."""
+        if model_clean in HARDCODED_PRICING:
+            return HARDCODED_PRICING[model_clean]
+
+        for key in HARDCODED_PRICING:
+            if key in model_clean or model_clean in key:
+                return HARDCODED_PRICING[key]
+
+        return HARDCODED_PRICING["default"]
+
+    @classmethod
+    def _track_model(cls, model: str, pricing: Dict):
+        """Guarda pricing usado para cada modelo (para relatório final)."""
+        cls._models_used[model] = {
+            "input": pricing["input"],
+            "output": pricing["output"],
+            "fonte": pricing["fonte"],
+        }
+
+    @classmethod
+    def get_models_used(cls) -> Dict[str, Dict]:
+        """Retorna preços usados por modelo neste run."""
+        return dict(cls._models_used)
+
+    @classmethod
+    def get_pricing_source(cls) -> str:
+        """Retorna a fonte principal dos preços."""
+        if cls._is_cache_valid():
+            return "openrouter_live"
+        if cls._is_cache_stale():
+            age = (datetime.now() - cls._cache_timestamp).total_seconds() / 3600
+            return f"cache_{age:.0f}h"
+        return "hardcoded"
+
+    @classmethod
+    def get_cache_info(cls) -> Dict:
+        """Retorna info sobre o estado do cache."""
+        return {
+            "has_cache": bool(cls._cache),
+            "cache_size": len(cls._cache),
+            "cache_valid": cls._is_cache_valid(),
+            "cache_timestamp": cls._cache_timestamp.isoformat() if cls._cache_timestamp else None,
+            "cache_age_hours": round(
+                (datetime.now() - cls._cache_timestamp).total_seconds() / 3600, 1
+            ) if cls._cache_timestamp else None,
+        }
+
+    @classmethod
+    def prefetch(cls):
+        """Pre-fetch não bloqueante. Chama no início do pipeline."""
+        if not cls._is_cache_valid():
+            cls.fetch_openrouter_prices()
+
+    @classmethod
+    def reset(cls):
+        """Reset do cache e tracking (para testes)."""
+        with cls._cache_lock:
+            cls._cache = {}
+            cls._cache_timestamp = None
+            cls._models_used = {}
 
 
 @dataclass
@@ -57,6 +295,7 @@ class PhaseUsage:
     completion_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float = 0.0
+    pricing_source: str = ""  # "openrouter_live", "cache_Xh", "hardcoded"
     timestamp: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> Dict:
@@ -67,6 +306,7 @@ class PhaseUsage:
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
             "cost_usd": round(self.cost_usd, 6),
+            "pricing_source": self.pricing_source,
             "timestamp": self.timestamp.isoformat(),
         }
 
@@ -123,11 +363,7 @@ class TokenLimitExceededError(Exception):
 class CostController:
     """
     Controlador de custos para o pipeline.
-
-    Funcionalidades:
-    - Contabiliza tokens e custos por fase
-    - Bloqueia execução se exceder limites
-    - Gera relatórios de uso
+    Usa DynamicPricing para preços reais via OpenRouter API.
 
     Uso:
         controller = CostController(run_id="xxx", budget_limit=5.0)
@@ -142,12 +378,6 @@ class CostController:
         budget_limit_usd: Optional[float] = None,
         token_limit: Optional[int] = None,
     ):
-        """
-        Args:
-            run_id: ID da execução
-            budget_limit_usd: Limite de custo em USD (None = usar env var ou 5.0)
-            token_limit: Limite de tokens (None = usar env var ou 500000)
-        """
         self.run_id = run_id
 
         # Limites (do .env ou defaults)
@@ -164,25 +394,20 @@ class CostController:
         # Thread safety
         self._lock = Lock()
 
-        logger.info(f"CostController inicializado: budget=${self.budget_limit:.2f}, tokens={self.token_limit:,}")
+        # Pre-fetch preços (usa cache se válido, fetch se expirado)
+        DynamicPricing.prefetch()
+
+        logger.info(
+            f"CostController inicializado: budget=${self.budget_limit:.2f}, "
+            f"tokens={self.token_limit:,}, "
+            f"precos={DynamicPricing.get_pricing_source()}"
+        )
 
     def get_model_pricing(self, model: str) -> Dict[str, float]:
-        """Retorna preços para um modelo."""
-        # Normalizar nome do modelo
-        model_clean = model.lower().strip()
-
-        # Procurar match exato
-        if model_clean in MODEL_PRICING:
-            return MODEL_PRICING[model_clean]
-
-        # Procurar match parcial
-        for key in MODEL_PRICING:
-            if key in model_clean or model_clean in key:
-                return MODEL_PRICING[key]
-
-        # Default
-        logger.warning(f"Modelo não encontrado na tabela de preços: {model}, usando default")
-        return MODEL_PRICING["default"]
+        """Retorna preços para um modelo via DynamicPricing."""
+        pricing = DynamicPricing.get_pricing(model)
+        # Retornar apenas input/output (sem 'fonte') para compatibilidade
+        return {"input": pricing["input"], "output": pricing["output"]}
 
     def calculate_cost(
         self,
@@ -190,18 +415,10 @@ class CostController:
         prompt_tokens: int,
         completion_tokens: int,
     ) -> float:
-        """
-        Calcula custo de uma chamada.
-
-        Returns:
-            Custo em USD
-        """
+        """Calcula custo de uma chamada em USD."""
         pricing = self.get_model_pricing(model)
-
-        # Converter de preço por 1M tokens para tokens reais
         input_cost = (prompt_tokens / 1_000_000) * pricing["input"]
         output_cost = (completion_tokens / 1_000_000) * pricing["output"]
-
         return input_cost + output_cost
 
     def register_usage(
@@ -212,26 +429,16 @@ class CostController:
         completion_tokens: int,
         raise_on_exceed: bool = True,
     ) -> PhaseUsage:
-        """
-        Regista uso de uma chamada LLM.
-
-        Args:
-            phase: Nome da fase (ex: "fase1_E1", "fase2_A1")
-            model: Nome do modelo
-            prompt_tokens: Tokens de input
-            completion_tokens: Tokens de output
-            raise_on_exceed: Se True, levanta exceção se limites excedidos
-
-        Returns:
-            PhaseUsage com detalhes
-
-        Raises:
-            BudgetExceededError: Se budget excedido
-            TokenLimitExceededError: Se tokens excedidos
-        """
+        """Regista uso de uma chamada LLM."""
         with self._lock:
+            # Obter pricing com fonte
+            pricing = DynamicPricing.get_pricing(model)
+            fonte = pricing["fonte"]
+
             # Calcular custo
-            cost = self.calculate_cost(model, prompt_tokens, completion_tokens)
+            input_cost = (prompt_tokens / 1_000_000) * pricing["input"]
+            output_cost = (completion_tokens / 1_000_000) * pricing["output"]
+            cost = input_cost + output_cost
             total_tokens = prompt_tokens + completion_tokens
 
             # Criar registo
@@ -242,6 +449,7 @@ class CostController:
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
                 cost_usd=cost,
+                pricing_source=fonte,
             )
 
             # Adicionar ao total
@@ -251,11 +459,11 @@ class CostController:
             self.usage.total_tokens += total_tokens
             self.usage.total_cost_usd += cost
 
-            # Log
+            # Log detalhado com fonte do preço
             logger.info(
                 f"[CUSTO] {phase}: {model} | "
-                f"{total_tokens:,} tokens | "
-                f"${cost:.4f} | "
+                f"{prompt_tokens:,}+{completion_tokens:,}={total_tokens:,} tokens | "
+                f"${cost:.4f} [{fonte.upper()}] | "
                 f"Total: ${self.usage.total_cost_usd:.4f}/{self.budget_limit:.2f}"
             )
 
@@ -267,7 +475,6 @@ class CostController:
 
     def _check_limits(self):
         """Verifica se limites foram excedidos."""
-        # Verificar budget
         if self.usage.total_cost_usd > self.budget_limit:
             self.usage.blocked = True
             self.usage.block_reason = f"Budget excedido: ${self.usage.total_cost_usd:.4f} > ${self.budget_limit:.2f}"
@@ -278,7 +485,6 @@ class CostController:
                 self.budget_limit,
             )
 
-        # Verificar tokens
         if self.usage.total_tokens > self.token_limit:
             self.usage.blocked = True
             self.usage.block_reason = f"Tokens excedidos: {self.usage.total_tokens:,} > {self.token_limit:,}"
@@ -290,12 +496,7 @@ class CostController:
             )
 
     def can_continue(self) -> bool:
-        """
-        Verifica se pode continuar processamento.
-
-        Returns:
-            True se dentro dos limites
-        """
+        """Verifica se pode continuar processamento."""
         with self._lock:
             return (
                 not self.usage.blocked and
@@ -344,7 +545,6 @@ class CostController:
 
     def get_cost_by_phase(self) -> Dict[str, float]:
         """Retorna custo agrupado por fase (fase1, fase2, fase3, fase4)."""
-        # Mapeamento de role_name → fase do pipeline
         PHASE_MAP = {
             "fase1": "fase1", "extrator": "fase1", "agregador": "fase1",
             "fase2": "fase2", "auditor": "fase2", "chefe": "fase2",
@@ -359,6 +559,15 @@ class CostController:
                 costs[mapped] = 0.0
             costs[mapped] += phase.cost_usd
         return {k: round(v, 4) for k, v in costs.items()}
+
+    def get_pricing_info(self) -> Dict:
+        """Retorna informação sobre preços usados neste run."""
+        return {
+            "fonte": DynamicPricing.get_pricing_source(),
+            "timestamp": DynamicPricing._cache_timestamp.isoformat() if DynamicPricing._cache_timestamp else None,
+            "cache_info": DynamicPricing.get_cache_info(),
+            "precos_por_modelo": DynamicPricing.get_models_used(),
+        }
 
 
 # ============================================================

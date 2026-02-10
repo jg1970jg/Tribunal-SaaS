@@ -3227,6 +3227,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
 
                 MARGEM = 1.40  # 40% margem
                 custo_por_fase = self._cost_controller.get_cost_by_phase()
+                pricing_info = self._cost_controller.get_pricing_info()
                 result.custos = {
                     "custo_total_usd": round(run_usage.total_cost_usd, 4),
                     "custo_cliente_usd": round(run_usage.total_cost_usd * MARGEM, 4),
@@ -3238,12 +3239,17 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                     "detalhado": [pu.to_dict() for pu in run_usage.phases],
                     "budget_limit_usd": run_usage.budget_limit_usd,
                     "budget_restante_usd": round(self._cost_controller.get_remaining_budget(), 4),
+                    # Informação sobre preços dinâmicos
+                    "precos_fonte": pricing_info["fonte"],
+                    "precos_timestamp": pricing_info["timestamp"],
+                    "precos_por_modelo": pricing_info["precos_por_modelo"],
                 }
                 logger.info(
                     f"[CUSTO-FINAL] Total: ${run_usage.total_cost_usd:.4f} | "
                     f"Cliente: ${run_usage.total_cost_usd * MARGEM:.4f} | "
                     f"Tokens: {run_usage.total_tokens:,} | "
-                    f"Chamadas: {len(run_usage.phases)}"
+                    f"Chamadas: {len(run_usage.phases)} | "
+                    f"Preços: {pricing_info['fonte']}"
                 )
             else:
                 # Fallback se CostController não disponível
