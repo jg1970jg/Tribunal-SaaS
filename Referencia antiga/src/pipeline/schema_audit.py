@@ -14,6 +14,8 @@ CHANGELOG:
 - 2026-02-10: Fix campos vazios no generate_markdown (FinalDecision, JudgeOpinion)
 - 2026-02-10: Filtrar INTEGRITY_WARNING dos erros visíveis no Markdown
 - 2026-02-10: Melhor fallback para campos vazios em ConflictResolution/Disagreement
+- 2026-02-10: Fix Bug #10 — _safe_confidence() converte string "alta"/"média"/"baixa" para float
+- 2026-02-10: Fix Bug #4 — confidence dinâmica baseada em evidência quando LLM não envia valor
 """
 
 import json
@@ -28,22 +30,54 @@ from src.pipeline.schema_unified import SourceSpan, ExtractionMethod
 
 
 # ============================================================================
+# HELPER: CONVERSÃO SEGURA DE CONFIDENCE (FIX Bug #10)
+# ============================================================================
+
+def _safe_confidence(value) -> float:
+    """
+    Converte confidence para float, mesmo quando LLM devolve texto.
+    
+    Fix Bug #10: GPT-5.2 devolveu "alta" em vez de 0.85, causando
+    'could not convert string to float' e crashando o JudgeOpinion.
+    """
+    if isinstance(value, (int, float)):
+        return max(0.0, min(1.0, float(value)))
+    if isinstance(value, str):
+        text_map = {
+            "alta": 0.85, "high": 0.85,
+            "média": 0.65, "media": 0.65, "medium": 0.65,
+            "baixa": 0.35, "low": 0.35,
+            "muito alta": 0.95, "very high": 0.95,
+            "muito baixa": 0.15, "very low": 0.15,
+        }
+        mapped = text_map.get(value.lower().strip())
+        if mapped is not None:
+            return mapped
+        try:
+            num = float(value)
+            return max(0.0, min(1.0, num))
+        except ValueError:
+            return 0.5
+    return 0.5
+
+
+# ============================================================================
 # ENUMS
 # ============================================================================
 
 class FindingType(str, Enum):
     """Tipo de achado do auditor."""
-    FACTO = "facto"           # Facto verificável no documento
-    INFERENCIA = "inferencia" # Dedução lógica a partir de factos
-    HIPOTESE = "hipotese"     # Suposição que requer verificação
+    FACTO = "facto"
+    INFERENCIA = "inferencia"
+    HIPOTESE = "hipotese"
 
 
 class Severity(str, Enum):
     """Gravidade do achado."""
-    CRITICO = "critico"   # Bloqueia decisão
-    ALTO = "alto"         # Afeta significativamente
-    MEDIO = "medio"       # Relevante mas não crítico
-    BAIXO = "baixo"       # Informativo
+    CRITICO = "critico"
+    ALTO = "alto"
+    MEDIO = "medio"
+    BAIXO = "baixo"
 
 
 class DecisionType(str, Enum):
@@ -69,9 +103,9 @@ class Citation:
     start_char: int = 0
     end_char: int = 0
     page_num: Optional[int] = None
-    extractor_id: Optional[str] = None  # E1, E2, etc. (se originado de extração)
-    method: str = "text"  # text | ocr | hybrid
-    excerpt: str = ""     # Trecho do texto citado (max 200 chars)
+    extractor_id: Optional[str] = None
+    method: str = "text"
+    excerpt: str = ""
     confidence: float = 1.0
 
     @classmethod
@@ -134,21 +168,18 @@ class AuditFinding:
     is_determinant: True se este achado é crucial para a análise.
     """
     finding_id: str
-    claim: str  # Afirmação do auditor
+    claim: str
     finding_type: FindingType
     severity: Severity
-    citations: List[Citation]  # OBRIGATÓRIO - pelo menos 1
-    evidence_item_ids: List[str] = field(default_factory=list)  # Referências a EvidenceItems da F1
-    conflicts: List[str] = field(default_factory=list)  # IDs de outros findings conflitantes
+    citations: List[Citation]
+    evidence_item_ids: List[str] = field(default_factory=list)
+    conflicts: List[str] = field(default_factory=list)
     notes: str = ""
-    is_determinant: bool = False  # Se True, é crucial para a decisão
+    is_determinant: bool = False
 
     def __post_init__(self):
         if not self.finding_id:
             self.finding_id = f"finding_{uuid.uuid4().hex[:8]}"
-
-        # Validação: citations obrigatório (mas permitir vazio em caso de erro)
-        # A validação estrita é feita no validate()
 
     def validate(self) -> Tuple[bool, List[str]]:
         """Valida o finding. Retorna (is_valid, errors)."""
@@ -190,10 +221,10 @@ class AuditFinding:
 @dataclass
 class CoverageCheck:
     """Verificação de cobertura feita pelo auditor."""
-    docs_seen: List[str] = field(default_factory=list)  # doc_ids processados
-    pages_seen: List[int] = field(default_factory=list)  # páginas verificadas
-    chunks_seen: List[str] = field(default_factory=list)  # chunk_ids verificados
-    unreadable_units: List[Dict] = field(default_factory=list)  # [{doc_id, page_num?, chunk_id?, reason}]
+    docs_seen: List[str] = field(default_factory=list)
+    pages_seen: List[int] = field(default_factory=list)
+    chunks_seen: List[str] = field(default_factory=list)
+    unreadable_units: List[Dict] = field(default_factory=list)
     coverage_percent: float = 0.0
     notes: str = ""
 
@@ -221,16 +252,14 @@ class CoverageCheck:
 
 @dataclass
 class AuditReport:
-    """
-    Relatório completo de um auditor.
-    """
-    auditor_id: str  # A1, A2, A3, A4
+    """Relatório completo de um auditor."""
+    auditor_id: str
     model_name: str
     run_id: str
     findings: List[AuditFinding] = field(default_factory=list)
     coverage_check: CoverageCheck = field(default_factory=CoverageCheck)
     open_questions: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)  # Erros de parsing/execução
+    errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -241,12 +270,10 @@ class AuditReport:
     def validate(self) -> Tuple[bool, List[str]]:
         """Valida o relatório completo."""
         errors = []
-
         for finding in self.findings:
             is_valid, finding_errors = finding.validate()
             if not is_valid:
                 errors.extend(finding_errors)
-
         return len(errors) == 0, errors
 
     def to_dict(self) -> Dict:
@@ -284,18 +311,13 @@ class AuditReport:
             f"**Timestamp:** {self.timestamp.isoformat()}",
             "",
         ]
-
-        # Erros/Warnings (filtrar INTEGRITY_WARNING - são internos)
         visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
         if visible_errors:
             lines.append("## ⚠️ Erros")
             for err in visible_errors:
                 lines.append(f"- {err}")
             lines.append("")
-
-        # Findings por severidade
         lines.append(f"## Achados ({len(self.findings)})")
-
         for severity in [Severity.CRITICO, Severity.ALTO, Severity.MEDIO, Severity.BAIXO]:
             severity_findings = [f for f in self.findings if f.severity == severity]
             if severity_findings:
@@ -305,13 +327,11 @@ class AuditReport:
                     lines.append(f"- Tipo: {f.finding_type.value}")
                     if f.citations:
                         lines.append(f"- Citações:")
-                        for c in f.citations[:3]:  # Max 3 citações
+                        for c in f.citations[:3]:
                             page_info = f" (pág. {c.page_num})" if c.page_num else ""
                             lines.append(f"  - chars {c.start_char}-{c.end_char}{page_info}")
                             if c.excerpt:
                                 lines.append(f"    > _{c.excerpt[:100]}..._")
-
-        # Coverage
         lines.extend([
             "",
             "## Cobertura",
@@ -319,16 +339,12 @@ class AuditReport:
             f"- Páginas: {len(self.coverage_check.pages_seen)}",
             f"- Percentagem: {self.coverage_check.coverage_percent:.1f}%",
         ])
-
         if self.coverage_check.unreadable_units:
             lines.append(f"- Ilegíveis: {len(self.coverage_check.unreadable_units)}")
-
-        # Open questions
         if self.open_questions:
             lines.append("\n## Questões em Aberto")
             for q in self.open_questions:
                 lines.append(f"- {q}")
-
         return "\n".join(lines)
 
 
@@ -345,15 +361,15 @@ class JudgePoint:
     Pontos determinantes SEM citations geram SEM_PROVA_DETERMINANTE.
     """
     point_id: str
-    conclusion: str  # Conclusão do juiz
-    rationale: str   # Fundamentação
+    conclusion: str
+    rationale: str
     citations: List[Citation] = field(default_factory=list)
-    legal_basis: List[str] = field(default_factory=list)  # Artigos, leis citadas
+    legal_basis: List[str] = field(default_factory=list)
     risks: List[str] = field(default_factory=list)
     alternatives: List[str] = field(default_factory=list)
-    confidence: float = 0.8  # 0.0 a 1.0
-    finding_refs: List[str] = field(default_factory=list)  # Referências a finding_ids da F2
-    is_determinant: bool = False  # Se True, é crucial para a decisão
+    confidence: float = 0.8
+    finding_refs: List[str] = field(default_factory=list)
+    is_determinant: bool = False
 
     def __post_init__(self):
         if not self.point_id:
@@ -375,14 +391,26 @@ class JudgePoint:
 
     @classmethod
     def from_dict(cls, data) -> 'JudgePoint':
-        # Se for string em vez de dict, converter para dict mínimo
         if isinstance(data, str):
             data = {"conclusion": data, "point_id": f"point_str_{uuid.uuid4().hex[:6]}"}
         if not isinstance(data, dict):
             data = {"conclusion": str(data), "point_id": f"point_auto_{uuid.uuid4().hex[:6]}"}
-        # Se não tiver conclusion, usar str(data) como fallback
         if not data.get("conclusion"):
             data["conclusion"] = str({k: v for k, v in data.items() if k != "citations"})[:200]
+
+        # FIX Bug #10 + #4: confidence segura e dinâmica
+        raw_confidence = data.get("confidence")
+        if raw_confidence is None:
+            # Bug #4: sem confidence explícita — calcular baseada na evidência
+            n_citations = len(data.get("citations", []))
+            n_legal = len(data.get("legal_basis", []))
+            base = 0.60
+            bonus = min(0.30, n_citations * 0.05 + n_legal * 0.05)
+            computed_confidence = base + bonus
+        else:
+            # Bug #10: converter "alta"/"média"/"baixa" para float
+            computed_confidence = _safe_confidence(raw_confidence)
+
         return cls(
             point_id=data.get("point_id", ""),
             conclusion=data.get("conclusion", ""),
@@ -391,7 +419,7 @@ class JudgePoint:
             legal_basis=data.get("legal_basis", []) if isinstance(data.get("legal_basis"), list) else [],
             risks=data.get("risks", []) if isinstance(data.get("risks"), list) else [],
             alternatives=data.get("alternatives", []) if isinstance(data.get("alternatives"), list) else [],
-            confidence=float(data.get("confidence", 0.8)),
+            confidence=computed_confidence,
             finding_refs=data.get("finding_refs", []) if isinstance(data.get("finding_refs"), list) else [],
             is_determinant=data.get("is_determinant", False),
         )
@@ -401,8 +429,8 @@ class JudgePoint:
 class Disagreement:
     """Desacordo com outro juiz ou auditor."""
     disagreement_id: str
-    target_id: str  # finding_id ou point_id com que discorda
-    target_type: str  # "finding" ou "point"
+    target_id: str
+    target_type: str
     reason: str
     alternative_view: str
     citations: List[Citation] = field(default_factory=list)
@@ -439,16 +467,14 @@ class Disagreement:
 
 @dataclass
 class JudgeOpinion:
-    """
-    Parecer completo de um juiz.
-    """
-    judge_id: str  # J1, J2, J3
+    """Parecer completo de um juiz."""
+    judge_id: str
     model_name: str
     run_id: str
-    recommendation: DecisionType  # procedente/improcedente/etc
+    recommendation: DecisionType
     decision_points: List[JudgePoint] = field(default_factory=list)
     disagreements: List[Disagreement] = field(default_factory=list)
-    qa_responses: List[Dict] = field(default_factory=list)  # [{question, answer, citations}]
+    qa_responses: List[Dict] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
@@ -469,16 +495,13 @@ class JudgeOpinion:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'JudgeOpinion':
-        # Validar recommendation - pode vir como string inválida
         try:
             recommendation = DecisionType(data.get("recommendation", "inconclusivo"))
         except ValueError:
             recommendation = DecisionType.INCONCLUSIVO
-        # decision_points pode conter strings ou dicts - JudgePoint.from_dict lida com ambos
         raw_points = data.get("decision_points", [])
         if not isinstance(raw_points, list):
             raw_points = []
-        # disagreements pode conter strings ou dicts
         raw_disagree = data.get("disagreements", [])
         if not isinstance(raw_disagree, list):
             raw_disagree = []
@@ -502,16 +525,12 @@ class JudgeOpinion:
             f"**Recomendação:** {self.recommendation.value.upper()}",
             "",
         ]
-
-        # FIX 2026-02-10: Filtrar INTEGRITY_WARNING dos erros visíveis
         visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
         if visible_errors:
             lines.append("## ⚠️ Erros")
             for err in visible_errors:
                 lines.append(f"- {err}")
             lines.append("")
-
-        # Decision points
         lines.append(f"## Pontos de Decisão ({len(self.decision_points)})")
         for point in self.decision_points:
             lines.extend([
@@ -523,21 +542,15 @@ class JudgeOpinion:
                 lines.append(f"**Base Legal:** {', '.join(point.legal_basis)}")
             if point.risks:
                 lines.append(f"**Riscos:** {', '.join(point.risks)}")
-
-        # FIX 2026-02-10: Disagreements - filtrar vazios
         non_empty_disagreements = [d for d in self.disagreements if d.reason or d.alternative_view]
         if non_empty_disagreements:
             lines.append(f"\n## Desacordos ({len(non_empty_disagreements)})")
             for d in non_empty_disagreements:
-                lines.extend([
-                    f"\n### Discorda de {d.target_type} {d.target_id}",
-                ])
+                lines.extend([f"\n### Discorda de {d.target_type} {d.target_id}"])
                 if d.reason:
                     lines.append(f"**Razão:** {d.reason}")
                 if d.alternative_view:
                     lines.append(f"**Visão alternativa:** {d.alternative_view}")
-
-        # Q&A
         if self.qa_responses:
             lines.append("\n## Respostas Q&A")
             for i, qa in enumerate(self.qa_responses, 1):
@@ -545,7 +558,6 @@ class JudgeOpinion:
                     f"\n**{i}. {qa.get('question', 'Pergunta')}**",
                     f"{qa.get('answer', 'Sem resposta')}",
                 ])
-
         return "\n".join(lines)
 
 
@@ -557,9 +569,9 @@ class JudgeOpinion:
 class ConflictResolution:
     """Resolução de conflito entre juízes/auditores."""
     conflict_id: str
-    conflicting_ids: List[str]  # IDs dos findings/points em conflito
-    resolution: str  # Como foi resolvido
-    chosen_value: str  # Valor escolhido
+    conflicting_ids: List[str]
+    resolution: str
+    chosen_value: str
     reasoning: str
     citations: List[Citation] = field(default_factory=list)
 
@@ -595,43 +607,24 @@ class ConflictResolution:
 
 @dataclass
 class FinalDecision:
-    """
-    Decisão final do Presidente.
-    """
-    # Campos obrigatórios (sem default) primeiro
+    """Decisão final do Presidente."""
     run_id: str
     model_name: str
-    final_answer: str  # Resposta final em texto
+    final_answer: str
     decision_type: DecisionType
-
-    # Campos com default depois
     decision_id: str = ""
     confidence: float = 0.8
-
-    # Pontos consolidados
     decision_points_final: List[JudgePoint] = field(default_factory=list)
-
-    # Provas agregadas
     proofs: List[Citation] = field(default_factory=list)
-
-    # Partes não processadas
-    unreadable_parts: List[Dict] = field(default_factory=list)  # [{doc_id, page_num?, reason}]
-
-    # Conflitos
+    unreadable_parts: List[Dict] = field(default_factory=list)
     conflicts_resolved: List[ConflictResolution] = field(default_factory=list)
-    conflicts_unresolved: List[Dict] = field(default_factory=list)  # [{ids, description}]
-
-    # Q&A consolidado
-    qa_final: List[Dict] = field(default_factory=list)  # [{question, final_answer, sources}]
-
-    # Metadata
-    judges_consulted: List[str] = field(default_factory=list)  # J1, J2, J3
-    auditors_consulted: List[str] = field(default_factory=list)  # A1, A2, A3, A4
+    conflicts_unresolved: List[Dict] = field(default_factory=list)
+    qa_final: List[Dict] = field(default_factory=list)
+    judges_consulted: List[str] = field(default_factory=list)
+    auditors_consulted: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
-
-    # Markdown renderizado (gerado)
     output_markdown: str = ""
 
     def __post_init__(self):
@@ -661,12 +654,10 @@ class FinalDecision:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'FinalDecision':
-        # Validar decision_type - pode vir como string inválida
         try:
             decision_type = DecisionType(data.get("decision_type", "inconclusivo"))
         except ValueError:
             decision_type = DecisionType.INCONCLUSIVO
-        # Listas que podem conter strings em vez de dicts - from_dict lida com ambos
         raw_points = data.get("decision_points_final", [])
         if not isinstance(raw_points, list):
             raw_points = []
@@ -682,7 +673,7 @@ class FinalDecision:
             model_name=data.get("model_name", ""),
             final_answer=data.get("final_answer", ""),
             decision_type=decision_type,
-            confidence=float(data.get("confidence", 0.8)),
+            confidence=_safe_confidence(data.get("confidence", 0.8)),
             decision_points_final=[JudgePoint.from_dict(p) for p in raw_points],
             proofs=[Citation.from_dict(p) for p in raw_proofs],
             unreadable_parts=data.get("unreadable_parts", []) if isinstance(data.get("unreadable_parts"), list) else [],
@@ -696,11 +687,7 @@ class FinalDecision:
         )
 
     def generate_markdown(self) -> str:
-        """
-        Gera Markdown a partir da estrutura JSON.
-
-        FIX 2026-02-10: Filtra campos vazios, INTEGRITY_WARNINGs, e melhora formatação.
-        """
+        """Gera Markdown a partir da estrutura JSON."""
         lines = [
             "# DECISÃO FINAL DO PRESIDENTE",
             "",
@@ -715,51 +702,28 @@ class FinalDecision:
             self.final_answer,
             "",
         ]
-
-        # FIX 2026-02-10: Filtrar INTEGRITY_WARNING dos erros visíveis
         visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
         if visible_errors:
-            lines.extend([
-                "## ⚠️ Erros Encontrados",
-                "",
-            ])
+            lines.extend(["## ⚠️ Erros Encontrados", ""])
             for err in visible_errors:
                 lines.append(f"- {err}")
             lines.append("")
-
-        # Pontos de decisão
         if self.decision_points_final:
-            lines.extend([
-                "## Pontos de Decisão",
-                "",
-            ])
+            lines.extend(["## Pontos de Decisão", ""])
             for i, point in enumerate(self.decision_points_final, 1):
-                # FIX 2026-02-10: Garantir que conclusion não está vazia
                 conclusion = point.conclusion or "(Conclusão não disponível)"
                 rationale = point.rationale or "(Fundamentação não disponível)"
-                lines.extend([
-                    f"### {i}. {conclusion}",
-                    "",
-                    f"**Fundamentação:** {rationale}",
-                    "",
-                ])
+                lines.extend([f"### {i}. {conclusion}", "", f"**Fundamentação:** {rationale}", ""])
                 if point.legal_basis:
                     lines.append(f"**Base Legal:** {', '.join(point.legal_basis)}")
                     lines.append("")
-                if point.confidence and point.confidence != 0.8:  # Só mostrar se diferente do default
+                if point.confidence and point.confidence != 0.8:
                     lines.append(f"**Confiança:** {point.confidence:.0%}")
                     lines.append("")
-
-        # FIX 2026-02-10: Conflitos resolvidos - filtrar vazios
-        non_empty_conflicts = [c for c in self.conflicts_resolved
-                               if c.chosen_value or c.reasoning or c.resolution]
+        non_empty_conflicts = [c for c in self.conflicts_resolved if c.chosen_value or c.reasoning or c.resolution]
         if non_empty_conflicts:
-            lines.extend([
-                "## Conflitos Resolvidos",
-                "",
-            ])
+            lines.extend(["## Conflitos Resolvidos", ""])
             for conflict in non_empty_conflicts:
-                # Usar resolution como título se conflict_id é genérico
                 title = conflict.resolution or conflict.conflict_id or "Conflito"
                 lines.append(f"### {title}")
                 if conflict.chosen_value:
@@ -769,47 +733,25 @@ class FinalDecision:
                 if conflict.conflicting_ids:
                     lines.append(f"**IDs em conflito:** {', '.join(conflict.conflicting_ids)}")
                 lines.append("")
-
-        # Conflitos não resolvidos
         if self.conflicts_unresolved:
-            lines.extend([
-                "## ⚠️ Conflitos Não Resolvidos",
-                "",
-            ])
+            lines.extend(["## ⚠️ Conflitos Não Resolvidos", ""])
             for conflict in self.conflicts_unresolved:
                 desc = conflict.get('description', '') if isinstance(conflict, dict) else str(conflict)
                 if desc:
                     lines.append(f"- {desc}")
             lines.append("")
-
-        # Partes não processadas
         if self.unreadable_parts:
-            lines.extend([
-                "## Partes Não Processadas",
-                "",
-            ])
+            lines.extend(["## Partes Não Processadas", ""])
             for part in self.unreadable_parts:
                 page_info = f" (pág. {part.get('page_num')})" if part.get('page_num') else ""
                 lines.append(f"- {part.get('doc_id', 'doc')}{page_info}: {part.get('reason', 'ilegível')}")
             lines.append("")
-
-        # Q&A Final
         if self.qa_final:
-            lines.extend([
-                "## Respostas às Perguntas",
-                "",
-            ])
+            lines.extend(["## Respostas às Perguntas", ""])
             for i, qa in enumerate(self.qa_final, 1):
                 question = qa.get('question', 'Pergunta') if isinstance(qa, dict) else str(qa)
                 answer = qa.get('final_answer', qa.get('answer', 'Sem resposta')) if isinstance(qa, dict) else str(qa)
-                lines.extend([
-                    f"### {i}. {question}",
-                    "",
-                    answer,
-                    "",
-                ])
-
-        # Fontes consultadas
+                lines.extend([f"### {i}. {question}", "", answer, ""])
         lines.extend([
             "---",
             "",
@@ -819,7 +761,6 @@ class FinalDecision:
             f"- **Juízes:** {', '.join(self.judges_consulted) or 'N/A'}",
             "",
         ])
-
         self.output_markdown = "\n".join(lines)
         return self.output_markdown
 
@@ -828,134 +769,64 @@ class FinalDecision:
 # PARSING JSON COM FALLBACK
 # ============================================================================
 
-def parse_json_safe(
-    output: str,
-    context: str = "unknown"
-) -> Tuple[Optional[Dict], List[str]]:
-    """
-    Tenta extrair JSON de output LLM de forma robusta.
-
-    Usa extract_json_from_text que lida com markdown, texto antes/depois, etc.
-
-    Args:
-        output: String de output do LLM
-        context: Contexto para mensagens de erro
-
-    Returns:
-        (json_data ou None, lista de erros)
-    """
+def parse_json_safe(output: str, context: str = "unknown") -> Tuple[Optional[Dict], List[str]]:
+    """Tenta extrair JSON de output LLM de forma robusta."""
     from src.pipeline.extractor_json import extract_json_from_text
-
     errors = []
     result = extract_json_from_text(output)
-
     if result is not None:
         return result, errors
-
     errors.append(f"Não foi possível extrair JSON válido ({context})")
     return None, errors
 
 
-def parse_audit_report(
-    output: str,
-    auditor_id: str,
-    model_name: str,
-    run_id: str
-) -> AuditReport:
-    """
-    Parseia output do auditor para AuditReport.
-    Se falhar, cria relatório mínimo com erro.
-    """
+def parse_audit_report(output: str, auditor_id: str, model_name: str, run_id: str) -> AuditReport:
+    """Parseia output do auditor para AuditReport. Se falhar, cria relatório mínimo com erro."""
     json_data, errors = parse_json_safe(output, f"auditor {auditor_id}")
-
     if json_data:
         try:
-            report = AuditReport.from_dict({
-                **json_data,
-                "auditor_id": auditor_id,
-                "model_name": model_name,
-                "run_id": run_id,
-            })
+            report = AuditReport.from_dict({**json_data, "auditor_id": auditor_id, "model_name": model_name, "run_id": run_id})
             report.errors.extend(errors)
             return report
         except Exception as e:
             errors.append(f"Erro ao criar AuditReport: {str(e)[:100]}")
-
-    # Fallback: relatório mínimo com erro
     return AuditReport(
-        auditor_id=auditor_id,
-        model_name=model_name,
-        run_id=run_id,
-        findings=[],
+        auditor_id=auditor_id, model_name=model_name, run_id=run_id, findings=[],
         errors=errors + ["ERROR_RECOVERED: JSON inválido, relatório mínimo criado"],
         warnings=["Output original guardado para debug"],
     )
 
 
-def parse_judge_opinion(
-    output: str,
-    judge_id: str,
-    model_name: str,
-    run_id: str
-) -> JudgeOpinion:
-    """
-    Parseia output do juiz para JudgeOpinion.
-    Se falhar, cria parecer mínimo com erro.
-    """
+def parse_judge_opinion(output: str, judge_id: str, model_name: str, run_id: str) -> JudgeOpinion:
+    """Parseia output do juiz para JudgeOpinion. Se falhar, cria parecer mínimo com erro."""
     json_data, errors = parse_json_safe(output, f"juiz {judge_id}")
-
     if json_data:
         try:
-            opinion = JudgeOpinion.from_dict({
-                **json_data,
-                "judge_id": judge_id,
-                "model_name": model_name,
-                "run_id": run_id,
-            })
+            opinion = JudgeOpinion.from_dict({**json_data, "judge_id": judge_id, "model_name": model_name, "run_id": run_id})
             opinion.errors.extend(errors)
             return opinion
         except Exception as e:
             errors.append(f"Erro ao criar JudgeOpinion: {str(e)[:100]}")
-
-    # Fallback: parecer mínimo com erro
     return JudgeOpinion(
-        judge_id=judge_id,
-        model_name=model_name,
-        run_id=run_id,
-        recommendation=DecisionType.INCONCLUSIVO,
-        decision_points=[],
+        judge_id=judge_id, model_name=model_name, run_id=run_id,
+        recommendation=DecisionType.INCONCLUSIVO, decision_points=[],
         errors=errors + ["ERROR_RECOVERED: JSON inválido, parecer mínimo criado"],
     )
 
 
-def parse_final_decision(
-    output: str,
-    model_name: str,
-    run_id: str
-) -> FinalDecision:
-    """
-    Parseia output do presidente para FinalDecision.
-    Se falhar, cria decisão mínima com erro.
-    """
+def parse_final_decision(output: str, model_name: str, run_id: str) -> FinalDecision:
+    """Parseia output do presidente para FinalDecision. Se falhar, cria decisão mínima com erro."""
     json_data, errors = parse_json_safe(output, "presidente")
-
     if json_data:
         try:
-            decision = FinalDecision.from_dict({
-                **json_data,
-                "model_name": model_name,
-                "run_id": run_id,
-            })
+            decision = FinalDecision.from_dict({**json_data, "model_name": model_name, "run_id": run_id})
             decision.errors.extend(errors)
             decision.generate_markdown()
             return decision
         except Exception as e:
             errors.append(f"Erro ao criar FinalDecision: {str(e)[:100]}")
-
-    # Fallback: decisão mínima com erro
     decision = FinalDecision(
-        run_id=run_id,
-        model_name=model_name,
+        run_id=run_id, model_name=model_name,
         final_answer="Decisão não pôde ser processada devido a erros de parsing.",
         decision_type=DecisionType.INCONCLUSIVO,
         errors=errors + ["ERROR_RECOVERED: JSON inválido, decisão mínima criada"],
@@ -975,9 +846,9 @@ class ConsolidatedFinding:
     claim: str
     finding_type: FindingType
     severity: Severity
-    sources: List[str]  # Lista de auditor_ids [A1, A2, ...]
+    sources: List[str]
     citations: List[Citation] = field(default_factory=list)
-    consensus_level: str = "unico"  # total | forte | parcial | unico
+    consensus_level: str = "unico"
     notes: str = ""
 
     def __post_init__(self):
@@ -986,27 +857,21 @@ class ConsolidatedFinding:
 
     def to_dict(self) -> Dict:
         return {
-            "finding_id": self.finding_id,
-            "claim": self.claim,
-            "finding_type": self.finding_type.value,
-            "severity": self.severity.value,
-            "sources": self.sources,
-            "citations": [c.to_dict() for c in self.citations],
-            "consensus_level": self.consensus_level,
-            "notes": self.notes,
+            "finding_id": self.finding_id, "claim": self.claim,
+            "finding_type": self.finding_type.value, "severity": self.severity.value,
+            "sources": self.sources, "citations": [c.to_dict() for c in self.citations],
+            "consensus_level": self.consensus_level, "notes": self.notes,
         }
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'ConsolidatedFinding':
         return cls(
-            finding_id=data.get("finding_id", ""),
-            claim=data.get("claim", ""),
+            finding_id=data.get("finding_id", ""), claim=data.get("claim", ""),
             finding_type=FindingType(data.get("finding_type", "facto")),
             severity=Severity(data.get("severity", "medio")),
             sources=data.get("sources", []),
             citations=[Citation.from_dict(c) for c in data.get("citations", [])],
-            consensus_level=data.get("consensus_level", "unico"),
-            notes=data.get("notes", ""),
+            consensus_level=data.get("consensus_level", "unico"), notes=data.get("notes", ""),
         )
 
 
@@ -1014,26 +879,16 @@ class ConsolidatedFinding:
 class Divergence:
     """Divergência entre auditores identificada pelo Chefe."""
     topic: str
-    positions: List[Dict]  # [{auditor_id, position}]
+    positions: List[Dict]
     resolution: str = ""
     unresolved: bool = True
 
     def to_dict(self) -> Dict:
-        return {
-            "topic": self.topic,
-            "positions": self.positions,
-            "resolution": self.resolution,
-            "unresolved": self.unresolved,
-        }
+        return {"topic": self.topic, "positions": self.positions, "resolution": self.resolution, "unresolved": self.unresolved}
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'Divergence':
-        return cls(
-            topic=data.get("topic", ""),
-            positions=data.get("positions", []),
-            resolution=data.get("resolution", ""),
-            unresolved=data.get("unresolved", True),
-        )
+        return cls(topic=data.get("topic", ""), positions=data.get("positions", []), resolution=data.get("resolution", ""), unresolved=data.get("unresolved", True))
 
 
 @dataclass
@@ -1058,25 +913,20 @@ class ChefeConsolidatedReport:
 
     def to_dict(self) -> Dict:
         return {
-            "chefe_id": self.chefe_id,
-            "model_name": self.model_name,
-            "run_id": self.run_id,
+            "chefe_id": self.chefe_id, "model_name": self.model_name, "run_id": self.run_id,
             "consolidated_findings": [f.to_dict() for f in self.consolidated_findings],
             "divergences": [d.to_dict() for d in self.divergences],
             "coverage_check": self.coverage_check.to_dict(),
             "recommendations_phase3": self.recommendations_phase3,
             "legal_refs_consolidated": self.legal_refs_consolidated,
-            "open_questions": self.open_questions,
-            "errors": self.errors,
-            "warnings": self.warnings,
-            "timestamp": self.timestamp.isoformat(),
+            "open_questions": self.open_questions, "errors": self.errors,
+            "warnings": self.warnings, "timestamp": self.timestamp.isoformat(),
         }
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'ChefeConsolidatedReport':
         return cls(
-            chefe_id=data.get("chefe_id", "CHEFE"),
-            model_name=data.get("model_name", ""),
+            chefe_id=data.get("chefe_id", "CHEFE"), model_name=data.get("model_name", ""),
             run_id=data.get("run_id", ""),
             consolidated_findings=[ConsolidatedFinding.from_dict(f) for f in data.get("consolidated_findings", [])],
             divergences=[Divergence.from_dict(d) for d in data.get("divergences", [])],
@@ -1084,8 +934,7 @@ class ChefeConsolidatedReport:
             recommendations_phase3=data.get("recommendations_phase3", []),
             legal_refs_consolidated=data.get("legal_refs_consolidated", []),
             open_questions=data.get("open_questions", []),
-            errors=data.get("errors", []),
-            warnings=data.get("warnings", []),
+            errors=data.get("errors", []), warnings=data.get("warnings", []),
         )
 
     def to_markdown(self) -> str:
@@ -1097,29 +946,21 @@ class ChefeConsolidatedReport:
             f"**Timestamp:** {self.timestamp.isoformat()}",
             "",
         ]
-
-        # Erros
         if self.errors:
             lines.append("## ⚠️ Erros")
             for err in self.errors:
                 lines.append(f"- {err}")
             lines.append("")
-
-        # Findings consolidados por consenso
         lines.append(f"## Findings Consolidados ({len(self.consolidated_findings)})")
-
         for level in ["total", "forte", "parcial", "unico"]:
             level_findings = [f for f in self.consolidated_findings if f.consensus_level == level]
             if level_findings:
-                level_label = {"total": "Consenso Total", "forte": "Consenso Forte (3+)",
-                              "parcial": "Consenso Parcial (2)", "unico": "Único (1)"}
+                level_label = {"total": "Consenso Total", "forte": "Consenso Forte (3+)", "parcial": "Consenso Parcial (2)", "unico": "Único (1)"}
                 lines.append(f"\n### {level_label.get(level, level)} ({len(level_findings)})")
                 for f in level_findings:
                     sources_str = ", ".join(f.sources)
                     lines.append(f"\n**[{f.finding_id}]** [{sources_str}] {f.claim}")
                     lines.append(f"- Tipo: {f.finding_type.value} | Severidade: {f.severity.value}")
-
-        # Divergências
         if self.divergences:
             lines.append(f"\n## Divergências ({len(self.divergences)})")
             for d in self.divergences:
@@ -1130,53 +971,31 @@ class ChefeConsolidatedReport:
                     lines.append(f"- **Resolução**: {d.resolution}")
                 if d.unresolved:
                     lines.append("- ⚠️ **Não resolvido**")
-
-        # Recomendações
         if self.recommendations_phase3:
             lines.append("\n## Recomendações para Fase 3")
             for rec in self.recommendations_phase3:
                 priority = rec.get("priority", "media")
                 lines.append(f"- [{priority.upper()}] {rec.get('recommendation', '')}")
-
-        # Referências legais
         if self.legal_refs_consolidated:
             lines.append("\n## Referências Legais Consolidadas")
             for ref in self.legal_refs_consolidated:
                 sources = ", ".join(ref.get("sources", []))
                 lines.append(f"- **{ref.get('ref', '')}** [{sources}]")
-
         return "\n".join(lines)
 
 
-def parse_chefe_report(
-    output: str,
-    model_name: str,
-    run_id: str
-) -> ChefeConsolidatedReport:
-    """
-    Parseia output do Chefe para ChefeConsolidatedReport.
-    Se falhar, cria relatório mínimo com erro (soft-fail).
-    """
+def parse_chefe_report(output: str, model_name: str, run_id: str) -> ChefeConsolidatedReport:
+    """Parseia output do Chefe para ChefeConsolidatedReport. Se falhar, cria relatório mínimo."""
     json_data, errors = parse_json_safe(output, "chefe")
-
     if json_data:
         try:
-            report = ChefeConsolidatedReport.from_dict({
-                **json_data,
-                "model_name": model_name,
-                "run_id": run_id,
-            })
+            report = ChefeConsolidatedReport.from_dict({**json_data, "model_name": model_name, "run_id": run_id})
             report.errors.extend(errors)
             return report
         except Exception as e:
             errors.append(f"Erro ao criar ChefeConsolidatedReport: {str(e)[:100]}")
-
-    # Fallback: relatório mínimo com erro (soft-fail)
     return ChefeConsolidatedReport(
-        chefe_id="CHEFE",
-        model_name=model_name,
-        run_id=run_id,
-        consolidated_findings=[],
+        chefe_id="CHEFE", model_name=model_name, run_id=run_id, consolidated_findings=[],
         errors=errors + ["ERROR_RECOVERED: JSON inválido, relatório mínimo criado"],
         warnings=["Output original guardado para debug"],
     )
