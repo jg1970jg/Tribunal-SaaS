@@ -30,9 +30,13 @@ from src.engine import (
     InvalidDocumentError,
     MissingApiKeyError,
     EngineError,
+    get_wallet_manager,
 )
 
 logger = logging.getLogger(__name__)
+
+# Lista de emails de admin (para endpoints de admin)
+ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
 
 # Carregar variáveis de ambiente (.env)
 load_dotenv()
@@ -153,9 +157,12 @@ async def analyze(
     except InsufficientBalanceError as e:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"Saldo insuficiente. Por favor carregue a conta. "
-                   f"(Saldo atual: {e.saldo_atual:.2f} EUR, "
-                   f"mínimo: {e.saldo_minimo:.2f} EUR)",
+            detail={
+                "message": "Saldo insuficiente. Por favor carregue a conta.",
+                "saldo_atual": e.saldo_atual,
+                "saldo_necessario": getattr(e, 'saldo_necessario', e.saldo_minimo),
+                "moeda": "USD",
+            },
         )
 
     except InvalidDocumentError as e:
@@ -696,3 +703,117 @@ async def add_document_to_project(
         "message": f"Documento '{filename}' adicionado ao projecto. "
                    f"Use /ask para fazer perguntas sobre todos os documentos.",
     }
+
+
+# ============================================================
+# WALLET ENDPOINTS
+# ============================================================
+
+@app.get("/wallet/balance")
+async def wallet_balance(user: dict = Depends(get_current_user)):
+    """Retorna saldo actual da wallet do utilizador."""
+    try:
+        wm = get_wallet_manager()
+        saldo = wm.get_balance(user["id"])
+        markup = wm.get_markup_multiplier()
+        return {
+            "balance_usd": saldo,
+            "moeda": "USD",
+            "markup_multiplier": markup,
+        }
+    except Exception as e:
+        logger.error(f"Erro ao consultar saldo: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao consultar saldo.")
+
+
+@app.get("/wallet/transactions")
+async def wallet_transactions(
+    limit: int = 50,
+    offset: int = 0,
+    type_filter: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Retorna histórico de transações da wallet."""
+    try:
+        wm = get_wallet_manager()
+        return wm.get_transactions(
+            user_id=user["id"],
+            limit=min(limit, 100),
+            offset=offset,
+            type_filter=type_filter,
+        )
+    except Exception as e:
+        logger.error(f"Erro ao consultar transações: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao consultar transações.")
+
+
+class CreditRequest(BaseModel):
+    user_id: str
+    amount_usd: float
+    description: str = ""
+
+
+@app.post("/wallet/credit")
+async def wallet_credit(
+    req: CreditRequest,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Credita saldo na wallet de um utilizador (apenas admin).
+
+    Body:
+        user_id: UUID do utilizador a creditar
+        amount_usd: Valor em USD
+        description: Descrição do crédito
+    """
+    # Verificar se é admin
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores podem creditar saldos.",
+        )
+
+    if req.amount_usd <= 0:
+        raise HTTPException(status_code=422, detail="Valor deve ser positivo.")
+
+    try:
+        wm = get_wallet_manager()
+        result = wm.credit(
+            user_id=req.user_id,
+            amount_usd=req.amount_usd,
+            description=req.description,
+            admin_id=user["id"],
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Erro ao creditar saldo: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao creditar saldo.")
+
+
+@app.get("/admin/profit-report")
+async def admin_profit_report(
+    days: int = 30,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Relatório de lucro (apenas admin).
+
+    Query params:
+        days: Período em dias (default 30, max 365)
+    """
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores podem ver relatórios de lucro.",
+        )
+
+    try:
+        wm = get_wallet_manager()
+        return wm.get_profit_report(days=min(days, 365))
+    except Exception as e:
+        logger.error(f"Erro ao gerar relatório de lucro: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao gerar relatório.")

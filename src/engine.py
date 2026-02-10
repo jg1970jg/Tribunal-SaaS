@@ -48,16 +48,11 @@ from src.document_loader import DocumentLoader, DocumentContent
 from src.llm_client import get_llm_client
 from src.utils.perguntas import parse_perguntas, validar_perguntas
 from src.utils.metadata_manager import gerar_titulo_automatico
+from src.wallet import WalletManager, InsufficientBalanceError as WalletInsufficientBalance
 
 from auth_service import get_supabase_admin
 
 logger = logging.getLogger(__name__)
-
-# ============================================================
-# CONSTANTES
-# ============================================================
-
-SALDO_MINIMO = 2.00  # EUR - saldo minimo para iniciar analise
 
 
 # ============================================================
@@ -72,12 +67,13 @@ class EngineError(Exception):
 class InsufficientBalanceError(EngineError):
     """Saldo insuficiente para executar a analise."""
 
-    def __init__(self, saldo_atual: float, saldo_minimo: float = SALDO_MINIMO):
+    def __init__(self, saldo_atual: float, saldo_necessario: float = 0.50):
         self.saldo_atual = saldo_atual
-        self.saldo_minimo = saldo_minimo
+        self.saldo_minimo = saldo_necessario  # compat com main.py
+        self.saldo_necessario = saldo_necessario
         super().__init__(
-            f"Saldo insuficiente: {saldo_atual:.2f} EUR. "
-            f"Minimo necessario: {saldo_minimo:.2f} EUR."
+            f"Saldo insuficiente: ${saldo_atual:.2f} USD. "
+            f"Necessario: ~${saldo_necessario:.2f} USD."
         )
 
 
@@ -92,93 +88,83 @@ class MissingApiKeyError(EngineError):
 
 
 # ============================================================
-# VERIFICACAO DE SALDO
+# WALLET MANAGER (singleton)
 # ============================================================
 
-SALDO_INICIAL = 0.00  # EUR - saldo atribuido a novos utilizadores
+_wallet_manager: Optional[WalletManager] = None
 
 
-def verificar_saldo(user_id: str) -> float:
-    """
-    Consulta o saldo do utilizador na tabela user_wallets do Supabase.
-    Usa a service_role key para ignorar RLS.
-
-    Se o utilizador nao tiver wallet (novo utilizador), cria uma
-    automaticamente com saldo inicial.
-
-    Args:
-        user_id: UUID do utilizador (de auth.users)
-
-    Returns:
-        Saldo atual em EUR (float)
-
-    Raises:
-        EngineError: Se nao conseguir consultar o Supabase
-    """
-    try:
+def get_wallet_manager() -> WalletManager:
+    """Retorna WalletManager singleton (usa service_role key)."""
+    global _wallet_manager
+    if _wallet_manager is None:
         sb = get_supabase_admin()
-
-        # Consultar wallet (sem .single() para evitar PGRST116 em 0 rows)
-        response = (
-            sb.table("user_wallets")
-            .select("balance")
-            .eq("user_id", user_id)
-            .execute()
-        )
-
-        # Se o utilizador nao tem wallet, criar uma automaticamente
-        if not response.data:
-            logger.info(f"Wallet nao encontrada para {user_id[:8]}... Criando nova wallet.")
-            insert_response = (
-                sb.table("user_wallets")
-                .insert({"user_id": user_id, "balance": SALDO_INICIAL})
-                .execute()
-            )
-            if not insert_response.data:
-                raise EngineError(
-                    f"Nao foi possivel criar wallet para user_id={user_id}."
-                )
-            print(f"[WALLET] Nova wallet criada para {user_id[:8]}... com {SALDO_INICIAL:.2f} EUR")
-            return SALDO_INICIAL
-
-        saldo = float(response.data[0]["balance"])
-        return saldo
-
-    except EngineError:
-        raise
-    except Exception as e:
-        raise EngineError(f"Erro ao consultar saldo no Supabase: {e}")
+        _wallet_manager = WalletManager(sb)
+    return _wallet_manager
 
 
-def exigir_saldo_minimo(user_id: str, minimo: float = SALDO_MINIMO) -> float:
+def verificar_saldo_wallet(user_id: str, num_chars: int = 0) -> Dict[str, Any]:
     """
-    Verifica se o utilizador tem saldo suficiente.
+    Verifica saldo do utilizador usando WalletManager.
 
-    Se SKIP_WALLET_CHECK=true nas env vars, ignora a verificacao
-    e retorna saldo fictico (para ambientes onde a service_role key
-    nao funciona, ex: Supabase gerido pelo Lovable Cloud).
+    Se SKIP_WALLET_CHECK=true, ignora a verificação.
 
     Args:
         user_id: UUID do utilizador
-        minimo: Saldo minimo exigido (default: 2.00 EUR)
+        num_chars: Caracteres do documento (para estimativa)
 
     Returns:
-        Saldo atual (se >= minimo)
+        Dict com saldo_atual, custo_estimado, suficiente
 
     Raises:
-        InsufficientBalanceError: Se saldo < minimo
+        InsufficientBalanceError: Se saldo insuficiente
     """
-    if os.environ.get("SKIP_WALLET_CHECK", "").lower() == "true":
-        print(f"[SALDO] SKIP_WALLET_CHECK ativo - ignorando verificação de saldo")
-        return 999.99
+    skip = os.environ.get("SKIP_WALLET_CHECK", "").lower() == "true"
 
-    saldo = verificar_saldo(user_id)
+    if skip:
+        print(f"[WALLET] SKIP_WALLET_CHECK ativo - ignorando verificação de saldo")
+        return {"saldo_atual": 999.99, "custo_estimado": 0.0, "suficiente": True}
 
-    if saldo < minimo:
-        raise InsufficientBalanceError(saldo_atual=saldo, saldo_minimo=minimo)
+    wm = get_wallet_manager()
 
-    print(f"[SALDO] Utilizador {user_id[:8]}... tem {saldo:.2f} EUR (minimo: {minimo:.2f} EUR)")
-    return saldo
+    try:
+        return wm.check_sufficient_balance(user_id, num_chars=num_chars)
+    except WalletInsufficientBalance as e:
+        raise InsufficientBalanceError(
+            saldo_atual=e.saldo_atual,
+            saldo_necessario=e.saldo_necessario,
+        )
+
+
+def debitar_wallet(user_id: str, cost_real_usd: float, run_id: str) -> Dict[str, Any]:
+    """
+    Debita custo real da análise (× markup) da wallet.
+
+    Args:
+        user_id: UUID do utilizador
+        cost_real_usd: Custo real das APIs em USD
+        run_id: ID da execução
+
+    Returns:
+        Dict com custo_real, custo_cliente, saldo_antes, saldo_depois, etc.
+    """
+    skip = os.environ.get("SKIP_WALLET_CHECK", "").lower() == "true"
+    if skip:
+        print(f"[WALLET] SKIP_WALLET_CHECK ativo - débito ignorado (custo real=${cost_real_usd:.4f})")
+        return {
+            "custo_real": cost_real_usd,
+            "custo_cliente": 0.0,
+            "valor_debitado": 0.0,
+            "saldo_antes": 999.99,
+            "saldo_depois": 999.99,
+            "markup": 1.47,
+            "debito_parcial": False,
+            "lucro": 0.0,
+            "run_id": run_id,
+        }
+
+    wm = get_wallet_manager()
+    return wm.debit(user_id, cost_real_usd=cost_real_usd, run_id=run_id)
 
 
 # ============================================================
@@ -358,10 +344,10 @@ def executar_analise(
     """
     timestamp_inicio = datetime.now()
 
-    # ── 1. Verificar saldo no Supabase ──
-    print(f"[ENGINE] Verificando saldo para user {user_id[:8]}...")
-    saldo = exigir_saldo_minimo(user_id)
-    print(f"[ENGINE] Saldo OK: {saldo:.2f} EUR")
+    # ── 1. Verificar saldo na wallet (com estimativa por tamanho) ──
+    print(f"[ENGINE] Verificando saldo wallet para user {user_id[:8]}...")
+    wallet_info = verificar_saldo_wallet(user_id, num_chars=0)  # chars estimados após carregar doc
+    print(f"[ENGINE] Saldo OK: ${wallet_info['saldo_atual']:.2f} USD")
 
     # ── 2. Validar API keys ──
     if not OPENROUTER_API_KEY or len(OPENROUTER_API_KEY) < 10:
@@ -430,6 +416,16 @@ def executar_analise(
         )
         print(f"[ENGINE] Texto direto: {len(texto):,} caracteres")
 
+    # ── 5b. Re-verificar saldo com estimativa baseada no tamanho real ──
+    num_chars = documento.num_chars if documento else 0
+    if num_chars > 0:
+        wallet_info = verificar_saldo_wallet(user_id, num_chars=num_chars)
+        print(
+            f"[ENGINE] Saldo re-check com {num_chars:,} chars: "
+            f"saldo=${wallet_info['saldo_atual']:.2f} "
+            f"estimativa=~${wallet_info['custo_estimado']:.2f}"
+        )
+
     # ── 6. Gerar titulo se nao fornecido ──
     if not titulo:
         titulo = gerar_titulo_automatico(documento.filename, area_direito)
@@ -455,11 +451,39 @@ def executar_analise(
         logger.exception("Erro fatal no pipeline")
         raise EngineError(f"Erro no pipeline: {e}")
 
-    # ── 9. Reportar resultado ──
+    # ── 9. Debitar wallet com custo REAL ──
+    custo_real_usd = 0.0
+    if resultado.custos and resultado.custos.get("custo_total_usd"):
+        custo_real_usd = float(resultado.custos["custo_total_usd"])
+
+    wallet_debit = None
+    if custo_real_usd > 0:
+        try:
+            wallet_debit = debitar_wallet(user_id, custo_real_usd, resultado.run_id)
+            print(
+                f"[ENGINE] Wallet debitada: real=${custo_real_usd:.4f} "
+                f"cliente=${wallet_debit['custo_cliente']:.4f} "
+                f"saldo=${wallet_debit['saldo_depois']:.2f}"
+            )
+        except Exception as e:
+            logger.error(f"[ENGINE] ERRO ao debitar wallet (análise JÁ executada): {e}")
+            wallet_debit = {"erro": str(e), "custo_real": custo_real_usd}
+    else:
+        logger.warning("[ENGINE] Custo real = $0.00 — débito ignorado")
+
+    # Adicionar info da wallet ao resultado
+    if resultado.custos is None:
+        resultado.custos = {}
+    if wallet_debit:
+        resultado.custos["wallet"] = wallet_debit
+
+    # ── 10. Reportar resultado ──
     duracao = (datetime.now() - timestamp_inicio).total_seconds()
     print(f"[ENGINE] Pipeline concluido em {duracao:.1f}s")
     print(f"[ENGINE] Veredicto: {resultado.simbolo_final} {resultado.veredicto_final}")
     print(f"[ENGINE] Tokens: {resultado.total_tokens:,}")
+    if custo_real_usd > 0:
+        print(f"[ENGINE] Custo APIs: ${custo_real_usd:.4f}")
     print(f"[ENGINE] Run ID: {resultado.run_id}")
 
     return resultado
@@ -530,8 +554,8 @@ def executar_analise_multiplos_documentos(
         PipelineResult
     """
     # Verificar saldo ANTES de carregar documentos
-    print(f"[ENGINE] Verificando saldo para user {user_id[:8]}...")
-    exigir_saldo_minimo(user_id)
+    print(f"[ENGINE] Verificando saldo wallet para user {user_id[:8]}...")
+    verificar_saldo_wallet(user_id, num_chars=0)
 
     # Carregar todos os documentos
     temp_out_dir = OUTPUT_DIR / f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
