@@ -14,7 +14,8 @@ import io
 import os
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, UploadFile, File, HTTPException, status
@@ -449,9 +450,11 @@ CONSOLIDATION_SYSTEM_PROMPT = (
 class AskRequest(BaseModel):
     question: str
     analysis_result: Dict[str, Any]
+    document_id: str = ""
+    previous_qa: List[Dict[str, str]] = []
 
 
-def _build_ask_context(data: Dict[str, Any]) -> str:
+def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] = None) -> str:
     """Extrai contexto relevante do resultado da análise para a pergunta."""
     parts = []
 
@@ -466,7 +469,6 @@ def _build_ask_context(data: Dict[str, Any]) -> str:
 
     f1 = data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", "")
     if f1:
-        # Limitar a 3000 chars para não exceder contexto
         parts.append(f"EXTRAÇÃO:\n{f1[:3000]}")
 
     f2 = data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", "")
@@ -477,6 +479,22 @@ def _build_ask_context(data: Dict[str, Any]) -> str:
     if f4:
         parts.append(f"DECISÃO PRESIDENTE:\n{f4[:3000]}")
 
+    # Documentos adicionais (se existirem)
+    docs_adicionais = data.get("documentos_adicionais", [])
+    if docs_adicionais:
+        parts.append("DOCUMENTOS ADICIONAIS:")
+        for doc in docs_adicionais:
+            nome = doc.get("filename", "documento")
+            texto = doc.get("text", "")[:2000]
+            parts.append(f"--- {nome} ---\n{texto}")
+
+    # Histórico de Q&A anteriores
+    if previous_qa:
+        parts.append("PERGUNTAS E RESPOSTAS ANTERIORES:")
+        for qa in previous_qa:
+            parts.append(f"P: {qa.get('question', '')}")
+            parts.append(f"R: {qa.get('answer', '')}")
+
     return "\n\n".join(parts) if parts else "Sem contexto de análise disponível."
 
 
@@ -484,7 +502,7 @@ def _build_ask_context(data: Dict[str, Any]) -> str:
 async def ask_question(req: AskRequest):
     """
     Pergunta pós-análise: envia a pergunta a 3 LLMs com contexto
-    da análise anterior e consolida as respostas.
+    da análise anterior + histórico de Q&A e consolida as respostas.
     """
     from src.llm_client import get_llm_client
 
@@ -492,7 +510,7 @@ async def ask_question(req: AskRequest):
     if not question:
         raise HTTPException(status_code=422, detail="A pergunta não pode estar vazia.")
 
-    context = _build_ask_context(req.analysis_result)
+    context = _build_ask_context(req.analysis_result, req.previous_qa)
 
     prompt = f"""ANÁLISE JURÍDICA ANTERIOR:
 
@@ -550,7 +568,7 @@ Consolida estas respostas numa única resposta final coerente."""
 
     try:
         consolidated = llm.chat_simple(
-            model=ASK_MODELS[0],  # gpt-5.2 como consolidador
+            model=ASK_MODELS[0],
             prompt=consolidation_prompt,
             system_prompt=CONSOLIDATION_SYSTEM_PROMPT,
             temperature=0.2,
@@ -559,14 +577,122 @@ Consolida estas respostas numa única resposta final coerente."""
         answer = consolidated.content
     except Exception as e:
         logger.warning(f"Consolidação falhou: {e}")
-        # Fallback: usar a primeira resposta válida
         answer = next(
             (r["response"] for r in individual_responses if not r["response"].startswith("[Erro")),
             "Não foi possível gerar resposta.",
         )
 
+    # Guardar Q&A no Supabase (se document_id fornecido)
+    if req.document_id:
+        try:
+            sb = get_supabase_admin()
+            doc_resp = sb.table("documents").select("analysis_result").eq("id", req.document_id).single().execute()
+            current_result = doc_resp.data.get("analysis_result") or {}
+
+            qa_history = current_result.get("qa_history", [])
+            qa_history.append({
+                "question": question,
+                "answer": answer,
+                "individual_responses": individual_responses,
+                "timestamp": datetime.now().isoformat(),
+            })
+            current_result["qa_history"] = qa_history
+
+            sb.table("documents").update(
+                {"analysis_result": current_result}
+            ).eq("id", req.document_id).execute()
+
+            logger.info(f"Q&A guardada no Supabase: doc={req.document_id}, total_qa={len(qa_history)}")
+        except Exception as e:
+            logger.warning(f"Erro ao guardar Q&A no Supabase: {e}")
+
     return {
         "question": question,
         "answer": answer,
         "individual_responses": individual_responses,
+    }
+
+
+# ============================================================
+# ADICIONAR DOCUMENTO A PROJECTO EXISTENTE
+# ============================================================
+
+@app.post("/analyze/add")
+async def add_document_to_project(
+    file: UploadFile = File(...),
+    document_id: str = Form(...),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Adiciona um novo documento a um projecto existente.
+    Extrai o texto e guarda-o no analysis_result do documento original.
+    """
+    from src.engine import carregar_documento_de_bytes
+
+    # 1. Ler o ficheiro novo
+    file_bytes = await file.read()
+    filename = file.filename or "documento"
+
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=422, detail="Ficheiro vazio.")
+
+    # 2. Extrair texto
+    try:
+        doc = carregar_documento_de_bytes(file_bytes, filename)
+        novo_texto = doc.text
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Erro ao extrair texto: {e}")
+
+    if not novo_texto or len(novo_texto.strip()) < 50:
+        raise HTTPException(
+            status_code=422,
+            detail="O documento não contém texto suficiente.",
+        )
+
+    # 3. Ler analysis_result actual do Supabase
+    try:
+        sb = get_supabase_admin()
+        doc_resp = sb.table("documents").select("analysis_result, user_id").eq("id", document_id).single().execute()
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Documento não encontrado: {e}")
+
+    # Verificar que o documento pertence ao utilizador
+    doc_user_id = doc_resp.data.get("user_id", "")
+    if doc_user_id and doc_user_id != user.get("id"):
+        raise HTTPException(status_code=403, detail="Sem permissão para este documento.")
+
+    current_result = doc_resp.data.get("analysis_result") or {}
+
+    # 4. Adicionar o novo texto ao campo "documentos_adicionais"
+    docs_adicionais = current_result.get("documentos_adicionais", [])
+    docs_adicionais.append({
+        "filename": filename,
+        "text": novo_texto,
+        "chars": len(novo_texto),
+        "added_at": datetime.now().isoformat(),
+    })
+    current_result["documentos_adicionais"] = docs_adicionais
+
+    # 5. Gravar no Supabase
+    try:
+        sb.table("documents").update(
+            {"analysis_result": current_result}
+        ).eq("id", document_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao guardar no Supabase: {e}")
+
+    logger.info(
+        f"Documento adicionado: doc={document_id}, file={filename}, "
+        f"chars={len(novo_texto)}, total_docs_adicionais={len(docs_adicionais)}"
+    )
+
+    # 6. Retornar confirmação
+    return {
+        "status": "ok",
+        "document_id": document_id,
+        "added_file": filename,
+        "added_chars": len(novo_texto),
+        "total_additional_docs": len(docs_adicionais),
+        "message": f"Documento '{filename}' adicionado ao projecto. "
+                   f"Use /ask para fazer perguntas sobre todos os documentos.",
     }
