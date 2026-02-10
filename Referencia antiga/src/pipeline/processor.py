@@ -18,6 +18,8 @@ if str(_ROOT) not in sys.path:
 
 import json
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass, field
@@ -219,6 +221,27 @@ class PipelineResult:
             "sucesso": self.sucesso,
             "erro": self.erro,
         }
+
+
+def _call_with_retry(func, func_name="LLM", max_retries=3, backoff_times=None):
+    """Chama func() com até 3 tentativas. Backoff: 3s, 8s, 15s."""
+    if backoff_times is None:
+        backoff_times = [3, 8, 15]
+
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = backoff_times[min(attempt, len(backoff_times) - 1)]
+                logger.warning(
+                    f"[RETRY] {func_name} tentativa {attempt+1}/{max_retries} falhou: {e}. "
+                    f"Retry em {wait}s..."
+                )
+                time.sleep(wait)
+            else:
+                logger.error(f"[RETRY] {func_name} FALHOU após {max_retries} tentativas: {e}")
+                return None
 
 
 class TribunalProcessor:
@@ -1111,8 +1134,9 @@ IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando cont
         all_unreadable = []
         resultados = []  # FaseResult para compatibilidade
 
-        # 5. Processar cada extrator em todos os chunks
-        for i, cfg in enumerate(extractor_configs):
+        # 5. Processar cada extrator em todos os chunks (PARALELO com retry)
+        def _run_extractor(i, cfg):
+            """Executa um extrator em todos os chunks. Thread-safe."""
             extractor_id = cfg["id"]
             model = cfg["model"]
             role = cfg["role"]
@@ -1130,15 +1154,10 @@ IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando cont
             extractor_items = []
             extractor_content_parts = []
             chunk_errors = []
+            local_unreadable = []
 
             for chunk_idx, chunk in enumerate(chunks):
                 chunk_info = f" (chunk {chunk_idx+1}/{num_chunks})" if num_chunks > 1 else ""
-
-                self._reportar_progresso(
-                    "fase1",
-                    10 + (i * num_chunks + chunk_idx) * (20 // (len(extractor_configs) * num_chunks)),
-                    f"Extrator {extractor_id}{chunk_info}: {model}"
-                )
 
                 logger.info(f"=== {extractor_id}{chunk_info} [{chunk.start_char:,}-{chunk.end_char:,}] - {model} ===")
 
@@ -1146,7 +1165,7 @@ IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando cont
                 prompt = build_unified_prompt(chunk, area, extractor_id)
 
                 # System prompt combinado
-                system_prompt = f"""{SYSTEM_EXTRATOR_UNIFIED}
+                sys_prompt = f"""{SYSTEM_EXTRATOR_UNIFIED}
 
 INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
 {instructions}"""
@@ -1154,57 +1173,56 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                 # Determinar se este chunk tem páginas escaneadas E o modelo suporta visão
                 chunk_scanned_images = []
                 if scanned_images_b64 and model in VISION_CAPABLE_MODELS:
-                    # Encontrar páginas escaneadas que pertencem a este chunk
                     for pg_num, b64_img in scanned_images_b64.items():
-                        # Se chunk tem info de páginas, usar para filtrar
                         if chunk.page_start is not None and chunk.page_end is not None:
                             if chunk.page_start <= pg_num <= chunk.page_end:
                                 chunk_scanned_images.append((pg_num, b64_img))
                         else:
-                            # Sem info de páginas, incluir todas as imagens
                             chunk_scanned_images.append((pg_num, b64_img))
 
-                # Chamar LLM (com ou sem imagens)
-                if chunk_scanned_images:
-                    # Mensagem multimodal: texto + imagens das páginas escaneadas
-                    pages_info = ", ".join(str(pg) for pg, _ in chunk_scanned_images)
-                    vision_note = (
-                        f"\n\nNOTA IMPORTANTE: Este documento contém {len(chunk_scanned_images)} "
-                        f"página(s) digitalizada(s) (página(s) {pages_info}). "
-                        f"As imagens dessas páginas estão anexas abaixo. "
-                        f"DEVES analisar as imagens e extrair TODO o texto e informação visível: "
-                        f"datas, valores, nomes, moradas, referências legais, assinaturas, "
-                        f"carimbos, tabelas. Transcreve fielmente o conteúdo das imagens."
-                    )
+                # Chamar LLM com retry (com ou sem imagens)
+                def _do_llm_call(
+                    _model=model, _prompt=prompt, _sys=sys_prompt, _temp=temperature,
+                    _images=chunk_scanned_images, _eid=extractor_id
+                ):
+                    if _images:
+                        pages_info = ", ".join(str(pg) for pg, _ in _images)
+                        vision_note = (
+                            f"\n\nNOTA IMPORTANTE: Este documento contém {len(_images)} "
+                            f"página(s) digitalizada(s) (página(s) {pages_info}). "
+                            f"As imagens dessas páginas estão anexas abaixo. "
+                            f"DEVES analisar as imagens e extrair TODO o texto e informação visível: "
+                            f"datas, valores, nomes, moradas, referências legais, assinaturas, "
+                            f"carimbos, tabelas. Transcreve fielmente o conteúdo das imagens."
+                        )
+                        content_blocks = [{"type": "text", "text": _prompt + vision_note}]
+                        for pg_num, b64_img in _images:
+                            content_blocks.append({"type": "text", "text": f"\n--- Imagem da Página {pg_num} ---"})
+                            content_blocks.append({
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{b64_img}"}
+                            })
+                        messages = [{"role": "user", "content": content_blocks}]
+                        logger.info(f"📸 {_eid}: enviando {len(_images)} imagem(ns) para análise visual")
+                        return self.llm_client.chat(
+                            model=_model, messages=messages,
+                            system_prompt=_sys, temperature=_temp,
+                        )
+                    else:
+                        return self.llm_client.chat_simple(
+                            model=_model, prompt=_prompt,
+                            system_prompt=_sys, temperature=_temp,
+                        )
 
-                    content_blocks = [{"type": "text", "text": prompt + vision_note}]
-                    for pg_num, b64_img in chunk_scanned_images:
-                        content_blocks.append({"type": "text", "text": f"\n--- Imagem da Página {pg_num} ---"})
-                        content_blocks.append({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{b64_img}"}
-                        })
+                response = _call_with_retry(
+                    _do_llm_call,
+                    func_name=f"{extractor_id}-chunk{chunk_idx}",
+                )
 
-                    messages = [{"role": "user", "content": content_blocks}]
-                    logger.info(
-                        f"📸 {extractor_id}: enviando {len(chunk_scanned_images)} imagem(ns) "
-                        f"(páginas {pages_info}) para análise visual"
-                    )
-
-                    response = self.llm_client.chat(
-                        model=model,
-                        messages=messages,
-                        system_prompt=system_prompt,
-                        temperature=temperature,
-                    )
-                else:
-                    # Chamada normal sem imagens
-                    response = self.llm_client.chat_simple(
-                        model=model,
-                        prompt=prompt,
-                        system_prompt=system_prompt,
-                        temperature=temperature,
-                    )
+                if response is None or not response.content:
+                    chunk_errors.append(f"{extractor_id} chunk {chunk_idx}: LLM falhou após retries")
+                    logger.error(f"✗ {extractor_id} chunk {chunk_idx}: sem resposta após retries")
+                    continue
 
                 # Parsear output e criar EvidenceItems com source_spans
                 items, unreadable, errors = parse_unified_output(
@@ -1216,7 +1234,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                 )
 
                 extractor_items.extend(items)
-                all_unreadable.extend(unreadable)
+                local_unreadable.extend(unreadable)
                 chunk_errors.extend(errors)
                 run.chunks_processed += 1
 
@@ -1239,10 +1257,6 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
             run.errors = chunk_errors
             run.status = ExtractionStatus.SUCCESS if not chunk_errors else ExtractionStatus.PARTIAL
             run.finished_at = datetime.now()
-            extraction_runs.append(run)
-
-            # Guardar items por extrator
-            items_by_extractor[extractor_id] = extractor_items
 
             # Criar FaseResult para compatibilidade
             full_content = "\n\n".join(extractor_content_parts)
@@ -1255,21 +1269,56 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                 latencia_ms=0,
                 sucesso=run.status != ExtractionStatus.FAILED,
             )
-            resultados.append(resultado)
 
-            # Log individual
+            # Guardar ficheiros (thread-safe: cada extrator escreve os seus)
             self._log_to_file(
                 f"fase1_extrator_{extractor_id}.md",
                 f"# Extrator {extractor_id}: {role}\n## Modelo: {model}\n## Items: {len(extractor_items)}\n\n{full_content}"
             )
 
-            # Guardar JSON estruturado
             items_json = [item.to_dict() for item in extractor_items]
             json_path = self._output_dir / f"fase1_extractor_{extractor_id}_items.json"
             with open(json_path, 'w', encoding='utf-8') as f:
                 json_module.dump(items_json, f, ensure_ascii=False, indent=2)
 
             logger.info(f"✓ Extrator {extractor_id} completo: {len(extractor_items)} items totais")
+
+            return {
+                "extractor_id": extractor_id,
+                "items": extractor_items,
+                "unreadable": local_unreadable,
+                "run": run,
+                "resultado": resultado,
+            }
+
+        # Executar extratores em PARALELO
+        logger.info(f"[PARALELO] Lançando {len(extractor_configs)} extratores em paralelo...")
+        with ThreadPoolExecutor(max_workers=min(5, len(extractor_configs))) as executor:
+            futures = {}
+            for i, cfg in enumerate(extractor_configs):
+                future = executor.submit(_run_extractor, i, cfg)
+                futures[future] = cfg["id"]
+
+            for future in as_completed(futures):
+                eid = futures[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        items_by_extractor[result["extractor_id"]] = result["items"]
+                        all_unreadable.extend(result["unreadable"])
+                        extraction_runs.append(result["run"])
+                        resultados.append(result["resultado"])
+                        logger.info(f"[PARALELO] {eid} concluído: {len(result['items'])} items")
+                    else:
+                        logger.warning(f"[PARALELO] {eid} retornou None - ignorado")
+                except Exception as exc:
+                    logger.error(f"[PARALELO] {eid} excepção: {exc}")
+
+        if len(items_by_extractor) < 2:
+            raise Exception(
+                f"Apenas {len(items_by_extractor)} extratores funcionaram (mínimo 2). "
+                f"Pipeline abortado."
+            )
 
         # 6. Agregação com preservação de proveniência
         self._reportar_progresso("fase1", 32, "Agregando com preservação de proveniência...")
@@ -2171,20 +2220,27 @@ INSTRUÇÕES:
 3. Inclui start_char/end_char/page_num nas citations
 4. Retorna APENAS JSON no formato especificado."""
 
-        # Processar cada auditor
+        # Processar cada auditor (PARALELO com retry)
         audit_reports: List[AuditReport] = []
         bruto_parts = ["# AUDITORIAS JSON AGREGADAS (BRUTO)\n"]
 
-        for i, model in enumerate(self.auditor_models):
+        def _run_auditor(i, model):
+            """Executa um auditor. Thread-safe."""
             auditor_id = f"A{i+1}"
-            self._reportar_progresso("fase2", 40 + i * 4, f"Auditor {auditor_id}: {model}")
 
-            resultado = self._call_llm(
-                model=model,
-                prompt=prompt_base,
-                system_prompt=self.SYSTEM_AUDITOR_JSON,
-                role_name=f"auditor_{i+1}_json",
-            )
+            def _do_audit():
+                return self._call_llm(
+                    model=model,
+                    prompt=prompt_base,
+                    system_prompt=self.SYSTEM_AUDITOR_JSON,
+                    role_name=f"auditor_{i+1}_json",
+                )
+
+            resultado = _call_with_retry(_do_audit, func_name=f"Auditor-{auditor_id}")
+
+            if resultado is None or not resultado.conteudo:
+                logger.error(f"✗ Auditor {auditor_id} falhou após retries")
+                return None
 
             # Parsear JSON com fallback
             report = parse_audit_report(
@@ -2197,8 +2253,6 @@ INSTRUÇÕES:
             # Validação de integridade (se validator disponível)
             if hasattr(self, '_integrity_validator') and self._integrity_validator:
                 report = self._integrity_validator.validate_and_annotate_audit(report)
-
-            audit_reports.append(report)
 
             # Guardar JSON do auditor individual
             json_path = self._output_dir / f"fase2_auditor_{i+1}.json"
@@ -2213,13 +2267,52 @@ INSTRUÇÕES:
             md_content = report.to_markdown()
             self._log_to_file(f"fase2_auditor_{i+1}.md", md_content)
 
-            bruto_parts.append(f"\n## [AUDITOR {auditor_id}: {model}]\n")
-            bruto_parts.append(md_content)
-            bruto_parts.append("\n---\n")
-
             logger.info(
                 f"✓ Auditor {auditor_id}: {len(report.findings)} findings, "
                 f"{len(report.errors)} erros"
+            )
+
+            return {
+                "auditor_id": auditor_id,
+                "index": i,
+                "model": model,
+                "report": report,
+                "md_content": md_content,
+            }
+
+        logger.info(f"[PARALELO] Lançando {n_auditores} auditores em paralelo...")
+        with ThreadPoolExecutor(max_workers=min(4, n_auditores)) as executor:
+            futures = {}
+            for i, model in enumerate(self.auditor_models):
+                future = executor.submit(_run_auditor, i, model)
+                futures[future] = f"A{i+1}"
+
+            auditor_results = []
+            for future in as_completed(futures):
+                aid = futures[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        auditor_results.append(result)
+                        logger.info(f"[PARALELO] {aid} concluído: {len(result['report'].findings)} findings")
+                    else:
+                        logger.warning(f"[PARALELO] {aid} falhou - ignorado")
+                except Exception as exc:
+                    logger.error(f"[PARALELO] {aid} excepção: {exc}")
+
+        # Ordenar por índice original para manter ordem determinística
+        auditor_results.sort(key=lambda r: r["index"])
+
+        for r in auditor_results:
+            audit_reports.append(r["report"])
+            bruto_parts.append(f"\n## [AUDITOR {r['auditor_id']}: {r['model']}]\n")
+            bruto_parts.append(r["md_content"])
+            bruto_parts.append("\n---\n")
+
+        if len(audit_reports) < 2:
+            raise Exception(
+                f"Apenas {len(audit_reports)} auditores funcionaram (mínimo 2). "
+                f"Pipeline abortado."
             )
 
         bruto = "\n".join(bruto_parts)
@@ -2343,16 +2436,23 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         judge_opinions: List[JudgeOpinion] = []
         respostas_qa = []
 
-        for i, model in enumerate(self.juiz_models):
+        def _run_judge(i, model):
+            """Executa um juiz. Thread-safe."""
             judge_id = f"J{i+1}"
-            self._reportar_progresso("fase3", 65 + i * 5, f"Juiz {judge_id}: {model}")
 
-            resultado = self._call_llm(
-                model=model,
-                prompt=prompt_base,
-                system_prompt=system_prompt,
-                role_name=f"juiz_{i+1}_json",
-            )
+            def _do_judge():
+                return self._call_llm(
+                    model=model,
+                    prompt=prompt_base,
+                    system_prompt=system_prompt,
+                    role_name=f"juiz_{i+1}_json",
+                )
+
+            resultado = _call_with_retry(_do_judge, func_name=f"Juiz-{judge_id}")
+
+            if resultado is None or not resultado.conteudo:
+                logger.error(f"✗ Juiz {judge_id} falhou após retries")
+                return None
 
             # Parsear JSON
             opinion = parse_judge_opinion(
@@ -2366,8 +2466,6 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
             if hasattr(self, '_integrity_validator') and self._integrity_validator:
                 opinion = self._integrity_validator.validate_and_annotate_judge(opinion)
 
-            judge_opinions.append(opinion)
-
             # Guardar JSON
             json_path = self._output_dir / f"fase3_juiz_{i+1}.json"
             with open(json_path, 'w', encoding='utf-8') as f:
@@ -2377,18 +2475,53 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
             md_content = opinion.to_markdown()
             self._log_to_file(f"fase3_juiz_{i+1}.md", md_content)
 
-            # Extrair Q&A
-            respostas_qa.append({
-                "juiz": i + 1,
-                "modelo": model,
-                "opinion": opinion.to_dict(),  # FIX: converter para dict
-                "resposta": md_content,
-            })
-
             logger.info(
                 f"✓ Juiz {judge_id}: {opinion.recommendation.value}, "
                 f"{len(opinion.decision_points)} pontos, {len(opinion.errors)} erros"
             )
+
+            return {
+                "judge_id": judge_id,
+                "index": i,
+                "model": model,
+                "opinion": opinion,
+                "md_content": md_content,
+            }
+
+        logger.info(f"[PARALELO] Lançando {len(self.juiz_models)} juízes em paralelo...")
+        with ThreadPoolExecutor(max_workers=min(3, len(self.juiz_models))) as executor:
+            futures = {}
+            for i, model in enumerate(self.juiz_models):
+                future = executor.submit(_run_judge, i, model)
+                futures[future] = f"J{i+1}"
+
+            judge_results = []
+            for future in as_completed(futures):
+                jid = futures[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        judge_results.append(result)
+                        logger.info(f"[PARALELO] {jid} concluído: {result['opinion'].recommendation.value}")
+                    else:
+                        logger.warning(f"[PARALELO] {jid} falhou - ignorado")
+                except Exception as exc:
+                    logger.error(f"[PARALELO] {jid} excepção: {exc}")
+
+        # Ordenar por índice original para manter ordem determinística
+        judge_results.sort(key=lambda r: r["index"])
+
+        for r in judge_results:
+            judge_opinions.append(r["opinion"])
+            respostas_qa.append({
+                "juiz": r["index"] + 1,
+                "modelo": r["model"],
+                "opinion": r["opinion"].to_dict(),
+                "resposta": r["md_content"],
+            })
+
+        if len(judge_opinions) < 1:
+            raise Exception("Nenhum juiz funcionou (mínimo 1). Pipeline abortado.")
 
         # Guardar Q&A se houver perguntas
         if perguntas:
