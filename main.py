@@ -817,3 +817,30 @@ async def admin_profit_report(
     except Exception as e:
         logger.error(f"Erro ao gerar relatório de lucro: {e}")
         raise HTTPException(status_code=500, detail="Erro ao gerar relatório.")
+
+
+# ============================================================
+# ADMIN - VERIFICAÇÃO DE PASSWORD
+# ============================================================
+
+@app.get("/admin/verify")
+async def admin_verify(password: str = ""):
+    """
+    Verifica a password de admin para acesso ao painel de diagnóstico.
+    A password é comparada com a variável de ambiente ADMIN_PASSWORD.
+    """
+    admin_password = os.environ.get("ADMIN_PASSWORD", "")
+    
+    if not admin_password:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ADMIN_PASSWORD não configurada no servidor.",
+        )
+    
+    if password != admin_password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Password incorrecta.",
+        )
+    
+    return {"status": "ok", "message": "Acesso autorizado."}
