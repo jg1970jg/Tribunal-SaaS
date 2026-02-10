@@ -18,6 +18,7 @@ if str(_ROOT) not in sys.path:
 
 import json
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -26,6 +27,8 @@ from dataclasses import dataclass, field
 import uuid
 
 import base64
+
+from src.cost_controller import CostController
 
 from src.config import (
     EXTRATOR_MODELS,
@@ -140,6 +143,8 @@ class FaseResult:
     role: str  # extrator_1, auditor_2, juiz_3, etc.
     conteudo: str
     tokens_usados: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     latencia_ms: float = 0.0
     timestamp: datetime = field(default_factory=datetime.now)
     sucesso: bool = True
@@ -153,6 +158,8 @@ class FaseResult:
             "conteudo": self.conteudo[:2000] + "..." if len(self.conteudo) > 2000 else self.conteudo,
             "conteudo_completo_length": len(self.conteudo),
             "tokens_usados": self.tokens_usados,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
             "latencia_ms": self.latencia_ms,
             "timestamp": self.timestamp.isoformat(),
             "sucesso": self.sucesso,
@@ -191,6 +198,8 @@ class PipelineResult:
     total_latencia_ms: float = 0.0
     sucesso: bool = True
     erro: Optional[str] = None
+    # Custos REAIS
+    custos: Optional[Dict] = None
 
     def to_dict(self) -> Dict:
         return {
@@ -223,6 +232,8 @@ class PipelineResult:
             ) if self.timestamp_fim else 0.0,
             "sucesso": self.sucesso,
             "erro": self.erro,
+            # Custos REAIS
+            "custos": self.custos,
             # Metadados do documento
             "documento_texto": self.documento.text[:50000] if self.documento and self.documento.text else "",
             "documento_filename": self.documento.filename if self.documento else "",
@@ -879,7 +890,7 @@ IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando cont
         role_name: str,
         temperature: float = 0.7,
     ) -> FaseResult:
-        """Chama um LLM e retorna o resultado formatado."""
+        """Chama um LLM e retorna o resultado formatado com tokens REAIS."""
         response = self.llm_client.chat_simple(
             model=model,
             prompt=prompt,
@@ -887,12 +898,41 @@ IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando cont
             temperature=temperature,
         )
 
+        prompt_tokens = response.prompt_tokens
+        completion_tokens = response.completion_tokens
+        total_tokens = response.total_tokens
+
+        # Se API não retornou tokens, estimar com WARNING
+        if total_tokens == 0 and response.content:
+            prompt_tokens = len(prompt) // 4
+            completion_tokens = len(response.content) // 4
+            total_tokens = prompt_tokens + completion_tokens
+            logger.warning(
+                f"[CUSTO-ESTIMATIVA] {role_name}/{model}: API não retornou usage. "
+                f"Estimativa: {prompt_tokens}+{completion_tokens}={total_tokens} tokens"
+            )
+
+        # Registar no CostController (se disponível)
+        if hasattr(self, '_cost_controller') and self._cost_controller:
+            try:
+                self._cost_controller.register_usage(
+                    phase=role_name,
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    raise_on_exceed=False,
+                )
+            except Exception as e:
+                logger.warning(f"[CUSTO] Erro ao registar uso para {role_name}: {e}")
+
         return FaseResult(
             fase=role_name.split("_")[0],
             modelo=model,
             role=role_name,
             conteudo=response.content,
-            tokens_usados=response.total_tokens,
+            tokens_usados=total_tokens,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
             latencia_ms=response.latency_ms,
             sucesso=response.success,
             erro=response.error,
@@ -1164,6 +1204,9 @@ IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando cont
             extractor_content_parts = []
             chunk_errors = []
             local_unreadable = []
+            extractor_total_tokens = 0
+            extractor_prompt_tokens = 0
+            extractor_completion_tokens = 0
 
             for chunk_idx, chunk in enumerate(chunks):
                 chunk_info = f" (chunk {chunk_idx+1}/{num_chunks})" if num_chunks > 1 else ""
@@ -1233,6 +1276,32 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                     logger.error(f"✗ {extractor_id} chunk {chunk_idx}: sem resposta após retries")
                     continue
 
+                # Acumular tokens REAIS da resposta
+                r_prompt = response.prompt_tokens
+                r_completion = response.completion_tokens
+                r_total = response.total_tokens
+                if r_total == 0 and response.content:
+                    r_prompt = len(prompt) // 4
+                    r_completion = len(response.content) // 4
+                    r_total = r_prompt + r_completion
+                    logger.warning(f"[CUSTO-ESTIMATIVA] {extractor_id}-chunk{chunk_idx}: API sem usage")
+                extractor_prompt_tokens += r_prompt
+                extractor_completion_tokens += r_completion
+                extractor_total_tokens += r_total
+
+                # Registar no CostController
+                if hasattr(self, '_cost_controller') and self._cost_controller:
+                    try:
+                        self._cost_controller.register_usage(
+                            phase=f"fase1_{extractor_id}_chunk{chunk_idx}",
+                            model=model,
+                            prompt_tokens=r_prompt,
+                            completion_tokens=r_completion,
+                            raise_on_exceed=False,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[CUSTO] Erro ao registar {extractor_id}-chunk{chunk_idx}: {e}")
+
                 # Parsear output e criar EvidenceItems com source_spans
                 items, unreadable, errors = parse_unified_output(
                     output=response.content,
@@ -1267,14 +1336,16 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
             run.status = ExtractionStatus.SUCCESS if not chunk_errors else ExtractionStatus.PARTIAL
             run.finished_at = datetime.now()
 
-            # Criar FaseResult para compatibilidade
+            # Criar FaseResult para compatibilidade (com tokens REAIS)
             full_content = "\n\n".join(extractor_content_parts)
             resultado = FaseResult(
                 fase="extrator",
                 modelo=model,
                 role=f"extrator_{extractor_id}",
                 conteudo=full_content,
-                tokens_usados=len(full_content) // 4,
+                tokens_usados=extractor_total_tokens,
+                prompt_tokens=extractor_prompt_tokens,
+                completion_tokens=extractor_completion_tokens,
                 latencia_ms=0,
                 sucesso=run.status != ExtractionStatus.FAILED,
             )
@@ -1548,7 +1619,10 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
             
             # NOVO: Processar cada chunk deste extrator
             conteudos_chunks = []
-            
+            ext_total_tokens = 0
+            ext_prompt_tokens = 0
+            ext_completion_tokens = 0
+
             for chunk_idx, chunk in enumerate(chunks):
                 chunk_info = f" (chunk {chunk_idx+1}/{num_chunks})" if num_chunks > 1 else ""
                 
@@ -1584,6 +1658,9 @@ CONTEÚDO{chunk_header}:
                 )
                 
                 conteudos_chunks.append(resultado_chunk.conteudo)
+                ext_total_tokens += resultado_chunk.tokens_usados
+                ext_prompt_tokens += resultado_chunk.prompt_tokens
+                ext_completion_tokens += resultado_chunk.completion_tokens
                 logger.info(f"✓ Chunk {chunk_idx+1} processado: {len(resultado_chunk.conteudo):,} chars extraídos")
             
             # Consolidar chunks deste extrator
@@ -1593,13 +1670,15 @@ CONTEÚDO{chunk_header}:
             else:
                 conteudo_final = conteudos_chunks[0]
             
-            # Criar FaseResult consolidado para este extrator
+            # Criar FaseResult consolidado para este extrator (tokens REAIS)
             resultado_consolidado = FaseResult(
                 fase="extrator",
                 modelo=model,
                 role=f"extrator_{extractor_id}",
                 conteudo=conteudo_final,
-                tokens_usados=sum(len(c) for c in conteudos_chunks) // 4,  # Estimativa: 1 token ≈ 4 chars
+                tokens_usados=ext_total_tokens,
+                prompt_tokens=ext_prompt_tokens,
+                completion_tokens=ext_completion_tokens,
                 latencia_ms=0,
                 sucesso=True,
                 erro=None
@@ -1812,6 +1891,24 @@ IMPORTANTE: Só usa page_num que existam no batch acima."""
                     system_prompt=SYSTEM_EXTRATOR_JSON,
                     temperature=temperature,
                 )
+
+                # Registar tokens REAIS no CostController
+                if hasattr(self, '_cost_controller') and self._cost_controller:
+                    r_pt = response.prompt_tokens
+                    r_ct = response.completion_tokens
+                    if response.total_tokens == 0 and response.content:
+                        r_pt = len(prompt) // 4
+                        r_ct = len(response.content) // 4
+                    try:
+                        self._cost_controller.register_usage(
+                            phase=f"fase1_{extractor_id}_batch{batch_idx}",
+                            model=model,
+                            prompt_tokens=r_pt,
+                            completion_tokens=r_ct,
+                            raise_on_exceed=False,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[CUSTO] Erro ao registar {extractor_id}-batch{batch_idx}: {e}")
 
                 # Parsear e validar output
                 parsed = parse_extractor_output(response.content, valid_page_nums, extractor_id)
@@ -2287,6 +2384,9 @@ INSTRUÇÕES:
                 "model": model,
                 "report": report,
                 "md_content": md_content,
+                "tokens_usados": resultado.tokens_usados if resultado else 0,
+                "prompt_tokens": resultado.prompt_tokens if resultado else 0,
+                "completion_tokens": resultado.completion_tokens if resultado else 0,
             }
 
         logger.info(f"[PARALELO] Lançando {n_auditores} auditores em paralelo...")
@@ -2495,6 +2595,9 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                 "model": model,
                 "opinion": opinion,
                 "md_content": md_content,
+                "tokens_usados": resultado.tokens_usados if resultado else 0,
+                "prompt_tokens": resultado.prompt_tokens if resultado else 0,
+                "completion_tokens": resultado.completion_tokens if resultado else 0,
             }
 
         logger.info(f"[PARALELO] Lançando {len(self.juiz_models)} juízes em paralelo...")
@@ -2904,6 +3007,13 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             timestamp_inicio=timestamp_inicio,
         )
 
+        # Inicializar CostController para rastrear custos REAIS
+        self._cost_controller = CostController(
+            run_id=run_id,
+            budget_limit_usd=float(os.getenv("MAX_BUDGET_USD", "10.0")),
+        )
+        logger.info(f"[CUSTO] CostController inicializado para run {run_id}")
+
         # Inicializar variáveis usadas após o try/except principal
         final_decision = None
         judge_opinions = None
@@ -2971,19 +3081,35 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                 audit_reports, bruto_f2, consolidado_f2, chefe_report = self._fase2_auditoria_unified(
                     consolidado_f1, area_direito, run_id
                 )
-                # Criar FaseResult para compatibilidade (estimar tokens do conteúdo)
-                auditorias = [
-                    FaseResult(
+                # Criar FaseResult para compatibilidade
+                # Tokens reais vêm do CostController (registados em _call_llm)
+                auditorias = []
+                for r in audit_reports:
+                    # Procurar tokens reais no CostController
+                    fase_tokens = 0
+                    fase_prompt = 0
+                    fase_completion = 0
+                    # auditor_id = "A1" → número = "1", phase = "auditor_1_json"
+                    aid_num = r.auditor_id.replace("A", "").replace("a", "")
+                    if hasattr(self, '_cost_controller') and self._cost_controller:
+                        for pu in self._cost_controller.usage.phases:
+                            if f"auditor_{aid_num}" in pu.phase:
+                                fase_tokens += pu.total_tokens
+                                fase_prompt += pu.prompt_tokens
+                                fase_completion += pu.completion_tokens
+                    if fase_tokens == 0:
+                        fase_tokens = len(r.to_markdown()) // 3  # fallback
+                    auditorias.append(FaseResult(
                         fase="auditoria",
                         modelo=r.model_name,
                         role=f"auditor_{r.auditor_id}",
                         conteudo=r.to_markdown(),
-                        tokens_usados=len(r.to_markdown()) // 3,
+                        tokens_usados=fase_tokens,
+                        prompt_tokens=fase_prompt,
+                        completion_tokens=fase_completion,
                         latencia_ms=0,
                         sucesso=len(r.errors) == 0,
-                    )
-                    for r in audit_reports
-                ]
+                    ))
             else:
                 auditorias, bruto_f2, consolidado_f2 = self._fase2_auditoria(consolidado_f1, area_direito)
 
@@ -3023,19 +3149,34 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                 judge_opinions, respostas_qa = self._fase3_julgamento_unified(
                     consolidado_f2, area_direito, perguntas, run_id
                 )
-                # Criar FaseResult para compatibilidade (estimar tokens do conteúdo)
-                pareceres = [
-                    FaseResult(
+                # Criar FaseResult para compatibilidade
+                # Tokens reais vêm do CostController (registados em _call_llm)
+                pareceres = []
+                for o in judge_opinions:
+                    fase_tokens = 0
+                    fase_prompt = 0
+                    fase_completion = 0
+                    # judge_id = "J1" → número = "1", phase = "juiz_1_json"
+                    jid_num = o.judge_id.replace("J", "").replace("j", "")
+                    if hasattr(self, '_cost_controller') and self._cost_controller:
+                        for pu in self._cost_controller.usage.phases:
+                            if f"juiz_{jid_num}" in pu.phase:
+                                fase_tokens += pu.total_tokens
+                                fase_prompt += pu.prompt_tokens
+                                fase_completion += pu.completion_tokens
+                    if fase_tokens == 0:
+                        fase_tokens = len(o.to_markdown()) // 3  # fallback
+                    pareceres.append(FaseResult(
                         fase="julgamento",
                         modelo=o.model_name,
                         role=f"juiz_{o.judge_id}",
                         conteudo=o.to_markdown(),
-                        tokens_usados=len(o.to_markdown()) // 3,
+                        tokens_usados=fase_tokens,
+                        prompt_tokens=fase_prompt,
+                        completion_tokens=fase_completion,
                         latencia_ms=0,
                         sucesso=len(o.errors) == 0,
-                    )
-                    for o in judge_opinions
-                ]
+                    ))
             else:
                 pareceres, respostas_qa = self._fase3_julgamento(consolidado_f2, area_direito, perguntas)
 
@@ -3079,11 +3220,36 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             result.simbolo_final = simbolo
             result.status_final = status
 
-            # Calcular totais
-            todos_resultados = extracoes + auditorias + pareceres
-            result.total_tokens = sum(r.tokens_usados for r in todos_resultados)
-            # Adicionar tokens do presidente (não está em pareceres)
-            result.total_tokens += len(presidente) // 3 if presidente else 0
+            # Calcular totais via CostController (tokens REAIS das APIs)
+            if self._cost_controller:
+                run_usage = self._cost_controller.finalize()
+                result.total_tokens = run_usage.total_tokens
+
+                MARGEM = 1.40  # 40% margem
+                custo_por_fase = self._cost_controller.get_cost_by_phase()
+                result.custos = {
+                    "custo_total_usd": round(run_usage.total_cost_usd, 4),
+                    "custo_cliente_usd": round(run_usage.total_cost_usd * MARGEM, 4),
+                    "margem_percentagem": round((MARGEM - 1.0) * 100, 1),
+                    "total_prompt_tokens": run_usage.total_prompt_tokens,
+                    "total_completion_tokens": run_usage.total_completion_tokens,
+                    "total_tokens": run_usage.total_tokens,
+                    "por_fase": custo_por_fase,
+                    "detalhado": [pu.to_dict() for pu in run_usage.phases],
+                    "budget_limit_usd": run_usage.budget_limit_usd,
+                    "budget_restante_usd": round(self._cost_controller.get_remaining_budget(), 4),
+                }
+                logger.info(
+                    f"[CUSTO-FINAL] Total: ${run_usage.total_cost_usd:.4f} | "
+                    f"Cliente: ${run_usage.total_cost_usd * MARGEM:.4f} | "
+                    f"Tokens: {run_usage.total_tokens:,} | "
+                    f"Chamadas: {len(run_usage.phases)}"
+                )
+            else:
+                # Fallback se CostController não disponível
+                todos_resultados = extracoes + auditorias + pareceres
+                result.total_tokens = sum(r.tokens_usados for r in todos_resultados)
+
             # Latência real = tempo decorrido desde o início do pipeline
             result.total_latencia_ms = (datetime.now() - result.timestamp_inicio).total_seconds() * 1000
 
@@ -3245,8 +3411,10 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             f"---",
             f"",
             f"## Estatisticas",
-            f"- Total de tokens: {result.total_tokens}",
+            f"- Total de tokens: {result.total_tokens:,}",
             f"- Latencia total: {result.total_latencia_ms:.0f}ms",
+            f"- Custo total: ${result.custos['custo_total_usd']:.4f}" if result.custos else "- Custo total: N/A",
+            f"- Custo cliente: ${result.custos['custo_cliente_usd']:.4f}" if result.custos else "",
             f"- Citacoes legais verificadas: {len(result.verificacoes_legais)}",
             f"",
             f"---",

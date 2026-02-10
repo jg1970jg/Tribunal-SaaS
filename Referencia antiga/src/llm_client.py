@@ -514,13 +514,18 @@ class OpenAIClient:
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
+            # Responses API usa input_tokens/output_tokens (não prompt_tokens/completion_tokens)
+            prompt_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0) or (prompt_tokens + completion_tokens)
+
             response = LLMResponse(
                 content=output_text,
                 model=raw_response.get("model", model),
                 role="assistant",
-                prompt_tokens=usage.get("prompt_tokens", 0),
-                completion_tokens=usage.get("completion_tokens", 0),
-                total_tokens=usage.get("total_tokens", 0),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
                 latency_ms=latency_ms,
                 raw_response=raw_response,
                 success=True,

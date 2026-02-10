@@ -18,29 +18,31 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# PREÇOS POR MODELO (USD por 1M tokens)
+# PREÇOS POR MODELO (USD por 1M tokens) — Atualizado Fev 2026
 # ============================================================
-# Fonte: OpenRouter pricing (aproximado)
+# Fontes: platform.openai.com/docs/pricing, platform.claude.com/docs/en/about-claude/pricing,
+#          ai.google.dev/gemini-api/docs/pricing, docs.x.ai/developers/models,
+#          api-docs.deepseek.com/quick_start/pricing
 MODEL_PRICING = {
-    # OpenAI
+    # OpenAI (Fev 2026)
     "openai/gpt-4o": {"input": 2.50, "output": 10.00},
     "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "openai/gpt-5.2": {"input": 3.00, "output": 12.00},
-    "openai/gpt-5.2-pro": {"input": 15.00, "output": 60.00},
-    # Anthropic
-    "anthropic/claude-opus-4.5": {"input": 15.00, "output": 75.00},
+    "openai/gpt-5.2": {"input": 1.75, "output": 14.00},
+    "openai/gpt-5.2-pro": {"input": 21.00, "output": 168.00},
+    # Anthropic (Fev 2026 — Opus 4.5 desceu 66% vs Opus 4)
+    "anthropic/claude-opus-4.5": {"input": 5.00, "output": 25.00},
     "anthropic/claude-3-5-sonnet": {"input": 3.00, "output": 15.00},
     "anthropic/claude-3.5-haiku": {"input": 0.25, "output": 1.25},
-    # Google
-    "google/gemini-3-flash-preview": {"input": 0.075, "output": 0.30},
-    "google/gemini-3-pro-preview": {"input": 1.25, "output": 5.00},
-    # DeepSeek
-    "deepseek/deepseek-chat": {"input": 0.14, "output": 0.28},
+    # Google (Fev 2026)
+    "google/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
+    "google/gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
+    # DeepSeek (V3.2 — set 2025)
+    "deepseek/deepseek-chat": {"input": 0.28, "output": 0.42},
     # Qwen
     "qwen/qwen-235b-instruct": {"input": 0.20, "output": 0.60},
-    # xAI
-    "x-ai/grok-4.1-fast": {"input": 5.00, "output": 15.00},
-    "x-ai/grok-4.1": {"input": 10.00, "output": 30.00},
+    # xAI (Fev 2026)
+    "x-ai/grok-4.1-fast": {"input": 0.20, "output": 0.50},
+    "x-ai/grok-4.1": {"input": 0.20, "output": 0.50},
     # Default para modelos desconhecidos
     "default": {"input": 1.00, "output": 4.00},
 }
@@ -341,14 +343,21 @@ class CostController:
         }
 
     def get_cost_by_phase(self) -> Dict[str, float]:
-        """Retorna custo agrupado por fase (fase1, fase2, etc.)."""
+        """Retorna custo agrupado por fase (fase1, fase2, fase3, fase4)."""
+        # Mapeamento de role_name → fase do pipeline
+        PHASE_MAP = {
+            "fase1": "fase1", "extrator": "fase1", "agregador": "fase1",
+            "fase2": "fase2", "auditor": "fase2", "chefe": "fase2",
+            "fase3": "fase3", "juiz": "fase3",
+            "fase4": "fase4", "presidente": "fase4",
+        }
         costs = {}
         for phase in self.usage.phases:
-            # Extrair nome base da fase (ex: "fase1_E1" -> "fase1")
             base = phase.phase.split("_")[0] if "_" in phase.phase else phase.phase
-            if base not in costs:
-                costs[base] = 0.0
-            costs[base] += phase.cost_usd
+            mapped = PHASE_MAP.get(base, base)
+            if mapped not in costs:
+                costs[mapped] = 0.0
+            costs[mapped] += phase.cost_usd
         return {k: round(v, 4) for k, v in costs.items()}
 
 
