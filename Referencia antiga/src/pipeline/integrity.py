@@ -13,6 +13,11 @@ REGRAS:
 INTEGRAÇÃO:
 - Usa text_normalize.py para normalização consistente
 - Usa confidence_policy.py para penalidades determinísticas
+
+CHANGELOG:
+- 2026-02-10: Fix MISSING_CITATION - não penalizar quando legal_basis existe
+- 2026-02-10: Fix MISSING_RATIONALE - reduzir falsos positivos
+- 2026-02-10: Reduzir penalties para evitar confiança artificialmente baixa
 """
 
 import json
@@ -444,6 +449,10 @@ def validate_judge_opinion(
     Valida um JudgeOpinion completo.
 
     Similar a validate_audit_report mas para juízes.
+
+    FIX 2026-02-10: Não penalizar quando legal_basis existe.
+    Os LLMs preenchem legal_basis (artigos de lei) mas raramente
+    preenchem citations com offsets. legal_basis É fundamentação válida.
     """
     errors = []
     is_valid = True
@@ -481,37 +490,57 @@ def validate_judge_opinion(
                 is_valid = False
                 confidence_penalty += 0.03
 
-        # NOVA REGRA: Verificar SEM_PROVA_DETERMINANTE
+        # REGRA: Verificar SEM_PROVA_DETERMINANTE
         # Se o ponto é determinante e não tem citations, é erro grave
         is_determinant = getattr(point, 'is_determinant', False)
         if is_determinant and not citations:
-            errors.append(ValidationError(
-                error_type="SEM_PROVA_DETERMINANTE",
-                severity="ERROR",
-                message=f"Ponto DETERMINANTE '{point_id}' sem citations (sem prova documental)",
-                source=judge_id,
-                expected="Pelo menos 1 citation",
-                actual="0 citations",
-            ))
-            is_valid = False
-            confidence_penalty += 0.15  # Penalty alto para pontos determinantes sem prova
+            # Mesmo determinante: se tem legal_basis, reduzir severidade
+            legal_basis = getattr(point, 'legal_basis', [])
+            if legal_basis:
+                # Tem artigos de lei = fundamentação parcial (warning, não error)
+                errors.append(ValidationError(
+                    error_type="SEM_PROVA_DETERMINANTE",
+                    severity="WARNING",
+                    message=f"Ponto DETERMINANTE '{point_id}' sem citations mas com legal_basis: {', '.join(legal_basis[:3])}",
+                    source=judge_id,
+                    expected="Citations com offsets",
+                    actual=f"legal_basis: {', '.join(legal_basis[:3])}",
+                ))
+                confidence_penalty += 0.05  # Reduzido de 0.15 (tem fundamentação parcial)
+            else:
+                errors.append(ValidationError(
+                    error_type="SEM_PROVA_DETERMINANTE",
+                    severity="ERROR",
+                    message=f"Ponto DETERMINANTE '{point_id}' sem citations nem legal_basis",
+                    source=judge_id,
+                    expected="Pelo menos 1 citation ou legal_basis",
+                    actual="0 citations, 0 legal_basis",
+                ))
+                is_valid = False
+                confidence_penalty += 0.15  # Penalty alto - sem nenhuma fundamentação
         elif not citations:
-            # Ponto não-determinante sem citations é warning
-            errors.append(ValidationError(
-                error_type="MISSING_CITATION",
-                severity="WARNING",
-                message=f"JudgePoint '{point_id}' sem citations",
-                source=judge_id,
-            ))
-            confidence_penalty += 0.03
+            # FIX 2026-02-10: Ponto não-determinante sem citations:
+            # Se tem legal_basis, NÃO penalizar (artigos de lei = fundamentação válida)
+            legal_basis = getattr(point, 'legal_basis', [])
+            if not legal_basis:
+                # Sem citations E sem legal_basis = warning real
+                errors.append(ValidationError(
+                    error_type="MISSING_CITATION",
+                    severity="WARNING",
+                    message=f"JudgePoint '{point_id}' sem citations nem legal_basis",
+                    source=judge_id,
+                ))
+                confidence_penalty += 0.01  # Reduzido de 0.03
+            # Se tem legal_basis, não penalizar nem gerar warning
+            # (artigos de lei citados = fundamentação jurídica válida)
 
-        # Verificar se tem fundamentação
+        # Verificar se tem fundamentação textual
         rationale = getattr(point, 'rationale', '')
         if not rationale:
             errors.append(ValidationError(
                 error_type="MISSING_RATIONALE",
                 severity="INFO",
-                message=f"JudgePoint '{point_id}' sem fundamentação",
+                message=f"JudgePoint '{point_id}' sem fundamentação textual",
                 source=judge_id,
             ))
 
@@ -746,8 +775,9 @@ class IntegrityValidator:
         except AttributeError:
             pass
 
-        # Ajustar confidence se aplicável
-        if penalty > 0 and hasattr(judge_opinion, 'decision_points'):
+        # FIX 2026-02-10: Só ajustar confidence dos pontos se penalty significativo
+        # Evitar reduzir confidence quando a única "falha" é falta de offsets
+        if penalty > 0.05 and hasattr(judge_opinion, 'decision_points'):
             for point in judge_opinion.decision_points:
                 if hasattr(point, 'confidence'):
                     original = point.confidence
