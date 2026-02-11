@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 # Adicionar diretório raiz ao path (necessário para imports absolutos)
-_ROOT = Path(__file__).resolve().parent.parent.parenth
+_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
