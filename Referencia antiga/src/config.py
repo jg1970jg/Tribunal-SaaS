@@ -103,6 +103,65 @@ PRESIDENTE_MODEL_OPTIONS = {
         "recommended": False,
     },
 }
+# Opções para Auditor Claude (A2)
+AUDITOR_CLAUDE_OPTIONS = {
+    "sonnet-4.5": {
+        "model": "anthropic/claude-sonnet-4-5",
+        "display_name": "Sonnet 4.5 (económico) — Recomendado",
+        "cost_per_analysis": 0.14,
+        "description": "Bom equilíbrio custo/qualidade",
+        "recommended": True,
+    },
+    "opus-4.6": {
+        "model": "anthropic/claude-opus-4.6",
+        "display_name": "Opus 4.6 (premium)",
+        "cost_per_analysis": 0.50,
+        "description": "Máxima profundidade de análise, custo elevado",
+        "recommended": False,
+    },
+}
+
+# Opções para Juiz Claude (J2)
+JUIZ_CLAUDE_OPTIONS = {
+    "sonnet-4.5": {
+        "model": "anthropic/claude-sonnet-4-5",
+        "display_name": "Sonnet 4.5 (económico) — Recomendado",
+        "cost_per_analysis": 0.14,
+        "description": "Bom equilíbrio custo/qualidade",
+        "recommended": True,
+    },
+    "opus-4.6": {
+        "model": "anthropic/claude-opus-4.6",
+        "display_name": "Opus 4.6 (premium)",
+        "cost_per_analysis": 0.50,
+        "description": "Máxima profundidade de análise, custo elevado",
+        "recommended": False,
+    },
+}
+
+AUDITOR_CLAUDE_DEFAULT = "sonnet-4.5"
+JUIZ_CLAUDE_DEFAULT = "sonnet-4.5"
+```
+
+**Passo 5:** Agora usa **Ctrl+F** para procurar:
+```
+    return PRESIDENTE_MODEL_OPTIONS.get(choice, PRESIDENTE_MODEL_OPTIONS[PRESIDENTE_MODEL_DEFAULT])["model"]
+
+def get_auditor_claude_model(choice: str = None) -> str:
+    """Retorna modelo Claude para Auditor A2."""
+    if choice is None:
+        choice = AUDITOR_CLAUDE_DEFAULT
+    return AUDITOR_CLAUDE_OPTIONS.get(choice, AUDITOR_CLAUDE_OPTIONS[AUDITOR_CLAUDE_DEFAULT])["model"]
+
+
+def get_juiz_claude_model(choice: str = None) -> str:
+    """Retorna modelo Claude para Juiz J2."""
+    if choice is None:
+        choice = JUIZ_CLAUDE_DEFAULT
+    return JUIZ_CLAUDE_OPTIONS.get(choice, JUIZ_CLAUDE_OPTIONS[JUIZ_CLAUDE_DEFAULT])["model"]
+
+
+
 
 # Defaults (podem ser alterados pelo utilizador na interface)
 CHEFE_MODEL_DEFAULT = "gpt-5.2"        # económico por defeito
