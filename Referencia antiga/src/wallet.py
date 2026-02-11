@@ -269,6 +269,16 @@ class WalletManager:
                 logger.info(f"{tag} Nova wallet criada para {user_id[:8]}... com ${initial_balance:.2f}")
                 return initial_balance
 
+            # Admin sempre recebe saldo máximo
+            admin = self.is_admin(user_id, user_email=user_email)
+            if admin:
+                stored = float(resp.data[0]["balance_usd"])
+                if stored < ADMIN_INITIAL_BALANCE:
+                    self._sb.table("wallet_balances").update(
+                        {"balance_usd": ADMIN_INITIAL_BALANCE}
+                    ).eq("user_id", user_id).execute()
+                    logger.info(f"[WALLET-ADMIN] Saldo admin actualizado: ${ADMIN_INITIAL_BALANCE:.2f}")
+                return ADMIN_INITIAL_BALANCE
             return float(resp.data[0]["balance_usd"])
 
         except Exception as e:
