@@ -15,6 +15,8 @@ INTEGRAÇÃO:
 - Usa confidence_policy.py para penalidades determinísticas
 
 CHANGELOG:
+- 2026-02-11: Fix — BUSCA GLOBAL antes de EXCERPT_MISMATCH
+              Hierarquia: range → ±200 (OFFSET_IMPRECISE) → global (OFFSET_WRONG) → EXCERPT_MISMATCH
 - 2026-02-10: Fix MISSING_CITATION - não penalizar quando legal_basis existe
 - 2026-02-10: Fix MISSING_RATIONALE - reduzir falsos positivos
 - 2026-02-10: Reduzir penalties para evitar confiança artificialmente baixa
@@ -87,6 +89,9 @@ class IntegrityReport:
     excerpts_checked: int = 0
     excerpts_matched: int = 0
     excerpts_mismatch: int = 0
+    # NOVO: contadores separados para offset imprecise/wrong
+    excerpts_offset_imprecise: int = 0
+    excerpts_offset_wrong: int = 0
     spans_total: int = 0
     spans_valid: int = 0
     spans_out_of_range: int = 0
@@ -127,7 +132,13 @@ class IntegrityReport:
                 },
             },
             "citations": {"total": self.citations_total, "valid": self.citations_valid, "invalid": self.citations_invalid},
-            "excerpts": {"checked": self.excerpts_checked, "matched": self.excerpts_matched, "mismatch": self.excerpts_mismatch},
+            "excerpts": {
+                "checked": self.excerpts_checked,
+                "matched": self.excerpts_matched,
+                "mismatch": self.excerpts_mismatch,
+                "offset_imprecise": self.excerpts_offset_imprecise,
+                "offset_wrong": self.excerpts_offset_wrong,
+            },
             "spans": {"total": self.spans_total, "valid": self.spans_valid, "out_of_range": self.spans_out_of_range},
             "pages": {"checked": self.pages_checked, "valid": self.pages_valid, "mismatch": self.pages_mismatch},
             "evidence_items": {"referenced": self.items_referenced, "found": self.items_found, "not_found": self.items_not_found},
@@ -188,8 +199,11 @@ def validate_citation(
     2. page_num consistente com mapper (se existir)
     3. excerpt bate com texto no documento
 
-    FIX Bug #11: Thresholds mais tolerantes para acomodar paráfrases do LLM,
-    janela expandida de ±50 para ±200 chars, severity reduzida para INFO.
+    HIERARQUIA DE VALIDAÇÃO DE EXCERPT (v2.1):
+    a) Range exacto → OK (sem penalty)
+    b) Janela ±200 chars → OFFSET_IMPRECISE (penalty mínima 0.005)
+    c) BUSCA GLOBAL no documento → OFFSET_WRONG (penalty baixa 0.01)
+    d) NÃO encontrado → EXCERPT_MISMATCH (penalty alta 0.05, é invenção)
     """
     errors = []
     is_valid = True
@@ -239,39 +253,69 @@ def validate_citation(
                 expected=str(expected_page), actual=str(page_num), source=source,
             ))
 
-    # 3. Validar excerpt
-    # FIX Bug #11: threshold reduzido de 0.6 para 0.4 (LLMs frequentemente parafraseiam)
+    # 3. Validar excerpt — HIERARQUIA DE 4 NÍVEIS
     if excerpt and document_text and start_char >= 0 and end_char <= len(document_text):
-        actual_text = document_text[start_char:end_char]
-
         config = NormalizationConfig.ocr_tolerant()
+
+        # ── Nível A: Range exacto ──
+        actual_text = document_text[start_char:end_char]
         match_result, match_debug = text_contains_normalized(
             actual_text, excerpt, threshold=0.4, config=config, return_debug=True
         )
 
         if not match_result:
-            # FIX Bug #11: janela expandida de ±50 para ±200 chars
+            # ── Nível B: Janela expandida ±200 chars → OFFSET_IMPRECISE ──
             expanded_start = max(0, start_char - 200)
             expanded_end = min(len(document_text), end_char + 200)
             expanded_text = document_text[expanded_start:expanded_end]
 
-            # FIX Bug #11: threshold reduzido de 0.5 para 0.3
             expanded_match, expanded_debug = text_contains_normalized(
                 expanded_text, excerpt, threshold=0.3, config=config, return_debug=True
             )
 
-            if not expanded_match:
-                debug_info = normalize_excerpt_for_debug(excerpt, actual_text)
-
-                # FIX Bug #11: severity reduzida de WARNING para INFO
-                # EXCERPT_MISMATCH é esperado quando LLM parafraseia ou offsets referem chunks
+            if expanded_match:
+                # Encontrou perto — offset impreciso, texto real
                 errors.append(ValidationError(
-                    error_type="EXCERPT_MISMATCH",
+                    error_type="OFFSET_IMPRECISE",
                     severity="INFO",
-                    message=f"excerpt não encontrado no range especificado (match_ratio={match_debug.get('match_ratio', 0):.2f})",
-                    doc_id=doc_id, page_num=page_num, start_char=start_char, end_char=end_char,
-                    expected=excerpt[:100], actual=actual_text[:100], source=source,
+                    message=f"excerpt encontrado na janela ±200 chars (offset impreciso)",
+                    doc_id=doc_id, page_num=page_num,
+                    start_char=start_char, end_char=end_char,
+                    expected=excerpt[:100], actual=actual_text[:100],
+                    source=source,
                 ))
+            else:
+                # ── Nível C: BUSCA GLOBAL no documento → OFFSET_WRONG ──
+                # Limitar busca global a excerpts com tamanho razoável (evitar false positives)
+                global_match = False
+                if len(excerpt) >= 15:
+                    global_match, global_debug = text_contains_normalized(
+                        document_text, excerpt, threshold=0.3, config=config, return_debug=True
+                    )
+
+                if global_match:
+                    # Texto existe no documento mas offset completamente errado
+                    errors.append(ValidationError(
+                        error_type="OFFSET_WRONG",
+                        severity="INFO",
+                        message=f"excerpt encontrado no documento (offset errado, texto real)",
+                        doc_id=doc_id, page_num=page_num,
+                        start_char=start_char, end_char=end_char,
+                        expected=excerpt[:100], actual=actual_text[:100],
+                        source=source,
+                    ))
+                else:
+                    # ── Nível D: NÃO encontrado → EXCERPT_MISMATCH (possível invenção) ──
+                    debug_info = normalize_excerpt_for_debug(excerpt, actual_text)
+                    errors.append(ValidationError(
+                        error_type="EXCERPT_MISMATCH",
+                        severity="WARNING",
+                        message=f"excerpt NÃO encontrado no documento (possível invenção, match_ratio={match_debug.get('match_ratio', 0):.2f})",
+                        doc_id=doc_id, page_num=page_num,
+                        start_char=start_char, end_char=end_char,
+                        expected=excerpt[:100], actual=actual_text[:100],
+                        source=source,
+                    ))
 
     return is_valid, errors
 
@@ -287,6 +331,7 @@ def validate_audit_report(
     errors = []
     is_valid = True
     confidence_penalty = 0.0
+
     auditor_id = getattr(report, 'auditor_id', 'unknown')
 
     valid_item_ids: Set[str] = set()
@@ -298,12 +343,14 @@ def validate_audit_report(
     findings = getattr(report, 'findings', [])
     for finding in findings:
         finding_id = getattr(finding, 'finding_id', 'unknown')
-
         citations = getattr(finding, 'citations', [])
+
         if not citations:
             errors.append(ValidationError(
-                error_type="MISSING_CITATION", severity="WARNING",
-                message=f"Finding '{finding_id}' sem citations", source=auditor_id,
+                error_type="MISSING_CITATION",
+                severity="WARNING",
+                message=f"Finding '{finding_id}' sem citations",
+                source=auditor_id,
             ))
             confidence_penalty += 0.02
 
@@ -316,7 +363,8 @@ def validate_audit_report(
                 continue
 
             citation_valid, citation_errors = validate_citation(
-                citation_dict, document_text, total_chars, page_mapper, source=auditor_id,
+                citation_dict, document_text, total_chars, page_mapper,
+                source=auditor_id,
             )
             errors.extend(citation_errors)
             if not citation_valid:
@@ -327,8 +375,10 @@ def validate_audit_report(
         for item_id in evidence_ids:
             if valid_item_ids and item_id not in valid_item_ids:
                 errors.append(ValidationError(
-                    error_type="ITEM_NOT_FOUND", severity="WARNING",
-                    message=f"evidence_item_id '{item_id}' não encontrado em union_items", source=auditor_id,
+                    error_type="ITEM_NOT_FOUND",
+                    severity="WARNING",
+                    message=f"evidence_item_id '{item_id}' não encontrado em union_items",
+                    source=auditor_id,
                 ))
                 confidence_penalty += 0.01
 
@@ -349,13 +399,14 @@ def validate_judge_opinion(
     errors = []
     is_valid = True
     confidence_penalty = 0.0
-    judge_id = getattr(opinion, 'judge_id', 'unknown')
 
+    judge_id = getattr(opinion, 'judge_id', 'unknown')
     decision_points = getattr(opinion, 'decision_points', [])
+
     for point in decision_points:
         point_id = getattr(point, 'point_id', 'unknown')
-
         citations = getattr(point, 'citations', [])
+
         for citation in citations:
             if hasattr(citation, 'to_dict'):
                 citation_dict = citation.to_dict()
@@ -365,7 +416,8 @@ def validate_judge_opinion(
                 continue
 
             citation_valid, citation_errors = validate_citation(
-                citation_dict, document_text, total_chars, page_mapper, source=judge_id,
+                citation_dict, document_text, total_chars, page_mapper,
+                source=judge_id,
             )
             errors.extend(citation_errors)
             if not citation_valid:
@@ -377,17 +429,21 @@ def validate_judge_opinion(
             legal_basis = getattr(point, 'legal_basis', [])
             if legal_basis:
                 errors.append(ValidationError(
-                    error_type="SEM_PROVA_DETERMINANTE", severity="WARNING",
+                    error_type="SEM_PROVA_DETERMINANTE",
+                    severity="WARNING",
                     message=f"Ponto DETERMINANTE '{point_id}' sem citations mas com legal_basis: {', '.join(legal_basis[:3])}",
-                    source=judge_id, expected="Citations com offsets",
+                    source=judge_id,
+                    expected="Citations com offsets",
                     actual=f"legal_basis: {', '.join(legal_basis[:3])}",
                 ))
                 confidence_penalty += 0.05
             else:
                 errors.append(ValidationError(
-                    error_type="SEM_PROVA_DETERMINANTE", severity="ERROR",
+                    error_type="SEM_PROVA_DETERMINANTE",
+                    severity="ERROR",
                     message=f"Ponto DETERMINANTE '{point_id}' sem citations nem legal_basis",
-                    source=judge_id, expected="Pelo menos 1 citation ou legal_basis",
+                    source=judge_id,
+                    expected="Pelo menos 1 citation ou legal_basis",
                     actual="0 citations, 0 legal_basis",
                 ))
                 is_valid = False
@@ -396,16 +452,20 @@ def validate_judge_opinion(
             legal_basis = getattr(point, 'legal_basis', [])
             if not legal_basis:
                 errors.append(ValidationError(
-                    error_type="MISSING_CITATION", severity="WARNING",
-                    message=f"JudgePoint '{point_id}' sem citations nem legal_basis", source=judge_id,
+                    error_type="MISSING_CITATION",
+                    severity="WARNING",
+                    message=f"JudgePoint '{point_id}' sem citations nem legal_basis",
+                    source=judge_id,
                 ))
                 confidence_penalty += 0.01
 
         rationale = getattr(point, 'rationale', '')
         if not rationale:
             errors.append(ValidationError(
-                error_type="MISSING_RATIONALE", severity="INFO",
-                message=f"JudgePoint '{point_id}' sem fundamentação textual", source=judge_id,
+                error_type="MISSING_RATIONALE",
+                severity="INFO",
+                message=f"JudgePoint '{point_id}' sem fundamentação textual",
+                source=judge_id,
             ))
 
     disagreements = getattr(opinion, 'disagreements', [])
@@ -418,8 +478,10 @@ def validate_judge_opinion(
                 citation_dict = citation
             else:
                 continue
+
             citation_valid, citation_errors = validate_citation(
-                citation_dict, document_text, total_chars, page_mapper, source=judge_id,
+                citation_dict, document_text, total_chars, page_mapper,
+                source=judge_id,
             )
             errors.extend(citation_errors)
 
@@ -446,8 +508,10 @@ def validate_final_decision(
             proof_dict = proof
         else:
             continue
+
         citation_valid, citation_errors = validate_citation(
-            proof_dict, document_text, total_chars, page_mapper, source="presidente",
+            proof_dict, document_text, total_chars, page_mapper,
+            source="presidente",
         )
         errors.extend(citation_errors)
         if not citation_valid:
@@ -464,24 +528,30 @@ def validate_final_decision(
                 citation_dict = citation
             else:
                 continue
+
             citation_valid, citation_errors = validate_citation(
-                citation_dict, document_text, total_chars, page_mapper, source="presidente",
+                citation_dict, document_text, total_chars, page_mapper,
+                source="presidente",
             )
             errors.extend(citation_errors)
 
     final_answer = getattr(decision, 'final_answer', '')
     if not final_answer or len(final_answer) < 20:
         errors.append(ValidationError(
-            error_type="MISSING_ANSWER", severity="WARNING",
-            message="FinalDecision com final_answer vazio ou muito curto", source="presidente",
+            error_type="MISSING_ANSWER",
+            severity="WARNING",
+            message="FinalDecision com final_answer vazio ou muito curto",
+            source="presidente",
         ))
         confidence_penalty += 0.1
 
     confidence = getattr(decision, 'confidence', 0.8)
     if confidence < 0.5:
         errors.append(ValidationError(
-            error_type="LOW_CONFIDENCE", severity="INFO",
-            message=f"FinalDecision com confidence baixo: {confidence:.2f}", source="presidente",
+            error_type="LOW_CONFIDENCE",
+            severity="INFO",
+            message=f"FinalDecision com confidence baixo: {confidence:.2f}",
+            source="presidente",
         ))
 
     return is_valid, errors, min(confidence_penalty, 0.5)
@@ -503,8 +573,9 @@ class IntegrityValidator:
         validator.save_report()
     """
 
-    def __init__(self, run_id: str, document_text: str = "", total_chars: int = 0,
-                 page_mapper: Optional[Any] = None, unified_result: Optional[Any] = None):
+    def __init__(self, run_id: str, document_text: str = "",
+                 total_chars: int = 0, page_mapper: Optional[Any] = None,
+                 unified_result: Optional[Any] = None):
         self.run_id = run_id
         self.document_text = document_text
         self.total_chars = total_chars or len(document_text)
@@ -515,9 +586,11 @@ class IntegrityValidator:
     def validate_and_annotate_audit(self, audit_report: Any, unified_result: Optional[Any] = None) -> Any:
         """Valida AuditReport e adiciona warnings aos errors[]."""
         result = unified_result or self.unified_result
+
         is_valid, errors, penalty = validate_audit_report(
             audit_report, result, self.document_text, self.total_chars, self.page_mapper,
         )
+
         for error in errors:
             self.report.add_error(error)
         self._update_counts_from_errors(errors, "phase2")
@@ -525,10 +598,12 @@ class IntegrityValidator:
         existing_errors = getattr(audit_report, 'errors', [])
         if not isinstance(existing_errors, list):
             existing_errors = []
+
         for error in errors:
             warning_msg = f"INTEGRITY_WARNING: [{error.error_type}] {error.message}"
             if warning_msg not in existing_errors:
                 existing_errors.append(warning_msg)
+
         try:
             audit_report.errors = existing_errors
         except AttributeError:
@@ -540,9 +615,11 @@ class IntegrityValidator:
     def validate_and_annotate_judge(self, judge_opinion: Any, unified_result: Optional[Any] = None) -> Any:
         """Valida JudgeOpinion e adiciona warnings aos errors[]."""
         result = unified_result or self.unified_result
+
         is_valid, errors, penalty = validate_judge_opinion(
             judge_opinion, result, self.document_text, self.total_chars, self.page_mapper,
         )
+
         for error in errors:
             self.report.add_error(error)
         self._update_counts_from_errors(errors, "phase3")
@@ -550,10 +627,12 @@ class IntegrityValidator:
         existing_errors = getattr(judge_opinion, 'errors', [])
         if not isinstance(existing_errors, list):
             existing_errors = []
+
         for error in errors:
             warning_msg = f"INTEGRITY_WARNING: [{error.error_type}] {error.message}"
             if warning_msg not in existing_errors:
                 existing_errors.append(warning_msg)
+
         try:
             judge_opinion.errors = existing_errors
         except AttributeError:
@@ -572,9 +651,11 @@ class IntegrityValidator:
     def validate_and_annotate_decision(self, final_decision: Any, unified_result: Optional[Any] = None) -> Any:
         """Valida FinalDecision e adiciona warnings aos errors[]."""
         result = unified_result or self.unified_result
+
         is_valid, errors, penalty = validate_final_decision(
             final_decision, result, self.document_text, self.total_chars, self.page_mapper,
         )
+
         for error in errors:
             self.report.add_error(error)
         self._update_counts_from_errors(errors, "phase4")
@@ -582,10 +663,12 @@ class IntegrityValidator:
         existing_errors = getattr(final_decision, 'errors', [])
         if not isinstance(existing_errors, list):
             existing_errors = []
+
         for error in errors:
             warning_msg = f"INTEGRITY_WARNING: [{error.error_type}] {error.message}"
             if warning_msg not in existing_errors:
                 existing_errors.append(warning_msg)
+
         try:
             final_decision.errors = existing_errors
         except AttributeError:
@@ -614,18 +697,23 @@ class IntegrityValidator:
                 self.report.pages_mismatch += 1
             elif error.error_type == "EXCERPT_MISMATCH":
                 self.report.excerpts_mismatch += 1
+            elif error.error_type == "OFFSET_IMPRECISE":
+                self.report.excerpts_offset_imprecise += 1
+            elif error.error_type == "OFFSET_WRONG":
+                self.report.excerpts_offset_wrong += 1
             elif error.error_type == "MISSING_CITATION":
                 self.report.citations_invalid += 1
             elif error.error_type == "ITEM_NOT_FOUND":
                 self.report.items_not_found += 1
 
     def finalize_counts(self, citations_total: int = 0, excerpts_checked: int = 0,
-                        spans_total: int = 0, pages_checked: int = 0, items_referenced: int = 0):
+                        spans_total: int = 0, pages_checked: int = 0,
+                        items_referenced: int = 0):
         """Finaliza contagens do relatório."""
         self.report.citations_total = citations_total
         self.report.citations_valid = citations_total - self.report.citations_invalid
         self.report.excerpts_checked = excerpts_checked
-        self.report.excerpts_matched = excerpts_checked - self.report.excerpts_mismatch
+        self.report.excerpts_matched = excerpts_checked - self.report.excerpts_mismatch - self.report.excerpts_offset_imprecise - self.report.excerpts_offset_wrong
         self.report.spans_total = spans_total
         self.report.spans_valid = spans_total - self.report.spans_out_of_range
         self.report.pages_checked = pages_checked
@@ -648,7 +736,8 @@ class IntegrityValidator:
 
 def parse_audit_report_with_validation(
     output: str, auditor_id: str, model_name: str, run_id: str,
-    validator: Optional[IntegrityValidator] = None, unified_result: Optional[Any] = None
+    validator: Optional[IntegrityValidator] = None,
+    unified_result: Optional[Any] = None
 ) -> Any:
     """Wrapper que parseia e valida AuditReport."""
     from src.pipeline.schema_audit import parse_audit_report
@@ -660,7 +749,8 @@ def parse_audit_report_with_validation(
 
 def parse_judge_opinion_with_validation(
     output: str, judge_id: str, model_name: str, run_id: str,
-    validator: Optional[IntegrityValidator] = None, unified_result: Optional[Any] = None
+    validator: Optional[IntegrityValidator] = None,
+    unified_result: Optional[Any] = None
 ) -> Any:
     """Wrapper que parseia e valida JudgeOpinion."""
     from src.pipeline.schema_audit import parse_judge_opinion
@@ -672,7 +762,8 @@ def parse_judge_opinion_with_validation(
 
 def parse_final_decision_with_validation(
     output: str, model_name: str, run_id: str,
-    validator: Optional[IntegrityValidator] = None, unified_result: Optional[Any] = None
+    validator: Optional[IntegrityValidator] = None,
+    unified_result: Optional[Any] = None
 ) -> Any:
     """Wrapper que parseia e valida FinalDecision."""
     from src.pipeline.schema_audit import parse_final_decision
@@ -704,16 +795,24 @@ O inquilino compromete-se a pagar a renda até ao dia 8 de cada mês.
     validator = IntegrityValidator(run_id="test_run_001", document_text=document_text)
 
     citation_ok = {
-        "doc_id": "doc_test", "start_char": 10, "end_char": 80,
-        "page_num": 1, "excerpt": "contrato de arrendamento foi celebrado em 15 de Janeiro",
+        "doc_id": "doc_test",
+        "start_char": 10,
+        "end_char": 80,
+        "page_num": 1,
+        "excerpt": "contrato de arrendamento foi celebrado em 15 de Janeiro",
     }
+
     is_valid, errors = validate_citation(citation_ok, document_text, len(document_text), source="test")
     print(f"Citation OK: valid={is_valid}, errors={len(errors)}")
 
     citation_bad = {
-        "doc_id": "doc_test", "start_char": 1000, "end_char": 500,
-        "page_num": 99, "excerpt": "texto que não existe",
+        "doc_id": "doc_test",
+        "start_char": 1000,
+        "end_char": 500,
+        "page_num": 99,
+        "excerpt": "texto que não existe",
     }
+
     is_valid, errors = validate_citation(citation_bad, document_text, len(document_text), source="test")
     print(f"Citation BAD: valid={is_valid}, errors={len(errors)}")
     for err in errors:
