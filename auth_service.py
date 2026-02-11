@@ -72,10 +72,10 @@ async def get_current_user(
     """
     token = credentials.credentials
 
-    validate_url = os.environ.get(
-        "VALIDATE_USER_URL",
-        "https://drpuexbgdfdnhabctfhi.supabase.co/functions/v1/validate-user",
-    )
+    # CORRIGIDO: usar SUPABASE_URL em vez de URL hardcoded
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    default_validate = f"{supabase_url}/functions/v1/validate-user" if supabase_url else ""
+    validate_url = os.environ.get("VALIDATE_USER_URL", default_validate)
 
     try:
         async with httpx.AsyncClient() as client:
