@@ -7,9 +7,8 @@ Utilizadores sem token válido são rejeitados.
 
 Validação:
   - Chama /auth/v1/user directamente via REST
-  - Usa SUPABASE_SERVICE_ROLE_KEY no header apikey
-  - Usa o token do utilizador no header Authorization
-  - Compatível com HS256 e ECC P-256
+  - Usa nova secret key (sb_secret_) no header apikey
+  - Compatível com ECC P-256 (ES256) e HS256
   - Não depende de Edge Functions
 ============================================================
 """
@@ -66,8 +65,8 @@ async def get_current_user(
     Dependency do FastAPI que valida o token JWT do Supabase
     chamando directamente o endpoint REST /auth/v1/user.
 
-    Usa a SUPABASE_SERVICE_ROLE_KEY como apikey e o token
-    do utilizador como Bearer token.
+    Usa SUPABASE_SECRET_API_KEY (nova sb_secret_) no header apikey
+    para ser compatível com tokens ES256 (ECC P-256).
 
     Returns:
         Dict com dados do utilizador (id, email)
@@ -78,10 +77,15 @@ async def get_current_user(
     token = credentials.credentials
 
     supabase_url = os.environ.get("SUPABASE_URL", "")
-    service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    # Usar nova secret key para validar tokens ES256
+    # Fallback para service_role key se a nova não existir
+    api_key = os.environ.get(
+        "SUPABASE_SECRET_API_KEY",
+        os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    )
 
-    if not supabase_url or not service_role_key:
-        logger.error("SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não definidos.")
+    if not supabase_url or not api_key:
+        logger.error("SUPABASE_URL ou SUPABASE_SECRET_API_KEY não definidos.")
         raise HTTPException(
             status_code=500,
             detail="Configuração do servidor incompleta."
@@ -95,7 +99,7 @@ async def get_current_user(
                 auth_url,
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "apikey": service_role_key,
+                    "apikey": api_key,
                 },
                 timeout=10.0,
             )
