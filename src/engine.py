@@ -308,6 +308,8 @@ def executar_analise(
     use_pdf_safe: bool = True,
     chefe_model_key: str = "gpt-5.2",
     presidente_model_key: str = "gpt-5.2",
+    auditor_claude_model: str = "sonnet-4.5",
+    juiz_claude_model: str = "sonnet-4.5",
     callback_progresso: Optional[Callable[[str, int, str], None]] = None,
 ) -> PipelineResult:
     """
@@ -331,6 +333,8 @@ def executar_analise(
         use_pdf_safe: Usar extracao segura pagina-a-pagina para PDFs
         chefe_model_key: Chave do modelo Chefe ("gpt-5.2" ou "gpt-5.2-pro")
         presidente_model_key: Chave do modelo Presidente ("gpt-5.2" ou "gpt-5.2-pro")
+        auditor_claude_model: Chave do modelo Auditor Claude ("sonnet-4.5" ou "opus-4.6")
+        juiz_claude_model: Chave do modelo Juiz Claude ("sonnet-4.5" ou "opus-4.6")
         callback_progresso: Callback(fase, progresso_percent, mensagem)
 
     Returns:
@@ -384,12 +388,33 @@ def executar_analise(
         print("[ENGINE] Sem perguntas do utilizador")
 
     # ── 4. Configurar modelos premium ──
-    from src.config import get_chefe_model, get_presidente_model
+    from src.config import (
+        get_chefe_model, get_presidente_model,
+        get_auditor_claude_model, get_juiz_claude_model,
+    )
     import src.config as config_module
 
     config_module.CHEFE_MODEL = get_chefe_model(chefe_model_key)
     config_module.PRESIDENTE_MODEL = get_presidente_model(presidente_model_key)
-    print(f"[ENGINE] Modelos: Chefe={chefe_model_key}, Presidente={presidente_model_key}")
+
+    # Configurar modelo Claude para Auditor A2 e Juiz J2
+    auditor_model = get_auditor_claude_model(auditor_claude_model)
+    juiz_model = get_juiz_claude_model(juiz_claude_model)
+
+    # Actualizar A2 na lista de auditores
+    if len(config_module.AUDITOR_MODELS) > 1:
+        config_module.AUDITOR_MODELS[1] = auditor_model
+        config_module.AUDITORES[1]["model"] = auditor_model
+
+    # Actualizar J2 na lista de juízes
+    if len(config_module.JUIZ_MODELS) > 1:
+        config_module.JUIZ_MODELS[1] = juiz_model
+        config_module.JUIZES[1]["model"] = juiz_model
+
+    print(
+        f"[ENGINE] Modelos: Chefe={chefe_model_key}, Presidente={presidente_model_key}, "
+        f"Auditor_Claude={auditor_claude_model}, Juiz_Claude={juiz_claude_model}"
+    )
 
     # ── 5. Carregar documento ou criar a partir de texto ──
     if file_bytes is not None:
