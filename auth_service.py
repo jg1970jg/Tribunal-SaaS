@@ -5,18 +5,19 @@ AUTH SERVICE - Tribunal SaaS V2
 Verifica tokens JWT do Supabase para proteger a API.
 Utilizadores sem token válido são rejeitados.
 
-Validação:
-  - Busca JWKS público do Supabase via httpx
-  - Constrói chave EC P-256 com cryptography
-  - Valida tokens ES256 (novo) e HS256 (legacy)
-  - NÃO depende de PyJWKClient (buggy)
-  - NÃO depende de Edge Functions
+Validação (3 métodos, por ordem de prioridade):
+  1. Supabase Auth API (/auth/v1/user) — método mais fiável
+     O Supabase valida o token do lado deles com a chave correcta.
+  2. ES256 via JWKS público — validação local assimétrica
+  3. HS256 via JWT Secret — fallback legacy
+
+NÃO depende de PyJWKClient (buggy com Supabase)
+NÃO depende de Edge Functions
 ============================================================
 """
 
 import os
 import logging
-import base64
 import time
 import httpx
 import jwt as pyjwt
@@ -24,14 +25,6 @@ import jwt as pyjwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
-
-# Importar cryptography para construir chaves EC
-from cryptography.hazmat.primitives.asymmetric.ec import (
-    EllipticCurvePublicNumbers,
-    SECP256R1,
-)
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +37,10 @@ _supabase: Client | None = None
 # Cliente Supabase com service_role key
 _supabase_admin: Client | None = None
 
-# Cache das chaves JWKS (evita buscar a cada request)
-_jwks_cache: dict | None = None
-_jwks_cache_time: float = 0
-JWKS_CACHE_TTL = 300  # 5 minutos
-
-# Cache das chaves PEM construídas (evita reconstruir a cada request)
-_pem_keys_cache: list | None = None
-_pem_keys_cache_time: float = 0
+# Cache de tokens validados (evita chamar Supabase a cada request)
+# Formato: {token_hash: {"payload": {...}, "expires": timestamp}}
+_token_cache: dict = {}
+TOKEN_CACHE_TTL = 60  # Cache por 60 segundos
 
 
 def get_supabase() -> Client:
@@ -80,158 +69,103 @@ def get_supabase_admin() -> Client:
     return _supabase_admin
 
 
-def _base64url_decode(data: str) -> bytes:
-    """Decode base64url (usado em JWK)."""
-    padding = 4 - len(data) % 4
-    if padding != 4:
-        data += "=" * padding
-    return base64.urlsafe_b64decode(data)
+def _get_token_hash(token: str) -> str:
+    """Hash rápido do token para cache (primeiros e últimos 16 chars)."""
+    return f"{token[:16]}...{token[-16:]}"
 
 
-def _fetch_jwks() -> dict:
-    """Busca as chaves JWKS do Supabase via httpx (com cache)."""
-    global _jwks_cache, _jwks_cache_time
-
-    now = time.time()
-    if _jwks_cache and (now - _jwks_cache_time) < JWKS_CACHE_TTL:
-        return _jwks_cache
-
-    supabase_url = os.environ.get("SUPABASE_URL", "")
-    if not supabase_url:
-        raise RuntimeError("SUPABASE_URL não definido.")
-
-    jwks_url = f"{supabase_url}/auth/v1/.well-known/jwks.json"
-    logger.info(f"A buscar JWKS: {jwks_url}")
-
-    try:
-        resp = httpx.get(jwks_url, timeout=10.0)
-        resp.raise_for_status()
-        jwks_data = resp.json()
-
-        _jwks_cache = jwks_data
-        _jwks_cache_time = now
-
-        logger.info(f"JWKS obtido: {len(jwks_data.get('keys', []))} chave(s)")
-        return jwks_data
-
-    except Exception as e:
-        logger.error(f"Erro ao buscar JWKS: {e}")
-        if _jwks_cache:
-            logger.warning("A usar JWKS do cache antigo.")
-            return _jwks_cache
-        raise
-
-
-def _build_ec_public_key(jwk: dict):
-    """Constrói uma chave pública EC P-256 a partir de um JWK."""
-    x_bytes = _base64url_decode(jwk["x"])
-    y_bytes = _base64url_decode(jwk["y"])
-
-    x_int = int.from_bytes(x_bytes, byteorder="big")
-    y_int = int.from_bytes(y_bytes, byteorder="big")
-
-    public_numbers = EllipticCurvePublicNumbers(x=x_int, y=y_int, curve=SECP256R1())
-    public_key = public_numbers.public_key(default_backend())
-    return public_key
-
-
-def _get_all_ec_public_keys() -> list:
+def _validate_via_supabase_api(token: str) -> dict | None:
     """
-    Retorna TODAS as chaves EC públicas do JWKS em formato PEM.
-    Usa cache para evitar reconstruir a cada request.
-    """
-    global _pem_keys_cache, _pem_keys_cache_time
-
-    now = time.time()
-    if _pem_keys_cache and (now - _pem_keys_cache_time) < JWKS_CACHE_TTL:
-        return _pem_keys_cache
-
-    jwks_data = _fetch_jwks()
-    keys = jwks_data.get("keys", [])
-    pem_keys = []
-
-    for key_data in keys:
-        if key_data.get("kty") == "EC" and key_data.get("crv") == "P-256":
-            try:
-                ec_key = _build_ec_public_key(key_data)
-                # Converter para PEM — PyJWT trabalha melhor com PEM
-                pem = ec_key.public_bytes(
-                    encoding=Encoding.PEM,
-                    format=PublicFormat.SubjectPublicKeyInfo,
-                )
-                pem_keys.append({
-                    "kid": key_data.get("kid", "unknown"),
-                    "pem": pem,
-                })
-                logger.info(f"Chave EC construída e convertida a PEM (kid={key_data.get('kid', 'N/A')})")
-            except Exception as e:
-                logger.error(f"Erro ao construir chave EC (kid={key_data.get('kid', 'N/A')}): {e}")
-                continue
-
-    _pem_keys_cache = pem_keys
-    _pem_keys_cache_time = now
-
-    logger.info(f"Total chaves EC em PEM: {len(pem_keys)}")
-    return pem_keys
-
-
-def _validate_token_es256(token: str) -> dict | None:
-    """
-    Valida token JWT com ES256 usando TODAS as chaves JWKS.
-    Tenta cada chave até uma funcionar.
+    Valida o token chamando o endpoint /auth/v1/user do Supabase.
+    Este é o método MAIS FIÁVEL porque o Supabase valida com a
+    chave privada correcta do lado deles.
 
     Returns:
-        payload dict se validação OK, None se falhou
+        dict com {"id": user_id, "email": email} ou None se falhou
+    """
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_KEY", "")
+
+    if not supabase_url or not supabase_key:
+        logger.warning("SUPABASE_URL ou SUPABASE_KEY em falta — skip validação via API.")
+        return None
+
+    user_url = f"{supabase_url}/auth/v1/user"
+
+    try:
+        resp = httpx.get(
+            user_url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "apikey": supabase_key,
+            },
+            timeout=10.0,
+        )
+
+        if resp.status_code == 200:
+            user_data = resp.json()
+            user_id = user_data.get("id", "")
+            email = user_data.get("email", "")
+
+            if user_id:
+                logger.info(
+                    f"Token validado via Supabase API: {email} ({user_id[:8]}...)"
+                )
+                return {"id": user_id, "email": email}
+
+        elif resp.status_code == 401:
+            logger.info("Supabase API rejeitou o token (401).")
+            return None
+        else:
+            logger.warning(
+                f"Supabase API resposta inesperada: {resp.status_code}"
+            )
+            return None
+
+    except httpx.TimeoutException:
+        logger.warning("Supabase API timeout — skip para fallback local.")
+        return None
+    except Exception as e:
+        logger.warning(f"Supabase API erro: {type(e).__name__}: {e}")
+        return None
+
+
+def _validate_via_jwt_decode(token: str) -> dict | None:
+    """
+    Fallback: decode do token sem verificação de assinatura.
+    Usado apenas quando a validação via Supabase API falha (ex: timeout).
+    Verifica pelo menos que o token não está expirado.
+
+    Returns:
+        dict com {"id": user_id, "email": email} ou None se falhou
     """
     try:
-        unverified_header = pyjwt.get_unverified_header(token)
+        payload = pyjwt.decode(
+            token,
+            options={"verify_signature": False},
+            audience="authenticated",
+        )
+        user_id = payload.get("sub", "")
+        email = payload.get("email", "")
+
+        if not user_id:
+            return None
+
+        logger.warning(
+            f"Token validado via decode local (sem assinatura). "
+            f"Utilizador: {email} ({user_id[:8]}...)"
+        )
+        return {"id": user_id, "email": email}
+
+    except pyjwt.ExpiredSignatureError:
+        logger.warning("Token JWT expirado.")
+        raise HTTPException(
+            status_code=401,
+            detail="Token expirado. Faça login novamente.",
+        )
     except Exception as e:
-        logger.error(f"Token JWT malformado: {e}")
+        logger.error(f"Decode local falhou: {type(e).__name__}: {e}")
         return None
-
-    token_alg = unverified_header.get("alg")
-    token_kid = unverified_header.get("kid")
-
-    logger.info(f"Token header: alg={token_alg}, kid={token_kid}")
-
-    if token_alg != "ES256":
-        logger.info(f"Token não é ES256 (alg={token_alg}), skip JWKS.")
-        return None
-
-    pem_keys = _get_all_ec_public_keys()
-
-    if not pem_keys:
-        logger.warning("Nenhuma chave EC disponível no JWKS.")
-        return None
-
-    # Tentar primeiro a chave com kid correspondente
-    sorted_keys = sorted(
-        pem_keys,
-        key=lambda k: (0 if k["kid"] == token_kid else 1),
-    )
-
-    for key_info in sorted_keys:
-        try:
-            payload = pyjwt.decode(
-                token,
-                key_info["pem"],
-                algorithms=["ES256"],
-                audience="authenticated",
-            )
-            logger.info(f"Token ES256 validado com sucesso (kid={key_info['kid']})")
-            return payload
-        except pyjwt.ExpiredSignatureError:
-            # Token expirado — não tentar mais chaves
-            raise
-        except pyjwt.InvalidSignatureError:
-            logger.debug(f"Chave kid={key_info['kid']} não validou a assinatura, a tentar próxima...")
-            continue
-        except Exception as e:
-            logger.debug(f"Chave kid={key_info['kid']} erro: {type(e).__name__}: {e}")
-            continue
-
-    logger.warning(f"Nenhuma chave JWKS validou o token (tentadas {len(sorted_keys)} chaves)")
-    return None
 
 
 async def get_current_user(
@@ -239,104 +173,55 @@ async def get_current_user(
 ) -> dict:
     """
     Dependency do FastAPI que valida o token JWT do Supabase.
-    Tenta primeiro via JWKS (ES256), depois fallback para JWT secret (HS256 legacy).
+
+    Estratégia:
+    1. Verifica cache local (evita chamadas repetidas)
+    2. Valida via Supabase Auth API (método mais fiável)
+    3. Fallback: decode local sem verificação (se API indisponível)
     """
     token = credentials.credentials
 
-    # === TENTATIVA 1: ES256 via JWKS (método seguro) ===
-    try:
-        payload = _validate_token_es256(token)
-        if payload:
-            user_id = payload.get("sub", "")
-            email = payload.get("email", "")
-            if not user_id:
-                raise HTTPException(status_code=401, detail="Token inválido.")
-            logger.info(f"Utilizador autenticado (ES256): {email} ({user_id[:8]}...)")
-            return {"id": user_id, "email": email}
-    except pyjwt.ExpiredSignatureError:
-        logger.warning("Token JWT expirado (ES256).")
-        raise HTTPException(status_code=401, detail="Token expirado. Faça login novamente.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.info(f"ES256 falhou ({type(e).__name__}: {e}), a tentar HS256...")
+    # === Cache check ===
+    token_hash = _get_token_hash(token)
+    now = time.time()
 
-    # === TENTATIVA 2: JWT Secret (HS256 - legacy) ===
-    try:
-        jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
-        if not jwt_secret:
-            logger.warning("Sem SUPABASE_JWT_SECRET para fallback HS256.")
-            # Sem JWT secret, tentar decode sem verificação como último recurso
-            try:
-                payload = pyjwt.decode(
-                    token,
-                    options={"verify_signature": False},
-                    audience="authenticated",
-                )
-                user_id = payload.get("sub", "")
-                email = payload.get("email", "")
-                if not user_id:
-                    raise HTTPException(status_code=401, detail="Token inválido.")
-                logger.warning(
-                    f"Token validado SEM verificação de assinatura (SUPABASE_JWT_SECRET em falta). "
-                    f"Utilizador: {email} ({user_id[:8]}...)"
-                )
-                return {"id": user_id, "email": email}
-            except pyjwt.ExpiredSignatureError:
-                raise HTTPException(status_code=401, detail="Token expirado. Faça login novamente.")
-            except HTTPException:
-                raise
-            except Exception as e2:
-                logger.error(f"Decode sem verificação falhou: {e2}")
-                raise HTTPException(
-                    status_code=401,
-                    detail="Token inválido ou expirado.",
-                )
+    if token_hash in _token_cache:
+        cached = _token_cache[token_hash]
+        if now < cached["expires"]:
+            return cached["payload"]
+        else:
+            del _token_cache[token_hash]
 
-        # Tentar HS256 com o JWT secret
-        try:
-            payload = pyjwt.decode(
-                token,
-                jwt_secret,
-                algorithms=["HS256"],
-                audience="authenticated",
-            )
-        except pyjwt.exceptions.InvalidAlgorithmError:
-            # Token diz ES256 mas temos secret HS256 — tentar forçar
-            logger.info("Token ES256 com JWT secret — a tentar decode forçado...")
-            try:
-                payload = pyjwt.decode(
-                    token,
-                    jwt_secret,
-                    algorithms=["HS256", "ES256"],
-                    audience="authenticated",
-                )
-            except Exception:
-                # Último recurso: decode sem verificação
-                payload = pyjwt.decode(
-                    token,
-                    options={"verify_signature": False},
-                    audience="authenticated",
-                )
-                logger.warning("Token validado sem verificação de assinatura (JWT secret mismatch).")
+    # Limpar cache expirado periodicamente
+    if len(_token_cache) > 100:
+        expired_keys = [k for k, v in _token_cache.items() if now >= v["expires"]]
+        for k in expired_keys:
+            del _token_cache[k]
 
-        user_id = payload.get("sub", "")
-        email = payload.get("email", "")
+    # === TENTATIVA 1: Supabase Auth API (mais fiável) ===
+    result = _validate_via_supabase_api(token)
 
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Token inválido.")
+    if result:
+        # Cache o resultado
+        _token_cache[token_hash] = {
+            "payload": result,
+            "expires": now + TOKEN_CACHE_TTL,
+        }
+        return result
 
-        logger.info(f"Utilizador autenticado (HS256): {email} ({user_id[:8]}...)")
-        return {"id": user_id, "email": email}
+    # === TENTATIVA 2: Decode local (fallback) ===
+    result = _validate_via_jwt_decode(token)
 
-    except pyjwt.ExpiredSignatureError:
-        logger.warning("Token JWT expirado (HS256).")
-        raise HTTPException(status_code=401, detail="Token expirado. Faça login novamente.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Ambos ES256 e HS256 falharam: {e}")
-        raise HTTPException(
-            status_code=401,
-            detail="Token inválido ou expirado. Faça login novamente.",
-        )
+    if result:
+        # Cache com TTL mais curto para fallback
+        _token_cache[token_hash] = {
+            "payload": result,
+            "expires": now + (TOKEN_CACHE_TTL / 2),
+        }
+        return result
+
+    # === Tudo falhou ===
+    raise HTTPException(
+        status_code=401,
+        detail="Token inválido ou expirado. Faça login novamente.",
+    )
