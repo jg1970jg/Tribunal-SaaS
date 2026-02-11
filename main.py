@@ -128,6 +128,8 @@ async def analyze(
     titulo: str = Form(""),
     chefe_model_key: str = Form("gpt-5.2"),
     presidente_model_key: str = Form("gpt-5.2"),
+    auditor_claude_model: str = Form("sonnet-4.5"),
+    juiz_claude_model: str = Form("sonnet-4.5"),
     user: dict = Depends(get_current_user),
 ):
     """
@@ -150,6 +152,22 @@ async def analyze(
             titulo=titulo,
             chefe_model_key=chefe_model_key,
             presidente_model_key=presidente_model_key,
+            auditor_claude_model=auditor_claude_model,
+            juiz_claude_model=juiz_claude_model,
+```
+
+José, abre o `main.py` no GitHub (lápis ✏️) e faz estas duas edições:
+
+**Edição 1 — depois da linha 130** (`presidente_model_key: str = Form("gpt-5.2"),`), adiciona estas 2 linhas:
+```
+    auditor_claude_model: str = Form("sonnet-4.5"),
+    juiz_claude_model: str = Form("sonnet-4.5"),
+```
+
+**Edição 2 — depois da linha 152** (`presidente_model_key=presidente_model_key,`), adiciona estas 2 linhas:
+```
+            auditor_claude_model=auditor_claude_model,
+            juiz_claude_model=juiz_claude_model,
         )
 
         return resultado.to_dict()
