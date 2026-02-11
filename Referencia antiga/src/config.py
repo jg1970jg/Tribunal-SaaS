@@ -19,6 +19,7 @@ CONFIGURAÇÃO ACTUAL:
 - NOVO: max_tokens dinâmico por tamanho de documento
 - NOVO: max_tokens por FASE (consolidadores recebem mais)
 - NOVO: Opus → Sonnet 4.5 (poupança ~60% budget Anthropic)
+- NOVO: Opção Opus 4.6 premium para Auditor A2 e Juiz J2
 ═══════════════════════════════════════════════════════════════════════════
 """
 
@@ -71,14 +72,14 @@ LOG_LEVEL = "INFO"
 # Opções para Chefe dos Auditores
 CHEFE_MODEL_OPTIONS = {
     "gpt-5.2": {
-        "model": "openai/gpt-5.2",         # Formato OpenRouter (sem data)
+        "model": "openai/gpt-5.2",
         "display_name": "GPT-5.2 (económico)",
         "cost_per_analysis": 0.02,
         "description": "Excelente qualidade, custo controlado",
         "recommended": True,
     },
     "gpt-5.2-pro": {
-        "model": "openai/gpt-5.2-pro",     # Formato OpenRouter (sem data)
+        "model": "openai/gpt-5.2-pro",
         "display_name": "GPT-5.2-PRO (premium)",
         "cost_per_analysis": 0.20,
         "description": "Máxima precisão, custo elevado",
@@ -89,20 +90,21 @@ CHEFE_MODEL_OPTIONS = {
 # Opções para Presidente dos Juízes
 PRESIDENTE_MODEL_OPTIONS = {
     "gpt-5.2": {
-        "model": "openai/gpt-5.2",         # Formato OpenRouter (sem data)
+        "model": "openai/gpt-5.2",
         "display_name": "GPT-5.2 (económico)",
         "cost_per_analysis": 0.02,
         "description": "Excelente qualidade, custo controlado",
         "recommended": True,
     },
     "gpt-5.2-pro": {
-        "model": "openai/gpt-5.2-pro",     # Formato OpenRouter (sem data)
+        "model": "openai/gpt-5.2-pro",
         "display_name": "GPT-5.2-PRO (premium)",
         "cost_per_analysis": 0.20,
         "description": "Máxima precisão, custo elevado",
         "recommended": False,
     },
 }
+
 # Opções para Auditor Claude (A2)
 AUDITOR_CLAUDE_OPTIONS = {
     "sonnet-4.5": {
@@ -139,33 +141,11 @@ JUIZ_CLAUDE_OPTIONS = {
     },
 }
 
-AUDITOR_CLAUDE_DEFAULT = "sonnet-4.5"
-JUIZ_CLAUDE_DEFAULT = "sonnet-4.5"
-```
-
-**Passo 5:** Agora usa **Ctrl+F** para procurar:
-```
-    return PRESIDENTE_MODEL_OPTIONS.get(choice, PRESIDENTE_MODEL_OPTIONS[PRESIDENTE_MODEL_DEFAULT])["model"]
-
-def get_auditor_claude_model(choice: str = None) -> str:
-    """Retorna modelo Claude para Auditor A2."""
-    if choice is None:
-        choice = AUDITOR_CLAUDE_DEFAULT
-    return AUDITOR_CLAUDE_OPTIONS.get(choice, AUDITOR_CLAUDE_OPTIONS[AUDITOR_CLAUDE_DEFAULT])["model"]
-
-
-def get_juiz_claude_model(choice: str = None) -> str:
-    """Retorna modelo Claude para Juiz J2."""
-    if choice is None:
-        choice = JUIZ_CLAUDE_DEFAULT
-    return JUIZ_CLAUDE_OPTIONS.get(choice, JUIZ_CLAUDE_OPTIONS[JUIZ_CLAUDE_DEFAULT])["model"]
-
-
-
-
 # Defaults (podem ser alterados pelo utilizador na interface)
 CHEFE_MODEL_DEFAULT = "gpt-5.2"        # económico por defeito
 PRESIDENTE_MODEL_DEFAULT = "gpt-5.2"   # económico por defeito
+AUDITOR_CLAUDE_DEFAULT = "sonnet-4.5"  # económico por defeito
+JUIZ_CLAUDE_DEFAULT = "sonnet-4.5"     # económico por defeito
 
 # =============================================================================
 # MODELOS ACTUAIS (usados se não houver escolha do utilizador)
@@ -347,7 +327,7 @@ MODEL_CONTEXT_LIMITS = {
     "openai/gpt-5.2-pro":              400_000,
     "openai/gpt-4.1":                  1_048_000,
     "anthropic/claude-opus-4.6":        1_000_000,
-    "anthropic/claude-sonnet-4-5":      200_000,    # NOVO
+    "anthropic/claude-sonnet-4-5":      200_000,
     "google/gemini-3-pro-preview":      1_049_000,
     "x-ai/grok-4.1-fast":              2_000_000,
     # Extratores
@@ -362,7 +342,7 @@ MODEL_MAX_OUTPUT = {
     "openai/gpt-5.2-pro":              128_000,
     "openai/gpt-4.1":                  32_768,
     "anthropic/claude-opus-4.6":        128_000,
-    "anthropic/claude-sonnet-4-5":      8_192,      # NOVO
+    "anthropic/claude-sonnet-4-5":      8_192,
     "google/gemini-3-pro-preview":      66_000,
     "x-ai/grok-4.1-fast":              30_000,
     # Extratores
@@ -466,6 +446,20 @@ def get_presidente_model(choice: str = None) -> str:
     if choice is None:
         choice = PRESIDENTE_MODEL_DEFAULT
     return PRESIDENTE_MODEL_OPTIONS.get(choice, PRESIDENTE_MODEL_OPTIONS[PRESIDENTE_MODEL_DEFAULT])["model"]
+
+
+def get_auditor_claude_model(choice: str = None) -> str:
+    """Retorna modelo Claude para Auditor A2."""
+    if choice is None:
+        choice = AUDITOR_CLAUDE_DEFAULT
+    return AUDITOR_CLAUDE_OPTIONS.get(choice, AUDITOR_CLAUDE_OPTIONS[AUDITOR_CLAUDE_DEFAULT])["model"]
+
+
+def get_juiz_claude_model(choice: str = None) -> str:
+    """Retorna modelo Claude para Juiz J2."""
+    if choice is None:
+        choice = JUIZ_CLAUDE_DEFAULT
+    return JUIZ_CLAUDE_OPTIONS.get(choice, JUIZ_CLAUDE_OPTIONS[JUIZ_CLAUDE_DEFAULT])["model"]
 
 
 # =============================================================================
