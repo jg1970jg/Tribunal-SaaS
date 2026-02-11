@@ -84,10 +84,10 @@ def _validate_via_supabase_api(token: str) -> dict | None:
         dict com {"id": user_id, "email": email} ou None se falhou
     """
     supabase_url = os.environ.get("SUPABASE_URL", "")
-    supabase_key = os.environ.get("SUPABASE_KEY", "")
+    service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
-    if not supabase_url or not supabase_key:
-        logger.warning("SUPABASE_URL ou SUPABASE_KEY em falta — skip validação via API.")
+    if not supabase_url or not service_role_key:
+        logger.warning("SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY em falta — skip validação via API.")
         return None
 
     user_url = f"{supabase_url}/auth/v1/user"
@@ -97,7 +97,7 @@ def _validate_via_supabase_api(token: str) -> dict | None:
             user_url,
             headers={
                 "Authorization": f"Bearer {token}",
-                "apikey": supabase_key,
+                "apikey": service_role_key,
             },
             timeout=10.0,
         )
