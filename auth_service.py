@@ -6,15 +6,15 @@ Verifica tokens JWT do Supabase para proteger a API.
 Utilizadores sem token válido são rejeitados.
 
 Validação:
-  - Descodifica o token JWT localmente usando SUPABASE_JWT_SECRET
-  - Extrai user_id e email do payload do token
+  - Usa supabase.auth.get_user(token) para validar o token
+  - Compatível com HS256 (legacy) e ECC P-256 (novo)
   - Não depende de Edge Functions externas
+  - Não faz descodificação manual do JWT
 ============================================================
 """
 
 import os
 import logging
-import jwt as pyjwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
@@ -62,7 +62,8 @@ async def get_current_user(
 ) -> dict:
     """
     Dependency do FastAPI que valida o token JWT do Supabase
-    localmente usando o JWT secret, sem depender de Edge Functions.
+    usando supabase.auth.get_user(). Compatível com qualquer
+    formato de JWT (HS256 legacy ou ECC P-256 novo).
 
     Returns:
         Dict com dados do utilizador (id, email)
@@ -72,48 +73,41 @@ async def get_current_user(
     """
     token = credentials.credentials
 
-    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
-    if not jwt_secret:
-        logger.error("SUPABASE_JWT_SECRET não está definido.")
-        raise HTTPException(
-            status_code=500,
-            detail="Configuração do servidor incompleta."
-        )
-
     try:
-        # Descodificar e validar o token JWT
-        payload = pyjwt.decode(
-            token,
-            jwt_secret,
-            algorithms=["HS256"],
-            audience="authenticated",
-        )
+        # Usar o cliente admin (service_role) para validar o token
+        # O service_role tem permissão para verificar qualquer token
+        sb_admin = get_supabase_admin()
+        user_response = sb_admin.auth.get_user(token)
 
-        # Extrair dados do utilizador do payload JWT do Supabase
-        user_id = payload.get("sub", "")
-        email = payload.get("email", "")
+        if not user_response or not user_response.user:
+            logger.warning("Token válido mas sem dados de utilizador.")
+            raise HTTPException(
+                status_code=401,
+                detail="Token inválido ou expirado."
+            )
 
-        if not user_id:
-            logger.warning(f"Token JWT sem 'sub' (user_id). Payload keys: {list(payload.keys())}")
-            raise HTTPException(status_code=401, detail="Token inválido: sem identificador de utilizador.")
+        user = user_response.user
+        user_id = user.id
+        email = user.email or ""
 
-        logger.info(f"Utilizador autenticado: {email} ({user_id[:8]}...)")
+        logger.info(f"Utilizador autenticado: {email} ({str(user_id)[:8]}...)")
         return {
-            "id": user_id,
+            "id": str(user_id),
             "email": email,
         }
 
-    except pyjwt.ExpiredSignatureError:
-        logger.warning("Token JWT expirado.")
-        raise HTTPException(status_code=401, detail="Token expirado. Faça login novamente.")
-    except pyjwt.InvalidAudienceError:
-        logger.warning("Token JWT com audience inválido.")
-        raise HTTPException(status_code=401, detail="Token inválido.")
-    except pyjwt.InvalidTokenError as e:
-        logger.warning(f"Token JWT inválido: {e}")
-        raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"Erro ao validar token: {e}")
-        raise HTTPException(status_code=401, detail="Não foi possível validar o token.")
+        error_msg = str(e)
+        if "invalid" in error_msg.lower() or "expired" in error_msg.lower():
+            logger.warning(f"Token inválido/expirado: {error_msg[:200]}")
+            raise HTTPException(
+                status_code=401,
+                detail="Token inválido ou expirado. Faça login novamente."
+            )
+        logger.error(f"Erro ao validar token via Supabase Auth: {error_msg[:300]}")
+        raise HTTPException(
+            status_code=401,
+            detail="Não foi possível validar o token."
+        )
