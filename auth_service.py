@@ -6,15 +6,15 @@ Verifica tokens JWT do Supabase para proteger a API.
 Utilizadores sem token válido são rejeitados.
 
 Validação:
-  - HTTP call à edge function validate-user do Supabase
-  - Envia o token do utilizador no header Authorization
-  - Edge function valida e devolve {user_id, email}
+  - Descodifica o token JWT localmente usando SUPABASE_JWT_SECRET
+  - Extrai user_id e email do payload do token
+  - Não depende de Edge Functions externas
 ============================================================
 """
 
 import os
 import logging
-import httpx
+import jwt as pyjwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
@@ -44,7 +44,7 @@ def get_supabase() -> Client:
 
 
 def get_supabase_admin() -> Client:
-    """Retorna o cliente Supabase com service_role key (ignora RLS)."""
+    """Retorna o cliente Supabase com service_role key (acesso total)."""
     global _supabase_admin
     if _supabase_admin is None:
         url = os.environ.get("SUPABASE_URL", "")
@@ -62,7 +62,7 @@ async def get_current_user(
 ) -> dict:
     """
     Dependency do FastAPI que valida o token JWT do Supabase
-    via edge function validate-user.
+    localmente usando o JWT secret, sem depender de Edge Functions.
 
     Returns:
         Dict com dados do utilizador (id, email)
@@ -72,32 +72,46 @@ async def get_current_user(
     """
     token = credentials.credentials
 
-    # CORRIGIDO: usar SUPABASE_URL em vez de URL hardcoded
-    supabase_url = os.environ.get("SUPABASE_URL", "")
-    default_validate = f"{supabase_url}/functions/v1/validate-user" if supabase_url else ""
-    validate_url = os.environ.get("VALIDATE_USER_URL", default_validate)
+    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
+    if not jwt_secret:
+        logger.error("SUPABASE_JWT_SECRET não está definido.")
+        raise HTTPException(
+            status_code=500,
+            detail="Configuração do servidor incompleta."
+        )
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                validate_url,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10.0,
-            )
+        # Descodificar e validar o token JWT
+        payload = pyjwt.decode(
+            token,
+            jwt_secret,
+            algorithms=["HS256"],
+            audience="authenticated",
+        )
 
-            if resp.status_code != 200:
-                logger.error(
-                    f"validate-user falhou: status={resp.status_code}, "
-                    f"body={resp.text[:500]}"
-                )
-                raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
+        # Extrair dados do utilizador do payload JWT do Supabase
+        user_id = payload.get("sub", "")
+        email = payload.get("email", "")
 
-        user_data = resp.json()
+        if not user_id:
+            logger.warning(f"Token JWT sem 'sub' (user_id). Payload keys: {list(payload.keys())}")
+            raise HTTPException(status_code=401, detail="Token inválido: sem identificador de utilizador.")
+
+        logger.info(f"Utilizador autenticado: {email} ({user_id[:8]}...)")
         return {
-            "id": user_data.get("user_id", ""),
-            "email": user_data.get("email", ""),
+            "id": user_id,
+            "email": email,
         }
 
+    except pyjwt.ExpiredSignatureError:
+        logger.warning("Token JWT expirado.")
+        raise HTTPException(status_code=401, detail="Token expirado. Faça login novamente.")
+    except pyjwt.InvalidAudienceError:
+        logger.warning("Token JWT com audience inválido.")
+        raise HTTPException(status_code=401, detail="Token inválido.")
+    except pyjwt.InvalidTokenError as e:
+        logger.warning(f"Token JWT inválido: {e}")
+        raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
     except HTTPException:
         raise
     except Exception as e:
