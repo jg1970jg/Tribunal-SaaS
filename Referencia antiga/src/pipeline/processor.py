@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 # Adicionar diretório raiz ao path (necessário para imports absolutos)
-_ROOT = Path(__file__).resolve().parent.parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parenth
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
@@ -912,7 +912,7 @@ IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando cont
 
         # max_tokens dinamico se nao especificado
         if max_tokens is None:
-            max_tokens = calcular_max_tokens(doc_chars, modelo_final)
+            max_tokens = calcular_max_tokens(doc_chars, modelo_final, role_name)
 
         if modelo_final != model:
             logger.info(
