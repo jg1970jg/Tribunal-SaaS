@@ -145,7 +145,7 @@ class WalletManager:
         raw = os.environ.get("ADMIN_EMAILS", "")
         return [e.strip().lower() for e in raw.split(",") if e.strip()]
 
-    def is_admin(self, user_id: str) -> bool:
+    def is_admin(self, user_id: str, user_email: str = "") -> bool:
         """
         Verifica se user_id corresponde a uma conta admin.
 
@@ -167,6 +167,17 @@ class WalletManager:
         if not admin_emails:
             self._admin_cache[user_id] = False
             return False
+
+        # Se email foi fornecido (do JWT), usar directamente
+        if user_email:
+            is_adm = user_email.lower().strip() in admin_emails
+            if is_adm:
+                logger.info(
+                    f"[WALLET-ADMIN] Conta admin detectada: {user_email} "
+                    f"(user={user_id[:8]}...)"
+                )
+            self._admin_cache[user_id] = is_adm
+            return is_adm
 
         try:
             # Consultar email do user via auth.users (requer service_role)
@@ -227,7 +238,7 @@ class WalletManager:
     # CONSULTAR SALDO
     # ============================================================
 
-    def get_balance(self, user_id: str) -> float:
+    def get_balance(self, user_id: str, user_email: str = "") -> float:
         """
         Retorna saldo actual do utilizador em USD.
         Se não tiver wallet, cria uma com saldo 0 (ou 9999.99 para admin).
@@ -248,7 +259,7 @@ class WalletManager:
 
             if not resp.data:
                 # Admin recebe saldo generoso, clientes recebem 0
-                admin = self.is_admin(user_id)
+                admin = self.is_admin(user_id, user_email=user_email)
                 initial_balance = ADMIN_INITIAL_BALANCE if admin else 0.0
                 self._sb.table("wallet_balances").insert({
                     "user_id": user_id,
