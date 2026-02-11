@@ -714,7 +714,7 @@ async def wallet_balance(user: dict = Depends(get_current_user)):
     """Retorna saldo actual da wallet do utilizador."""
     try:
         wm = get_wallet_manager()
-        saldo = wm.get_balance(user["id"])
+        saldo = wm.get_balance(user["id"], user_email=user.get("email", ""))
         markup = wm.get_markup_multiplier()
         return {
             "balance_usd": saldo,
