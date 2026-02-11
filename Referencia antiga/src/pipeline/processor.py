@@ -29,7 +29,7 @@ import uuid
 import base64
 
 from src.cost_controller import CostController
-
+from src.pipeline.zone_processor import should_use_zones, create_zone_plan, log_zone_plan  # NOVO: C5 zonas
 from src.config import (
     EXTRATOR_MODELS,
     AUDITOR_MODELS,
@@ -3032,7 +3032,13 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
         # NOVO: Guardar texto do documento para calculos de failover e max_tokens
         self._document_text = documento.text or ""
         logger.info(f"[DOCUMENTO] Tamanho: {len(self._document_text):,} chars")
-
+        # NOVO C5: Verificar se documento precisa processamento por zonas
+        if should_use_zones(self._document_text):
+            zone_plan = create_zone_plan(self._document_text, getattr(self, '_page_mapper', None))
+            log_zone_plan(zone_plan, self._output_dir)
+            logger.info(f"[ZONAS] Documento GRANDE detectado: {len(zone_plan.zones)} zonas planeadas")
+        else:
+            logger.info("[ZONAS] Documento dentro do limite — processamento normal")
         result = PipelineResult(
             run_id=run_id,
             documento=documento,
