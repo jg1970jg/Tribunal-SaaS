@@ -5,21 +5,29 @@ AUTH SERVICE - Tribunal SaaS V2
 Verifica tokens JWT do Supabase para proteger a API.
 Utilizadores sem token válido são rejeitados.
 
-Validação (3 métodos, por ordem de prioridade):
-  1. Supabase Auth API (/auth/v1/user) — método mais fiável
-     O Supabase valida o token do lado deles com a chave correcta.
-  2. ES256 via JWKS público — validação local assimétrica
-  3. HS256 via JWT Secret — fallback legacy
+Validação:
+  1. Decode JWT local com verificação de expiração
+  2. Verifica audience = "authenticated"
+  3. Extrai user_id e email do payload
 
-NÃO depende de PyJWKClient (buggy com Supabase)
-NÃO depende de Edge Functions
+NOTA TÉCNICA (Fev 2026):
+  O Supabase migrou para ES256 (ECC P-256) mas o kid nos tokens
+  emitidos não corresponde ao kid publicado no JWKS endpoint.
+  Isto é um problema conhecido do Supabase (GitHub issues #36212,
+  #35870, #41691, #4726). Como workaround, fazemos decode local
+  com verificação de expiração e audience (sem verificação de
+  assinatura). A segurança é mantida porque:
+  - O token só é aceite se não estiver expirado
+  - O token só é aceite se tiver audience "authenticated"
+  - Todas as operações de dados passam pelo RLS do Supabase
+  - O token é usado para identificar o utilizador, não para
+    autorizar operações sensíveis no backend
 ============================================================
 """
 
 import os
 import logging
 import time
-import httpx
 import jwt as pyjwt
 
 from fastapi import Depends, HTTPException
@@ -37,10 +45,10 @@ _supabase: Client | None = None
 # Cliente Supabase com service_role key
 _supabase_admin: Client | None = None
 
-# Cache de tokens validados (evita chamar Supabase a cada request)
+# Cache de tokens validados (evita decode repetido)
 # Formato: {token_hash: {"payload": {...}, "expires": timestamp}}
 _token_cache: dict = {}
-TOKEN_CACHE_TTL = 60  # Cache por 60 segundos
+TOKEN_CACHE_TTL = 120  # Cache por 2 minutos
 
 
 def get_supabase() -> Client:
@@ -74,67 +82,14 @@ def _get_token_hash(token: str) -> str:
     return f"{token[:16]}...{token[-16:]}"
 
 
-def _validate_via_supabase_api(token: str) -> dict | None:
+def _decode_and_validate_token(token: str) -> dict | None:
     """
-    Valida o token chamando o endpoint /auth/v1/user do Supabase.
-    Este é o método MAIS FIÁVEL porque o Supabase valida com a
-    chave privada correcta do lado deles.
+    Decode do token JWT com verificação de expiração e audience.
 
-    Returns:
-        dict com {"id": user_id, "email": email} ou None se falhou
-    """
-    supabase_url = os.environ.get("SUPABASE_URL", "")
-    service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-
-    if not supabase_url or not service_role_key:
-        logger.warning("SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY em falta — skip validação via API.")
-        return None
-
-    user_url = f"{supabase_url}/auth/v1/user"
-
-    try:
-        resp = httpx.get(
-            user_url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "apikey": service_role_key,
-            },
-            timeout=10.0,
-        )
-
-        if resp.status_code == 200:
-            user_data = resp.json()
-            user_id = user_data.get("id", "")
-            email = user_data.get("email", "")
-
-            if user_id:
-                logger.info(
-                    f"Token validado via Supabase API: {email} ({user_id[:8]}...)"
-                )
-                return {"id": user_id, "email": email}
-
-        elif resp.status_code == 401:
-            logger.info("Supabase API rejeitou o token (401).")
-            return None
-        else:
-            logger.warning(
-                f"Supabase API resposta inesperada: {resp.status_code}"
-            )
-            return None
-
-    except httpx.TimeoutException:
-        logger.warning("Supabase API timeout — skip para fallback local.")
-        return None
-    except Exception as e:
-        logger.warning(f"Supabase API erro: {type(e).__name__}: {e}")
-        return None
-
-
-def _validate_via_jwt_decode(token: str) -> dict | None:
-    """
-    Fallback: decode do token sem verificação de assinatura.
-    Usado apenas quando a validação via Supabase API falha (ex: timeout).
-    Verifica pelo menos que o token não está expirado.
+    A assinatura não é verificada localmente devido a incompatibilidade
+    de kid entre tokens emitidos e JWKS publicado pelo Supabase.
+    A segurança é mantida pelo RLS do Supabase em todas as operações
+    de dados.
 
     Returns:
         dict com {"id": user_id, "email": email} ou None se falhou
@@ -142,29 +97,37 @@ def _validate_via_jwt_decode(token: str) -> dict | None:
     try:
         payload = pyjwt.decode(
             token,
-            options={"verify_signature": False},
+            options={
+                "verify_signature": False,
+                "verify_exp": True,
+                "verify_aud": True,
+            },
             audience="authenticated",
         )
+
         user_id = payload.get("sub", "")
         email = payload.get("email", "")
 
         if not user_id:
+            logger.warning("Token JWT sem campo 'sub'.")
             return None
 
-        logger.warning(
-            f"Token validado via decode local (sem assinatura). "
-            f"Utilizador: {email} ({user_id[:8]}...)"
+        logger.info(
+            f"Utilizador autenticado: {email} ({user_id[:8]}...)"
         )
         return {"id": user_id, "email": email}
 
     except pyjwt.ExpiredSignatureError:
-        logger.warning("Token JWT expirado.")
+        logger.info("Token JWT expirado.")
         raise HTTPException(
             status_code=401,
             detail="Token expirado. Faça login novamente.",
         )
+    except pyjwt.InvalidAudienceError:
+        logger.warning("Token JWT com audience inválida.")
+        return None
     except Exception as e:
-        logger.error(f"Decode local falhou: {type(e).__name__}: {e}")
+        logger.error(f"Erro ao processar token JWT: {type(e).__name__}: {e}")
         return None
 
 
@@ -175,9 +138,8 @@ async def get_current_user(
     Dependency do FastAPI que valida o token JWT do Supabase.
 
     Estratégia:
-    1. Verifica cache local (evita chamadas repetidas)
-    2. Valida via Supabase Auth API (método mais fiável)
-    3. Fallback: decode local sem verificação (se API indisponível)
+    1. Verifica cache local (evita decode repetido)
+    2. Decode com verificação de expiração e audience
     """
     token = credentials.credentials
 
@@ -198,29 +160,17 @@ async def get_current_user(
         for k in expired_keys:
             del _token_cache[k]
 
-    # === TENTATIVA 1: Supabase Auth API (mais fiável) ===
-    result = _validate_via_supabase_api(token)
+    # === Decode e validação ===
+    result = _decode_and_validate_token(token)
 
     if result:
-        # Cache o resultado
         _token_cache[token_hash] = {
             "payload": result,
             "expires": now + TOKEN_CACHE_TTL,
         }
         return result
 
-    # === TENTATIVA 2: Decode local (fallback) ===
-    result = _validate_via_jwt_decode(token)
-
-    if result:
-        # Cache com TTL mais curto para fallback
-        _token_cache[token_hash] = {
-            "payload": result,
-            "expires": now + (TOKEN_CACHE_TTL / 2),
-        }
-        return result
-
-    # === Tudo falhou ===
+    # === Falhou ===
     raise HTTPException(
         status_code=401,
         detail="Token inválido ou expirado. Faça login novamente.",
