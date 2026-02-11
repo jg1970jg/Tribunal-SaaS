@@ -6,35 +6,46 @@ Verifica tokens JWT do Supabase para proteger a API.
 Utilizadores sem token válido são rejeitados.
 
 Validação:
-  - Busca JWKS público do Supabase para obter signing keys
-  - Valida tokens ES256 (ECC P-256) e HS256 (legacy)
-  - Não depende de Edge Functions
-  - Não depende de secret keys no header apikey
+  - Busca JWKS público do Supabase via httpx
+  - Constrói chave EC P-256 com cryptography
+  - Valida tokens ES256 (novo) e HS256 (legacy)
+  - NÃO depende de PyJWKClient (buggy)
+  - NÃO depende de Edge Functions
 ============================================================
 """
 
 import os
 import logging
+import base64
+import time
 import httpx
 import jwt as pyjwt
-from jwt import PyJWKClient
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
+
+# Importar cryptography para construir chaves EC
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    EllipticCurvePublicNumbers,
+    SECP256R1,
+)
+from cryptography.hazmat.backends import default_backend
 
 logger = logging.getLogger(__name__)
 
 # Esquema Bearer: extrai o token do header "Authorization: Bearer <token>"
 security = HTTPBearer()
 
-# Cliente Supabase com anon key (para operações que precisam do client)
+# Cliente Supabase com anon key
 _supabase: Client | None = None
 
-# Cliente Supabase com service_role key (para operações de servidor: wallets, análises)
+# Cliente Supabase com service_role key
 _supabase_admin: Client | None = None
 
-# JWKS client (cached) para validar tokens ES256
-_jwks_client: PyJWKClient | None = None
+# Cache das chaves JWKS (evita buscar a cada request)
+_jwks_cache: dict | None = None
+_jwks_cache_time: float = 0
+JWKS_CACHE_TTL = 300  # 5 minutos
 
 
 def get_supabase() -> Client:
@@ -63,18 +74,95 @@ def get_supabase_admin() -> Client:
     return _supabase_admin
 
 
-def _get_jwks_client() -> PyJWKClient:
-    """Retorna o JWKS client para validar tokens ES256."""
-    global _jwks_client
-    if _jwks_client is None:
-        supabase_url = os.environ.get("SUPABASE_URL", "")
-        if not supabase_url:
-            raise RuntimeError("SUPABASE_URL não definido.")
-        # Supabase expõe as chaves públicas JWKS neste endpoint
-        jwks_url = f"{supabase_url}/auth/v1/.well-known/jwks.json"
-        _jwks_client = PyJWKClient(jwks_url)
-        logger.info(f"JWKS client inicializado: {jwks_url}")
-    return _jwks_client
+def _base64url_decode(data: str) -> bytes:
+    """Decode base64url (usado em JWK)."""
+    padding = 4 - len(data) % 4
+    if padding != 4:
+        data += "=" * padding
+    return base64.urlsafe_b64decode(data)
+
+
+def _fetch_jwks() -> dict:
+    """Busca as chaves JWKS do Supabase via httpx (com cache)."""
+    global _jwks_cache, _jwks_cache_time
+
+    now = time.time()
+    if _jwks_cache and (now - _jwks_cache_time) < JWKS_CACHE_TTL:
+        return _jwks_cache
+
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    if not supabase_url:
+        raise RuntimeError("SUPABASE_URL não definido.")
+
+    jwks_url = f"{supabase_url}/auth/v1/.well-known/jwks.json"
+    logger.info(f"A buscar JWKS: {jwks_url}")
+
+    try:
+        resp = httpx.get(jwks_url, timeout=10.0)
+        resp.raise_for_status()
+        jwks_data = resp.json()
+        _jwks_cache = jwks_data
+        _jwks_cache_time = now
+        logger.info(f"JWKS obtido: {len(jwks_data.get('keys', []))} chave(s)")
+        return jwks_data
+    except Exception as e:
+        logger.error(f"Erro ao buscar JWKS: {e}")
+        if _jwks_cache:
+            logger.warning("A usar JWKS do cache antigo.")
+            return _jwks_cache
+        raise
+
+
+def _build_ec_public_key(jwk: dict):
+    """Constrói uma chave pública EC P-256 a partir de um JWK."""
+    x_bytes = _base64url_decode(jwk["x"])
+    y_bytes = _base64url_decode(jwk["y"])
+
+    x_int = int.from_bytes(x_bytes, byteorder="big")
+    y_int = int.from_bytes(y_bytes, byteorder="big")
+
+    public_numbers = EllipticCurvePublicNumbers(x=x_int, y=y_int, curve=SECP256R1())
+    public_key = public_numbers.public_key(default_backend())
+
+    return public_key
+
+
+def _get_signing_key_for_token(token: str):
+    """
+    Obtém a signing key correcta para um token JWT.
+    Faz match pelo 'kid' no header do token com as chaves JWKS.
+    """
+    try:
+        unverified_header = pyjwt.get_unverified_header(token)
+    except Exception as e:
+        logger.error(f"Token JWT malformado: {e}")
+        return None, None
+
+    token_kid = unverified_header.get("kid")
+    token_alg = unverified_header.get("alg")
+    logger.info(f"Token header: alg={token_alg}, kid={token_kid}")
+
+    if token_alg != "ES256":
+        logger.info(f"Token não é ES256 (alg={token_alg}), skip JWKS.")
+        return None, token_alg
+
+    jwks_data = _fetch_jwks()
+    keys = jwks_data.get("keys", [])
+
+    for key_data in keys:
+        if key_data.get("kty") == "EC" and key_data.get("alg") == "ES256":
+            if token_kid and key_data.get("kid") != token_kid:
+                continue
+            try:
+                public_key = _build_ec_public_key(key_data)
+                logger.info(f"Chave EC construída (kid={key_data.get('kid', 'N/A')})")
+                return public_key, "ES256"
+            except Exception as e:
+                logger.error(f"Erro ao construir chave EC: {e}")
+                continue
+
+    logger.warning(f"Nenhuma chave JWKS para kid={token_kid}")
+    return None, token_alg
 
 
 async def get_current_user(
@@ -82,44 +170,40 @@ async def get_current_user(
 ) -> dict:
     """
     Dependency do FastAPI que valida o token JWT do Supabase.
-    
-    Tenta primeiro via JWKS (ES256), depois fallback para
+
+    Tenta primeiro via JWKS manual (ES256), depois fallback para
     JWT secret (HS256 legacy).
-
-    Returns:
-        Dict com dados do utilizador (id, email)
-
-    Raises:
-        HTTPException 401 se o token for inválido ou expirado.
     """
     token = credentials.credentials
 
-    # === TENTATIVA 1: JWKS (ES256 - novo formato) ===
+    # === TENTATIVA 1: ES256 via JWKS manual ===
     try:
-        jwks_client = _get_jwks_client()
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-        
-        payload = pyjwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["ES256"],
-            audience="authenticated",
-        )
+        public_key, alg = _get_signing_key_for_token(token)
 
-        user_id = payload.get("sub", "")
-        email = payload.get("email", "")
+        if public_key and alg == "ES256":
+            payload = pyjwt.decode(
+                token,
+                public_key,
+                algorithms=["ES256"],
+                audience="authenticated",
+            )
 
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Token inválido.")
+            user_id = payload.get("sub", "")
+            email = payload.get("email", "")
 
-        logger.info(f"Utilizador autenticado (ES256): {email} ({user_id[:8]}...)")
-        return {"id": user_id, "email": email}
+            if not user_id:
+                raise HTTPException(status_code=401, detail="Token inválido.")
+
+            logger.info(f"Utilizador autenticado (ES256): {email} ({user_id[:8]}...)")
+            return {"id": user_id, "email": email}
 
     except pyjwt.ExpiredSignatureError:
         logger.warning("Token JWT expirado (ES256).")
         raise HTTPException(status_code=401, detail="Token expirado. Faça login novamente.")
-    except (pyjwt.InvalidTokenError, Exception) as e:
-        logger.info(f"ES256 falhou ({type(e).__name__}), a tentar HS256 legacy...")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.info(f"ES256 falhou ({type(e).__name__}: {e}), a tentar HS256...")
 
     # === TENTATIVA 2: JWT Secret (HS256 - legacy) ===
     try:
