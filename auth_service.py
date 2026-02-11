@@ -151,17 +151,20 @@ def _get_signing_key_for_token(token: str):
 
     for key_data in keys:
         if key_data.get("kty") == "EC" and key_data.get("alg") == "ES256":
-            if token_kid and key_data.get("kid") != token_kid:
-                continue
+            # NÃO filtrar por kid - Supabase pode rotacionar keys
+            # e o kid do token pode não coincidir com o do JWKS
             try:
                 public_key = _build_ec_public_key(key_data)
-                logger.info(f"Chave EC construída (kid={key_data.get('kid', 'N/A')})")
+                logger.info(
+                    f"Chave EC construída (jwks_kid={key_data.get('kid', 'N/A')}, "
+                    f"token_kid={token_kid})"
+                )
                 return public_key, "ES256"
             except Exception as e:
                 logger.error(f"Erro ao construir chave EC: {e}")
                 continue
 
-    logger.warning(f"Nenhuma chave JWKS para kid={token_kid}")
+    logger.warning(f"Nenhuma chave EC no JWKS (token kid={token_kid})")
     return None, token_alg
 
 
