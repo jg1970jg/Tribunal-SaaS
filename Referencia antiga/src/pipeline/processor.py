@@ -895,13 +895,37 @@ IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando cont
         system_prompt: str,
         role_name: str,
         temperature: float = 0.7,
+        max_tokens: int = None,
     ) -> FaseResult:
-        """Chama um LLM e retorna o resultado formatado com tokens REAIS."""
+        """
+        Chama um LLM e retorna o resultado formatado com tokens REAIS.
+
+        NOVO: Failover automatico e max_tokens dinamico.
+        - Se documento grande, troca GPT-5.2 por GPT-4.1 ou Grok
+        - max_tokens calculado com base no tamanho do documento
+        """
+        from src.config import calcular_max_tokens, selecionar_modelo_com_failover
+
+        # Failover automatico: se documento grande, trocar modelo
+        doc_chars = len(self._document_text) if hasattr(self, '_document_text') and self._document_text else 0
+        modelo_final = selecionar_modelo_com_failover(model, doc_chars, role_name)
+
+        # max_tokens dinamico se nao especificado
+        if max_tokens is None:
+            max_tokens = calcular_max_tokens(doc_chars, modelo_final)
+
+        if modelo_final != model:
+            logger.info(
+                f"[FAILOVER] {role_name}: {model} -> {modelo_final} | "
+                f"max_tokens={max_tokens:,}"
+            )
+
         response = self.llm_client.chat_simple(
-            model=model,
+            model=modelo_final,
             prompt=prompt,
             system_prompt=system_prompt,
             temperature=temperature,
+            max_tokens=max_tokens,
         )
 
         prompt_tokens = response.prompt_tokens
@@ -933,7 +957,7 @@ IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando cont
 
         return FaseResult(
             fase=role_name.split("_")[0],
-            modelo=model,
+            modelo=modelo_final,  # NOVO: modelo real usado (pode ser suplente)
             role=role_name,
             conteudo=response.content,
             tokens_usados=total_tokens,
@@ -3004,6 +3028,10 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             titulo = gerar_titulo_automatico(documento.filename, area_direito)
         
         self._titulo = titulo  # ← NOVO: Guardar para usar em _guardar_resultado
+
+        # NOVO: Guardar texto do documento para calculos de failover e max_tokens
+        self._document_text = documento.text or ""
+        logger.info(f"[DOCUMENTO] Tamanho: {len(self._document_text):,} chars")
 
         result = PipelineResult(
             run_id=run_id,
