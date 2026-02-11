@@ -14,15 +14,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
 from threading import Lock
-
 import httpx
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================
 # PREÇOS HARDCODED — FALLBACK de último recurso (Fev 2026)
 # ============================================================
+
 HARDCODED_PRICING = {
     "openai/gpt-4o": {"input": 2.50, "output": 10.00},
     "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},
@@ -31,6 +30,7 @@ HARDCODED_PRICING = {
     "openai/gpt-5.2-pro": {"input": 21.00, "output": 168.00},
     "anthropic/claude-opus-4.6": {"input": 5.00, "output": 25.00},  # NOVO: actualizado de 4.5
     "anthropic/claude-opus-4.5": {"input": 5.00, "output": 25.00},  # Mantido para historico
+    "anthropic/claude-sonnet-4-5": {"input": 3.00, "output": 15.00},  # NOVO: substitui Opus em E1/A2/J2
     "anthropic/claude-3-5-sonnet": {"input": 6.00, "output": 30.00},
     "anthropic/claude-3.5-haiku": {"input": 0.25, "output": 1.25},
     "google/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
@@ -49,6 +49,7 @@ MODEL_PRICING = HARDCODED_PRICING
 # ============================================================
 # DYNAMIC PRICING — Preços reais via OpenRouter API
 # ============================================================
+
 class DynamicPricing:
     """
     Busca preços reais da OpenRouter API com cache de 24h.
@@ -89,6 +90,7 @@ class DynamicPricing:
 
             data = response.json()
             models = data.get("data", [])
+
             if not models:
                 logger.warning("[PRECO] OpenRouter API retornou lista vazia")
                 return False
@@ -97,6 +99,7 @@ class DynamicPricing:
             for model in models:
                 model_id = model.get("id", "")
                 pricing = model.get("pricing")
+
                 if not model_id or not pricing:
                     continue
 
@@ -291,7 +294,7 @@ class DynamicPricing:
 @dataclass
 class PhaseUsage:
     """Uso de uma fase específica do pipeline."""
-    phase: str  # "fase1_E1", "fase2_A1", etc.
+    phase: str          # "fase1_E1", "fase2_A1", etc.
     model: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -473,7 +476,7 @@ class CostController:
             if raise_on_exceed:
                 self._check_limits()
 
-            return phase_usage
+        return phase_usage
 
     def _check_limits(self):
         """Verifica se limites foram excedidos."""
@@ -501,9 +504,9 @@ class CostController:
         """Verifica se pode continuar processamento."""
         with self._lock:
             return (
-                not self.usage.blocked and
-                self.usage.total_cost_usd < self.budget_limit and
-                self.usage.total_tokens < self.token_limit
+                not self.usage.blocked
+                and self.usage.total_cost_usd < self.budget_limit
+                and self.usage.total_tokens < self.token_limit
             )
 
     def get_remaining_budget(self) -> float:
@@ -575,6 +578,7 @@ class CostController:
 # ============================================================
 # Instância global (opcional)
 # ============================================================
+
 _current_controller: Optional[CostController] = None
 
 
