@@ -901,6 +901,25 @@ def executar_pipeline_documentos(documentos: List[DocumentContent], area: str, p
         progress_bar.progress(progresso / 100)
         status_text.text(f"🔄 {fase}: {mensagem}")
 
+    # === NOVO: Verificacao de tamanho e aviso ao utilizador ===
+    from src.config import classificar_documento
+    doc_chars = len(texto_final) if texto_final else 0
+    classificacao = classificar_documento(doc_chars)
+
+    if not classificacao["pode_processar"]:
+        st.error(classificacao["mensagem"])
+        return
+
+    if classificacao["requer_confirmacao"]:
+        st.warning(classificacao["mensagem"])
+        if not st.checkbox("Compreendo e desejo continuar", key="confirmar_emergencia_docs"):
+            st.info("Marque a caixa acima para prosseguir com a analise.")
+            return
+
+    if classificacao["nivel"] == 2 and classificacao["mensagem"]:
+        st.info(classificacao["mensagem"])
+    # === Fim da verificacao ===
+
     try:
         processor = TribunalProcessor(callback_progresso=callback)
         resultado = processor.processar(documento_combinado, area, perguntas_raw, titulo)  # ← NOVO: passar titulo
@@ -939,6 +958,25 @@ def executar_pipeline_texto(texto: str, area: str, perguntas_raw: str = ""):
     def callback(fase, progresso, mensagem):
         progress_bar.progress(progresso / 100)
         status_text.text(f"🔄 {fase}: {mensagem}")
+
+    # === NOVO: Verificacao de tamanho e aviso ao utilizador ===
+    from src.config import classificar_documento
+    doc_chars = len(texto.strip()) if texto else 0
+    classificacao = classificar_documento(doc_chars)
+
+    if not classificacao["pode_processar"]:
+        st.error(classificacao["mensagem"])
+        return
+
+    if classificacao["requer_confirmacao"]:
+        st.warning(classificacao["mensagem"])
+        if not st.checkbox("Compreendo e desejo continuar", key="confirmar_emergencia_texto"):
+            st.info("Marque a caixa acima para prosseguir com a analise.")
+            return
+
+    if classificacao["nivel"] == 2 and classificacao["mensagem"]:
+        st.info(classificacao["mensagem"])
+    # === Fim da verificacao ===
 
     try:
         processor = TribunalProcessor(callback_progresso=callback)
