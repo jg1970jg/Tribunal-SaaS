@@ -2,21 +2,27 @@
 """
 Policy Determinística de Confiança para o Pipeline do Tribunal.
 
-Define regras claras e determinísticas para calcular penalidades
-de confiança baseadas em erros de integridade, cobertura e parsing.
+Define regras claras e determinísticas para calcular penalidades de
+confiança baseadas em erros de integridade, cobertura e parsing.
 
 REGRAS:
 1. Cada tipo de erro tem penalidade fixa definida
 2. Penalidades são cumulativas até teto máximo
 3. Erros severos impõem teto máximo na confidence
 4. Tudo é configurável mas com defaults seguros
+
+MUDANÇAS (v2.1):
+- NOVO: OFFSET_IMPRECISE (penalty mínima — excerpt existe perto)
+- NOVO: OFFSET_WRONG (penalty baixa — excerpt existe mas offset errado)
+- AJUSTADO: EXCERPT_MISMATCH agora mais grave (só para invenções reais)
+- AJUSTADO: Penalties gerais menos agressivas (evitar falsos INCONCLUSIVOs)
+- AJUSTADO: global_max_penalty 0.50→0.40, severe_ceiling 0.75→0.80
 """
 
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum
-
 from src.config import LOG_LEVEL
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
@@ -29,11 +35,11 @@ logger = logging.getLogger(__name__)
 
 class ErrorCategory(str, Enum):
     """Categorias de erros que afetam confiança."""
-    INTEGRITY = "integrity"      # Erros de integridade (citations, excerpts)
-    COVERAGE = "coverage"        # Erros de cobertura (páginas, chars)
-    PARSING = "parsing"          # Erros de parsing (ERROR_RECOVERED)
-    CONSISTENCY = "consistency"  # Erros de consistência (doc_ids, timestamps)
-    REFERENCE = "reference"      # Erros de referência (item_ids inexistentes)
+    INTEGRITY = "integrity"       # Erros de integridade (citations, excerpts)
+    COVERAGE = "coverage"         # Erros de cobertura (páginas, chars)
+    PARSING = "parsing"           # Erros de parsing (ERROR_RECOVERED)
+    CONSISTENCY = "consistency"   # Erros de consistência (doc_ids, timestamps)
+    REFERENCE = "reference"       # Erros de referência (item_ids inexistentes)
 
 
 @dataclass
@@ -42,91 +48,126 @@ class PenaltyRule:
     error_type: str
     category: ErrorCategory
     penalty_per_occurrence: float  # 0.0-1.0 penalidade por ocorrência
-    max_penalty: float  # Penalidade máxima cumulativa deste tipo
+    max_penalty: float             # Penalidade máxima cumulativa deste tipo
     severity_ceiling: Optional[float] = None  # Se definido, impõe teto na confidence final
     description: str = ""
 
 
 # Regras padrão de penalidade
 DEFAULT_PENALTY_RULES: Dict[str, PenaltyRule] = {
-    # Erros de Integridade
+
+    # ── Erros de Integridade ──
+
     "RANGE_INVALID": PenaltyRule(
         error_type="RANGE_INVALID",
         category=ErrorCategory.INTEGRITY,
-        penalty_per_occurrence=0.05,
-        max_penalty=0.20,
-        severity_ceiling=0.75,  # Erros de range são graves
+        penalty_per_occurrence=0.03,        # AJUSTADO: era 0.05
+        max_penalty=0.15,                   # AJUSTADO: era 0.20
+        severity_ceiling=0.80,              # AJUSTADO: era 0.75
         description="Start/end char inválidos"
     ),
+
     "PAGE_MISMATCH": PenaltyRule(
         error_type="PAGE_MISMATCH",
         category=ErrorCategory.INTEGRITY,
-        penalty_per_occurrence=0.02,
-        max_penalty=0.15,
+        penalty_per_occurrence=0.01,        # AJUSTADO: era 0.02
+        max_penalty=0.08,                   # AJUSTADO: era 0.15
         description="Página não corresponde ao offset"
     ),
+
+    # NOVO: Excerpt encontrado perto do range (±100-200 chars)
+    # Isto é o caso mais comum — o modelo acertou o texto mas errou o offset ligeiramente
+    "OFFSET_IMPRECISE": PenaltyRule(
+        error_type="OFFSET_IMPRECISE",
+        category=ErrorCategory.INTEGRITY,
+        penalty_per_occurrence=0.005,       # NOVO: quase zero
+        max_penalty=0.03,
+        description="Excerpt encontrado perto do range especificado (±200 chars)"
+    ),
+
+    # NOVO: Excerpt existe no documento mas offset completamente errado
+    # O modelo encontrou texto real mas as coordenadas estão erradas
+    "OFFSET_WRONG": PenaltyRule(
+        error_type="OFFSET_WRONG",
+        category=ErrorCategory.INTEGRITY,
+        penalty_per_occurrence=0.01,        # NOVO: muito menos que EXCERPT_MISMATCH
+        max_penalty=0.08,
+        description="Excerpt existe no documento mas offset errado"
+    ),
+
+    # AJUSTADO: EXCERPT_MISMATCH agora é só para invenções reais
+    # (quando o texto NÃO existe em lado nenhum do documento)
     "EXCERPT_MISMATCH": PenaltyRule(
         error_type="EXCERPT_MISMATCH",
         category=ErrorCategory.INTEGRITY,
-        penalty_per_occurrence=0.03,
-        max_penalty=0.20,
-        description="Excerpt não encontrado no texto"
+        penalty_per_occurrence=0.05,        # AJUSTADO: era 0.03, agora mais grave
+        max_penalty=0.25,                   # AJUSTADO: era 0.20
+        severity_ceiling=0.65,              # NOVO: ceiling para invenções confirmadas
+        description="Excerpt NÃO encontrado no documento (possível invenção)"
     ),
+
     "MISSING_CITATION": PenaltyRule(
         error_type="MISSING_CITATION",
         category=ErrorCategory.INTEGRITY,
-        penalty_per_occurrence=0.02,
-        max_penalty=0.15,
+        penalty_per_occurrence=0.01,        # AJUSTADO: era 0.02
+        max_penalty=0.08,                   # AJUSTADO: era 0.15
         description="Finding/Point sem citações"
     ),
+
     "SEM_PROVA_DETERMINANTE": PenaltyRule(
         error_type="SEM_PROVA_DETERMINANTE",
         category=ErrorCategory.INTEGRITY,
-        penalty_per_occurrence=0.15,  # Penalty alto
-        max_penalty=0.30,
-        severity_ceiling=0.60,  # Confiança máxima 60% se ponto determinante sem prova
+        penalty_per_occurrence=0.10,        # AJUSTADO: era 0.15
+        max_penalty=0.25,                   # AJUSTADO: era 0.30
+        severity_ceiling=0.65,              # AJUSTADO: era 0.60
         description="Ponto DETERMINANTE sem prova documental (citations)"
     ),
 
-    # Erros de Cobertura
+    # ── Erros de Cobertura ──
+
     "PAGES_MISSING": PenaltyRule(
         error_type="PAGES_MISSING",
         category=ErrorCategory.COVERAGE,
-        penalty_per_occurrence=0.02,  # Por página
+        penalty_per_occurrence=0.02,        # Por página
         max_penalty=0.20,
         description="Páginas não processadas"
     ),
+
     "PAGES_UNREADABLE": PenaltyRule(
         error_type="PAGES_UNREADABLE",
         category=ErrorCategory.COVERAGE,
-        penalty_per_occurrence=0.01,  # Por página ilegível
+        penalty_per_occurrence=0.01,        # Por página ilegível
         max_penalty=0.15,
         description="Páginas ilegíveis"
     ),
+
     "COVERAGE_LOW": PenaltyRule(
         error_type="COVERAGE_LOW",
         category=ErrorCategory.COVERAGE,
-        penalty_per_occurrence=0.10,  # Uma vez se cobertura < 95%
+        penalty_per_occurrence=0.10,        # Uma vez se cobertura < 95%
         max_penalty=0.15,
         description="Cobertura de caracteres baixa (<95%)"
     ),
+
     "COVERAGE_GAPS": PenaltyRule(
         error_type="COVERAGE_GAPS",
         category=ErrorCategory.COVERAGE,
-        penalty_per_occurrence=0.01,  # Por gap > 100 chars
+        penalty_per_occurrence=0.01,        # Por gap > 100 chars
         max_penalty=0.10,
         description="Gaps não cobertos no documento"
     ),
 
-    # Erros de Parsing
+    # ── Erros de Parsing ──
+
     "ERROR_RECOVERED": PenaltyRule(
         error_type="ERROR_RECOVERED",
         category=ErrorCategory.PARSING,
         penalty_per_occurrence=0.08,
         max_penalty=0.25,
-        severity_ceiling=0.70,  # Parsing falhou é grave
+        severity_ceiling=0.70,              # Parsing falhou é grave
         description="JSON inválido, relatório mínimo criado"
     ),
+
     "PARSE_WARNING": PenaltyRule(
         error_type="PARSE_WARNING",
         category=ErrorCategory.PARSING,
@@ -135,7 +176,8 @@ DEFAULT_PENALTY_RULES: Dict[str, PenaltyRule] = {
         description="Warning durante parsing"
     ),
 
-    # Erros de Consistência
+    # ── Erros de Consistência ──
+
     "DOC_ID_INVALID": PenaltyRule(
         error_type="DOC_ID_INVALID",
         category=ErrorCategory.CONSISTENCY,
@@ -144,6 +186,7 @@ DEFAULT_PENALTY_RULES: Dict[str, PenaltyRule] = {
         severity_ceiling=0.75,
         description="doc_id referenciado não existe"
     ),
+
     "TIMESTAMP_INVALID": PenaltyRule(
         error_type="TIMESTAMP_INVALID",
         category=ErrorCategory.CONSISTENCY,
@@ -151,6 +194,7 @@ DEFAULT_PENALTY_RULES: Dict[str, PenaltyRule] = {
         max_penalty=0.05,
         description="Timestamp fora da janela do run"
     ),
+
     "COUNT_MISMATCH": PenaltyRule(
         error_type="COUNT_MISMATCH",
         category=ErrorCategory.CONSISTENCY,
@@ -159,7 +203,8 @@ DEFAULT_PENALTY_RULES: Dict[str, PenaltyRule] = {
         description="Contagem não bate (citations, items, etc)"
     ),
 
-    # Erros de Referência
+    # ── Erros de Referência ──
+
     "ITEM_NOT_FOUND": PenaltyRule(
         error_type="ITEM_NOT_FOUND",
         category=ErrorCategory.REFERENCE,
@@ -167,6 +212,7 @@ DEFAULT_PENALTY_RULES: Dict[str, PenaltyRule] = {
         max_penalty=0.10,
         description="evidence_item_id não encontrado"
     ),
+
     "FINDING_NOT_FOUND": PenaltyRule(
         error_type="FINDING_NOT_FOUND",
         category=ErrorCategory.REFERENCE,
@@ -243,16 +289,15 @@ class ConfidencePolicyCalculator:
     """
     Calculador de penalidades de confiança.
 
-    Usa regras determinísticas para calcular penalidades
-    baseadas em erros detectados pelo IntegrityValidator,
-    MetaIntegrity e parsing.
+    Usa regras determinísticas para calcular penalidades baseadas em
+    erros detectados pelo IntegrityValidator, MetaIntegrity e parsing.
     """
 
     def __init__(
         self,
         rules: Optional[Dict[str, PenaltyRule]] = None,
-        global_max_penalty: float = 0.50,  # Penalidade máxima global
-        severe_ceiling: float = 0.75,  # Teto para erros severos
+        global_max_penalty: float = 0.40,  # AJUSTADO: era 0.50
+        severe_ceiling: float = 0.80,      # AJUSTADO: era 0.75
     ):
         """
         Args:
@@ -380,6 +425,10 @@ class ConfidencePolicyCalculator:
             # Fallback: detectar tipo de erro pela string (padrões legados)
             if "error_recovered" in error_lower:
                 counts["ERROR_RECOVERED"] = counts.get("ERROR_RECOVERED", 0) + 1
+            elif "offset_imprecise" in error_lower:
+                counts["OFFSET_IMPRECISE"] = counts.get("OFFSET_IMPRECISE", 0) + 1
+            elif "offset_wrong" in error_lower:
+                counts["OFFSET_WRONG"] = counts.get("OFFSET_WRONG", 0) + 1
             elif "integrity_warning" in error_lower:
                 # Extrair tipo específico se possível
                 if "page_mismatch" in error_lower:
@@ -388,6 +437,10 @@ class ConfidencePolicyCalculator:
                     counts["EXCERPT_MISMATCH"] = counts.get("EXCERPT_MISMATCH", 0) + 1
                 elif "range_invalid" in error_lower:
                     counts["RANGE_INVALID"] = counts.get("RANGE_INVALID", 0) + 1
+                elif "offset_imprecise" in error_lower:
+                    counts["OFFSET_IMPRECISE"] = counts.get("OFFSET_IMPRECISE", 0) + 1
+                elif "offset_wrong" in error_lower:
+                    counts["OFFSET_WRONG"] = counts.get("OFFSET_WRONG", 0) + 1
                 elif "item_not_found" in error_lower:
                     counts["ITEM_NOT_FOUND"] = counts.get("ITEM_NOT_FOUND", 0) + 1
                 else:
@@ -513,7 +566,6 @@ def compute_penalty(
 ) -> ConfidencePenaltyResult:
     """
     Função de conveniência para calcular penalidade.
-
     Usa configuração default do ConfidencePolicyCalculator.
     """
     calculator = ConfidencePolicyCalculator()
