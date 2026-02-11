@@ -11,12 +11,14 @@ NOVIDADES:
 
 CONFIGURAÇÃO ACTUAL:
 - 5 Extratores com PROMPT UNIVERSAL
-- Auditores: A2=Opus 4.6, A3=Gemini 3 Pro
+- Auditores: A2=Sonnet 4.5, A3=Gemini 3 Pro
 - Juízes: J3=Gemini 3 Pro
 - Chefe: Configurável (5.2 ou 5.2-pro)
 - Presidente: Configurável (5.2 ou 5.2-pro)
 - NOVO: Failover GPT-5.2 → GPT-4.1 → Grok (3 níveis)
 - NOVO: max_tokens dinâmico por tamanho de documento
+- NOVO: max_tokens por FASE (consolidadores recebem mais)
+- NOVO: Opus → Sonnet 4.5 (poupança ~60% budget Anthropic)
 ═══════════════════════════════════════════════════════════════════════════
 """
 
@@ -54,6 +56,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # OpenRouter API (backup + outros modelos)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Configurações gerais
@@ -68,14 +71,14 @@ LOG_LEVEL = "INFO"
 # Opções para Chefe dos Auditores
 CHEFE_MODEL_OPTIONS = {
     "gpt-5.2": {
-        "model": "openai/gpt-5.2",  # Formato OpenRouter (sem data)
+        "model": "openai/gpt-5.2",         # Formato OpenRouter (sem data)
         "display_name": "GPT-5.2 (económico)",
         "cost_per_analysis": 0.02,
         "description": "Excelente qualidade, custo controlado",
         "recommended": True,
     },
     "gpt-5.2-pro": {
-        "model": "openai/gpt-5.2-pro",  # Formato OpenRouter (sem data)
+        "model": "openai/gpt-5.2-pro",     # Formato OpenRouter (sem data)
         "display_name": "GPT-5.2-PRO (premium)",
         "cost_per_analysis": 0.20,
         "description": "Máxima precisão, custo elevado",
@@ -86,14 +89,14 @@ CHEFE_MODEL_OPTIONS = {
 # Opções para Presidente dos Juízes
 PRESIDENTE_MODEL_OPTIONS = {
     "gpt-5.2": {
-        "model": "openai/gpt-5.2",  # Formato OpenRouter (sem data)
+        "model": "openai/gpt-5.2",         # Formato OpenRouter (sem data)
         "display_name": "GPT-5.2 (económico)",
         "cost_per_analysis": 0.02,
         "description": "Excelente qualidade, custo controlado",
         "recommended": True,
     },
     "gpt-5.2-pro": {
-        "model": "openai/gpt-5.2-pro",  # Formato OpenRouter (sem data)
+        "model": "openai/gpt-5.2-pro",     # Formato OpenRouter (sem data)
         "display_name": "GPT-5.2-PRO (premium)",
         "cost_per_analysis": 0.20,
         "description": "Máxima precisão, custo elevado",
@@ -102,8 +105,8 @@ PRESIDENTE_MODEL_OPTIONS = {
 }
 
 # Defaults (podem ser alterados pelo utilizador na interface)
-CHEFE_MODEL_DEFAULT = "gpt-5.2"  # económico por defeito
-PRESIDENTE_MODEL_DEFAULT = "gpt-5.2"  # económico por defeito
+CHEFE_MODEL_DEFAULT = "gpt-5.2"        # económico por defeito
+PRESIDENTE_MODEL_DEFAULT = "gpt-5.2"   # económico por defeito
 
 # =============================================================================
 # MODELOS ACTUAIS (usados se não houver escolha do utilizador)
@@ -117,7 +120,7 @@ AGREGADOR_MODEL = "openai/gpt-5.2"  # Agregador sempre 5.2 (via OpenRouter)
 # CENÁRIO A - CHUNKING AUTOMÁTICO
 # =============================================================================
 
-CHUNK_SIZE_CHARS = 50000  # Sweet spot: até 35 pág sem chunking
+CHUNK_SIZE_CHARS = 50000    # Sweet spot: até 35 pág sem chunking
 CHUNK_OVERLAP_CHARS = 2500  # 5% overlap
 
 # =============================================================================
@@ -145,21 +148,63 @@ META_INTEGRITY_CITATION_COUNT_TOLERANCE = 5
 
 # =============================================================================
 # POLICY DE CONFIANÇA DETERMINÍSTICA
+# AJUSTADO: penalties menos agressivas para evitar falsos INCONCLUSIVOs
 # =============================================================================
 
-CONFIDENCE_MAX_PENALTY = 0.50
-CONFIDENCE_SEVERE_CEILING = 0.75
+CONFIDENCE_MAX_PENALTY = 0.40       # era 0.50 — raramente atingido
+CONFIDENCE_SEVERE_CEILING = 0.80    # era 0.75 — menos punitivo
 APPLY_CONFIDENCE_POLICY = True
 
 # =============================================================================
+# MAX OUTPUT TOKENS POR FASE (NOVO!)
+# Consolidadores (Chefe/Presidente/Agregador) processam MUITO mais dados
+# que auditores/juízes individuais, por isso precisam de mais tokens.
+# =============================================================================
+
+MAX_TOKENS_POR_FASE = {
+    "extrator":     None,   # Usa calcular_max_tokens() dinâmico (por doc size)
+    "auditor":      None,   # Usa calcular_max_tokens() dinâmico
+    "juiz":         None,   # Usa calcular_max_tokens() dinâmico
+    "agregador":    32768,  # Consolida 5 extractores — precisa de mais
+    "chefe":        32768,  # Consolida 4 auditorias — precisa de mais
+    "presidente":   32768,  # Decisão final global — precisa de mais
+    "sintese":      8192,   # Sínteses curtas (cross-zona futuro)
+}
+
+def get_max_tokens_para_fase(role_name: str) -> int:
+    """
+    Retorna max_tokens fixo para a fase, ou None para usar cálculo dinâmico.
+    
+    Args:
+        role_name: Nome do papel (ex: "A1", "J2", "Chefe", "Presidente")
+    
+    Returns:
+        int ou None (None = usar calcular_max_tokens dinâmico)
+    """
+    role_lower = role_name.lower()
+    
+    if "agregador" in role_lower:
+        return MAX_TOKENS_POR_FASE["agregador"]
+    elif "chefe" in role_lower:
+        return MAX_TOKENS_POR_FASE["chefe"]
+    elif "presidente" in role_lower:
+        return MAX_TOKENS_POR_FASE["presidente"]
+    elif "sintese" in role_lower:
+        return MAX_TOKENS_POR_FASE["sintese"]
+    
+    # Extratores, auditores, juízes → None = dinâmico
+    return None
+
+# =============================================================================
 # 5 EXTRATORES COM PROMPT UNIVERSAL
+# MUDANÇA: E1 de Opus 4.6 para Sonnet 4.5 (5× mais barato)
 # =============================================================================
 
 LLM_CONFIGS = [
     {
         "id": "E1",
         "role": "Extrator Completo",
-        "model": "anthropic/claude-opus-4.6",       # ACTUALIZADO: era claude-opus-4.5
+        "model": "anthropic/claude-sonnet-4-5",     # MUDANÇA: era claude-opus-4.6
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
@@ -197,14 +242,15 @@ EXTRATOR_MODELS = [cfg["model"] for cfg in LLM_CONFIGS]
 EXTRATOR_MODELS_NEW = EXTRATOR_MODELS
 
 # =============================================================================
-# AUDITORES - GPT-5.2 + OPUS 4.6 + GEMINI 3 PRO + GROK 4.1 (4 auditores!)
+# AUDITORES - GPT-5.2 + SONNET 4.5 + GEMINI 3 PRO + GROK 4.1 (4 auditores!)
+# MUDANÇA: A2 de Opus 4.6 para Sonnet 4.5 (5× mais barato)
 # =============================================================================
 
 AUDITOR_MODELS = [
-    "openai/gpt-5.2",              # A1: GPT-5.2 (titular, failover → gpt-4.1)
-    "anthropic/claude-opus-4.6",   # A2: Claude Opus 4.6 (ACTUALIZADO: era 4.5, ctx 1.000K, out 128K)
-    "google/gemini-3-pro-preview", # A3: Gemini 3 Pro (ctx 1.049K, out 66K)
-    "x-ai/grok-4.1-fast",          # A4: xAI Grok 4.1 Fast (ctx 2.000K, out 30K)
+    "openai/gpt-5.2",                  # A1: GPT-5.2 (titular, failover → gpt-4.1)
+    "anthropic/claude-sonnet-4-5",      # A2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
+    "google/gemini-3-pro-preview",      # A3: Gemini 3 Pro (ctx 1.049K, out 66K)
+    "x-ai/grok-4.1-fast",              # A4: xAI Grok 4.1 Fast (ctx 2.000K, out 30K)
 ]
 
 AUDITORES = [
@@ -215,13 +261,14 @@ AUDITORES = [
 ]
 
 # =============================================================================
-# JUÍZES - GPT-5.2 + OPUS 4.6 + GEMINI 3 PRO
+# JUÍZES - GPT-5.2 + SONNET 4.5 + GEMINI 3 PRO
+# MUDANÇA: J2 de Opus 4.6 para Sonnet 4.5 (5× mais barato)
 # =============================================================================
 
 JUIZ_MODELS = [
-    "openai/gpt-5.2",              # J1: GPT-5.2 (titular, failover → gpt-4.1)
-    "anthropic/claude-opus-4.6",   # J2: Claude Opus 4.6 (ACTUALIZADO: era 4.5, ctx 1.000K, out 128K)
-    "google/gemini-3-pro-preview"  # J3: Gemini 3 Pro (ctx 1.049K, out 66K)
+    "openai/gpt-5.2",                  # J1: GPT-5.2 (titular, failover → gpt-4.1)
+    "anthropic/claude-sonnet-4-5",      # J2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
+    "google/gemini-3-pro-preview"       # J3: Gemini 3 Pro (ctx 1.049K, out 66K)
 ]
 
 JUIZES = [
@@ -233,34 +280,37 @@ JUIZES = [
 # =============================================================================
 # LIMITES DE CONTEXTO E OUTPUT POR MODELO (tokens)
 # Fonte: OpenRouter API (verificado 2025-02-11)
+# ACTUALIZADO: Adicionado Sonnet 4.5
 # =============================================================================
 
 MODEL_CONTEXT_LIMITS = {
-    "openai/gpt-5.2":              400_000,
-    "openai/gpt-5.2-pro":          400_000,
-    "openai/gpt-4.1":            1_048_000,
-    "anthropic/claude-opus-4.6": 1_000_000,
-    "google/gemini-3-pro-preview": 1_049_000,
-    "x-ai/grok-4.1-fast":       2_000_000,
+    "openai/gpt-5.2":                  400_000,
+    "openai/gpt-5.2-pro":              400_000,
+    "openai/gpt-4.1":                  1_048_000,
+    "anthropic/claude-opus-4.6":        1_000_000,
+    "anthropic/claude-sonnet-4-5":      200_000,    # NOVO
+    "google/gemini-3-pro-preview":      1_049_000,
+    "x-ai/grok-4.1-fast":              2_000_000,
     # Extratores
-    "google/gemini-3-flash-preview": 1_049_000,
-    "openai/gpt-4o":               128_000,
-    "anthropic/claude-3-5-sonnet":  200_000,
-    "deepseek/deepseek-chat":      128_000,
+    "google/gemini-3-flash-preview":    1_049_000,
+    "openai/gpt-4o":                    128_000,
+    "anthropic/claude-3-5-sonnet":      200_000,
+    "deepseek/deepseek-chat":           128_000,
 }
 
 MODEL_MAX_OUTPUT = {
-    "openai/gpt-5.2":              128_000,
-    "openai/gpt-5.2-pro":          128_000,
-    "openai/gpt-4.1":               32_768,
-    "anthropic/claude-opus-4.6":   128_000,
-    "google/gemini-3-pro-preview":  66_000,
-    "x-ai/grok-4.1-fast":          30_000,
+    "openai/gpt-5.2":                  128_000,
+    "openai/gpt-5.2-pro":              128_000,
+    "openai/gpt-4.1":                  32_768,
+    "anthropic/claude-opus-4.6":        128_000,
+    "anthropic/claude-sonnet-4-5":      8_192,      # NOVO
+    "google/gemini-3-pro-preview":      66_000,
+    "x-ai/grok-4.1-fast":              30_000,
     # Extratores
-    "google/gemini-3-flash-preview": 66_000,
-    "openai/gpt-4o":                16_384,
-    "anthropic/claude-3-5-sonnet":   8_192,
-    "deepseek/deepseek-chat":        8_192,
+    "google/gemini-3-flash-preview":    66_000,
+    "openai/gpt-4o":                    16_384,
+    "anthropic/claude-3-5-sonnet":      8_192,
+    "deepseek/deepseek-chat":           8_192,
 }
 
 # =============================================================================
@@ -268,13 +318,13 @@ MODEL_MAX_OUTPUT = {
 # Quando titular não cabe, suplente assume automaticamente
 # =============================================================================
 
-FALLBACK_MODEL_NIVEL2 = "openai/gpt-4.1"       # Suplente (ctx 1.048K, out 32K)
-FALLBACK_MODEL_NIVEL3 = "x-ai/grok-4.1-fast"    # Emergência (ctx 2.000K, out 30K)
+FALLBACK_MODEL_NIVEL2 = "openai/gpt-4.1"           # Suplente (ctx 1.048K, out 32K)
+FALLBACK_MODEL_NIVEL3 = "x-ai/grok-4.1-fast"       # Emergência (ctx 2.000K, out 30K)
 
 # Limites em caracteres (tokens x 4) com margem de 30% para prompt overhead
-LIMITE_NIVEL1_CHARS = 1_120_000    # ~400K tokens x 4 x 0.70 = docs até ~280 páginas
-LIMITE_NIVEL2_CHARS = 2_930_000    # ~1.048K tokens x 4 x 0.70 = docs até ~730 páginas
-LIMITE_NIVEL3_CHARS = 5_600_000    # ~2.000K tokens x 4 x 0.70 = docs até ~2.500 páginas
+LIMITE_NIVEL1_CHARS = 1_120_000     # ~400K tokens x 4 x 0.70 = docs até ~280 páginas
+LIMITE_NIVEL2_CHARS = 2_930_000     # ~1.048K tokens x 4 x 0.70 = docs até ~730 páginas
+LIMITE_NIVEL3_CHARS = 5_600_000     # ~2.000K tokens x 4 x 0.70 = docs até ~2.500 páginas
 
 # =============================================================================
 # PROMPTS SISTEMA
@@ -304,7 +354,7 @@ VISION_OCR_TEMPERATURE = 0.0
 
 # Modelos com capacidade de visão (podem receber imagens)
 VISION_CAPABLE_MODELS = {
-    "anthropic/claude-opus-4.6",       # ACTUALIZADO: era claude-opus-4.5
+    "anthropic/claude-sonnet-4-5",      # MUDANÇA: era opus-4.6
     "google/gemini-3-flash-preview",
     "openai/gpt-4o",
     "anthropic/claude-3-5-sonnet",
@@ -363,19 +413,36 @@ def get_presidente_model(choice: str = None) -> str:
 # FUNÇÕES NOVAS: MAX_TOKENS DINÂMICO + FAILOVER + AVISOS
 # =============================================================================
 
-def calcular_max_tokens(doc_chars: int, modelo: str) -> int:
+def calcular_max_tokens(doc_chars: int, modelo: str, role_name: str = "") -> int:
     """
     Calcula max_tokens dinâmico baseado no tamanho do documento,
     respeitando o limite real de cada modelo.
+    
+    NOVO: Consolidadores (Chefe, Presidente, Agregador) recebem max_tokens
+    fixo porque processam dados de MUITAS fases e precisam de espaço.
 
     Args:
         doc_chars: Número de caracteres do documento
         modelo: ID do modelo (ex: "openai/gpt-5.2")
+        role_name: Nome do papel (ex: "A1", "Chefe", "Presidente")
 
     Returns:
-        max_tokens adequado para o modelo e tamanho do documento
+        max_tokens adequado para o modelo, fase e tamanho do documento
     """
-    # Escala dinâmica por tamanho de documento
+    # NOVO: Verificar se a fase tem max_tokens fixo
+    if role_name:
+        fase_fixo = get_max_tokens_para_fase(role_name)
+        if fase_fixo is not None:
+            limite_modelo = MODEL_MAX_OUTPUT.get(modelo, 16_384)
+            resultado = min(fase_fixo, limite_modelo)
+            logger.info(
+                f"[MAX_TOKENS] FASE FIXA: {role_name} | "
+                f"fase={fase_fixo:,} | limite_modelo={limite_modelo:,} | "
+                f"final={resultado:,}"
+            )
+            return resultado
+
+    # Escala dinâmica por tamanho de documento (para extratores, auditores, juízes)
     if doc_chars < 50_000:
         dinamico = 16_384
     elif doc_chars < 150_000:
@@ -393,8 +460,8 @@ def calcular_max_tokens(doc_chars: int, modelo: str) -> int:
 
     logger.info(
         f"[MAX_TOKENS] doc={doc_chars:,} chars | modelo={modelo} | "
-        f"dinamico={dinamico:,} | limite_modelo={limite_modelo:,} | "
-        f"final={resultado:,}"
+        f"role={role_name} | dinamico={dinamico:,} | "
+        f"limite_modelo={limite_modelo:,} | final={resultado:,}"
     )
 
     return resultado
@@ -472,7 +539,6 @@ def classificar_documento(doc_chars: int) -> dict:
             "requer_confirmacao": False,
             "pode_processar": True,
         }
-
     elif doc_chars <= LIMITE_NIVEL2_CHARS:
         return {
             "nivel": 2,
@@ -483,7 +549,6 @@ def classificar_documento(doc_chars: int) -> dict:
             "requer_confirmacao": False,
             "pode_processar": True,
         }
-
     elif doc_chars <= LIMITE_NIVEL3_CHARS:
         return {
             "nivel": 3,
@@ -495,7 +560,6 @@ def classificar_documento(doc_chars: int) -> dict:
             "requer_confirmacao": True,
             "pode_processar": True,
         }
-
     else:
         paginas_estimadas = doc_chars // 2250
         return {
