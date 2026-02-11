@@ -26,9 +26,11 @@ logger = logging.getLogger(__name__)
 HARDCODED_PRICING = {
     "openai/gpt-4o": {"input": 2.50, "output": 10.00},
     "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "openai/gpt-4.1": {"input": 2.00, "output": 8.00},          # NOVO: suplente failover
     "openai/gpt-5.2": {"input": 1.75, "output": 14.00},
     "openai/gpt-5.2-pro": {"input": 21.00, "output": 168.00},
-    "anthropic/claude-opus-4.5": {"input": 5.00, "output": 25.00},
+    "anthropic/claude-opus-4.6": {"input": 5.00, "output": 25.00},  # NOVO: actualizado de 4.5
+    "anthropic/claude-opus-4.5": {"input": 5.00, "output": 25.00},  # Mantido para historico
     "anthropic/claude-3-5-sonnet": {"input": 6.00, "output": 30.00},
     "anthropic/claude-3.5-haiku": {"input": 0.25, "output": 1.25},
     "google/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
