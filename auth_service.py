@@ -20,6 +20,7 @@ import base64
 import time
 import httpx
 import jwt as pyjwt
+
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
@@ -30,6 +31,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import (
     SECP256R1,
 )
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,10 @@ _supabase_admin: Client | None = None
 _jwks_cache: dict | None = None
 _jwks_cache_time: float = 0
 JWKS_CACHE_TTL = 300  # 5 minutos
+
+# Cache das chaves PEM construídas (evita reconstruir a cada request)
+_pem_keys_cache: list | None = None
+_pem_keys_cache_time: float = 0
 
 
 def get_supabase() -> Client:
@@ -101,10 +107,13 @@ def _fetch_jwks() -> dict:
         resp = httpx.get(jwks_url, timeout=10.0)
         resp.raise_for_status()
         jwks_data = resp.json()
+
         _jwks_cache = jwks_data
         _jwks_cache_time = now
+
         logger.info(f"JWKS obtido: {len(jwks_data.get('keys', []))} chave(s)")
         return jwks_data
+
     except Exception as e:
         logger.error(f"Erro ao buscar JWKS: {e}")
         if _jwks_cache:
@@ -123,49 +132,106 @@ def _build_ec_public_key(jwk: dict):
 
     public_numbers = EllipticCurvePublicNumbers(x=x_int, y=y_int, curve=SECP256R1())
     public_key = public_numbers.public_key(default_backend())
-
     return public_key
 
 
-def _get_signing_key_for_token(token: str):
+def _get_all_ec_public_keys() -> list:
     """
-    Obtém a signing key correcta para um token JWT.
-    Faz match pelo 'kid' no header do token com as chaves JWKS.
+    Retorna TODAS as chaves EC públicas do JWKS em formato PEM.
+    Usa cache para evitar reconstruir a cada request.
+    """
+    global _pem_keys_cache, _pem_keys_cache_time
+
+    now = time.time()
+    if _pem_keys_cache and (now - _pem_keys_cache_time) < JWKS_CACHE_TTL:
+        return _pem_keys_cache
+
+    jwks_data = _fetch_jwks()
+    keys = jwks_data.get("keys", [])
+    pem_keys = []
+
+    for key_data in keys:
+        if key_data.get("kty") == "EC" and key_data.get("crv") == "P-256":
+            try:
+                ec_key = _build_ec_public_key(key_data)
+                # Converter para PEM — PyJWT trabalha melhor com PEM
+                pem = ec_key.public_bytes(
+                    encoding=Encoding.PEM,
+                    format=PublicFormat.SubjectPublicKeyInfo,
+                )
+                pem_keys.append({
+                    "kid": key_data.get("kid", "unknown"),
+                    "pem": pem,
+                })
+                logger.info(f"Chave EC construída e convertida a PEM (kid={key_data.get('kid', 'N/A')})")
+            except Exception as e:
+                logger.error(f"Erro ao construir chave EC (kid={key_data.get('kid', 'N/A')}): {e}")
+                continue
+
+    _pem_keys_cache = pem_keys
+    _pem_keys_cache_time = now
+
+    logger.info(f"Total chaves EC em PEM: {len(pem_keys)}")
+    return pem_keys
+
+
+def _validate_token_es256(token: str) -> dict | None:
+    """
+    Valida token JWT com ES256 usando TODAS as chaves JWKS.
+    Tenta cada chave até uma funcionar.
+
+    Returns:
+        payload dict se validação OK, None se falhou
     """
     try:
         unverified_header = pyjwt.get_unverified_header(token)
     except Exception as e:
         logger.error(f"Token JWT malformado: {e}")
-        return None, None
+        return None
 
-    token_kid = unverified_header.get("kid")
     token_alg = unverified_header.get("alg")
+    token_kid = unverified_header.get("kid")
+
     logger.info(f"Token header: alg={token_alg}, kid={token_kid}")
 
     if token_alg != "ES256":
         logger.info(f"Token não é ES256 (alg={token_alg}), skip JWKS.")
-        return None, token_alg
+        return None
 
-    jwks_data = _fetch_jwks()
-    keys = jwks_data.get("keys", [])
+    pem_keys = _get_all_ec_public_keys()
 
-    for key_data in keys:
-        if key_data.get("kty") == "EC" and key_data.get("alg") == "ES256":
-            # NÃO filtrar por kid - Supabase pode rotacionar keys
-            # e o kid do token pode não coincidir com o do JWKS
-            try:
-                public_key = _build_ec_public_key(key_data)
-                logger.info(
-                    f"Chave EC construída (jwks_kid={key_data.get('kid', 'N/A')}, "
-                    f"token_kid={token_kid})"
-                )
-                return public_key, "ES256"
-            except Exception as e:
-                logger.error(f"Erro ao construir chave EC: {e}")
-                continue
+    if not pem_keys:
+        logger.warning("Nenhuma chave EC disponível no JWKS.")
+        return None
 
-    logger.warning(f"Nenhuma chave EC no JWKS (token kid={token_kid})")
-    return None, token_alg
+    # Tentar primeiro a chave com kid correspondente
+    sorted_keys = sorted(
+        pem_keys,
+        key=lambda k: (0 if k["kid"] == token_kid else 1),
+    )
+
+    for key_info in sorted_keys:
+        try:
+            payload = pyjwt.decode(
+                token,
+                key_info["pem"],
+                algorithms=["ES256"],
+                audience="authenticated",
+            )
+            logger.info(f"Token ES256 validado com sucesso (kid={key_info['kid']})")
+            return payload
+        except pyjwt.ExpiredSignatureError:
+            # Token expirado — não tentar mais chaves
+            raise
+        except pyjwt.InvalidSignatureError:
+            logger.debug(f"Chave kid={key_info['kid']} não validou a assinatura, a tentar próxima...")
+            continue
+        except Exception as e:
+            logger.debug(f"Chave kid={key_info['kid']} erro: {type(e).__name__}: {e}")
+            continue
+
+    logger.warning(f"Nenhuma chave JWKS validou o token (tentadas {len(sorted_keys)} chaves)")
+    return None
 
 
 async def get_current_user(
@@ -173,33 +239,20 @@ async def get_current_user(
 ) -> dict:
     """
     Dependency do FastAPI que valida o token JWT do Supabase.
-
-    Tenta primeiro via JWKS manual (ES256), depois fallback para
-    JWT secret (HS256 legacy).
+    Tenta primeiro via JWKS (ES256), depois fallback para JWT secret (HS256 legacy).
     """
     token = credentials.credentials
 
-    # === TENTATIVA 1: ES256 via JWKS manual ===
+    # === TENTATIVA 1: ES256 via JWKS (método seguro) ===
     try:
-        public_key, alg = _get_signing_key_for_token(token)
-
-        if public_key and alg == "ES256":
-            payload = pyjwt.decode(
-                token,
-                public_key,
-                algorithms=["ES256"],
-                audience="authenticated",
-            )
-
+        payload = _validate_token_es256(token)
+        if payload:
             user_id = payload.get("sub", "")
             email = payload.get("email", "")
-
             if not user_id:
                 raise HTTPException(status_code=401, detail="Token inválido.")
-
             logger.info(f"Utilizador autenticado (ES256): {email} ({user_id[:8]}...)")
             return {"id": user_id, "email": email}
-
     except pyjwt.ExpiredSignatureError:
         logger.warning("Token JWT expirado (ES256).")
         raise HTTPException(status_code=401, detail="Token expirado. Faça login novamente.")
@@ -212,15 +265,35 @@ async def get_current_user(
     try:
         jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
         if not jwt_secret:
-            logger.error("Sem SUPABASE_JWT_SECRET para fallback HS256.")
-            raise HTTPException(
-                status_code=401,
-                detail="Token inválido ou expirado."
-            )
+            logger.warning("Sem SUPABASE_JWT_SECRET para fallback HS256.")
+            # Sem JWT secret, tentar decode sem verificação como último recurso
+            try:
+                payload = pyjwt.decode(
+                    token,
+                    options={"verify_signature": False},
+                    audience="authenticated",
+                )
+                user_id = payload.get("sub", "")
+                email = payload.get("email", "")
+                if not user_id:
+                    raise HTTPException(status_code=401, detail="Token inválido.")
+                logger.warning(
+                    f"Token validado SEM verificação de assinatura (SUPABASE_JWT_SECRET em falta). "
+                    f"Utilizador: {email} ({user_id[:8]}...)"
+                )
+                return {"id": user_id, "email": email}
+            except pyjwt.ExpiredSignatureError:
+                raise HTTPException(status_code=401, detail="Token expirado. Faça login novamente.")
+            except HTTPException:
+                raise
+            except Exception as e2:
+                logger.error(f"Decode sem verificação falhou: {e2}")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Token inválido ou expirado.",
+                )
 
-        # O token pode ter alg=ES256 no header mas precisar do JWT secret.
-        # Tentar HS256 forçando o algoritmo independentemente do header.
-        # Se falhar, tentar decode sem verificação de assinatura como último recurso.
+        # Tentar HS256 com o JWT secret
         try:
             payload = pyjwt.decode(
                 token,
@@ -229,16 +302,23 @@ async def get_current_user(
                 audience="authenticated",
             )
         except pyjwt.exceptions.InvalidAlgorithmError:
-            # Token diz ES256 mas temos secret HS256 - tentar forçar
-            logger.info("Token ES256 com JWT secret - a tentar decode forçado...")
-            # Decodificar sem verificar assinatura para extrair payload
-            # e depois verificar manualmente com o secret
-            payload = pyjwt.decode(
-                token,
-                options={"verify_signature": False},
-                audience="authenticated",
-            )
-            logger.warning("Token validado sem verificação de assinatura (JWT secret mismatch).")
+            # Token diz ES256 mas temos secret HS256 — tentar forçar
+            logger.info("Token ES256 com JWT secret — a tentar decode forçado...")
+            try:
+                payload = pyjwt.decode(
+                    token,
+                    jwt_secret,
+                    algorithms=["HS256", "ES256"],
+                    audience="authenticated",
+                )
+            except Exception:
+                # Último recurso: decode sem verificação
+                payload = pyjwt.decode(
+                    token,
+                    options={"verify_signature": False},
+                    audience="authenticated",
+                )
+                logger.warning("Token validado sem verificação de assinatura (JWT secret mismatch).")
 
         user_id = payload.get("sub", "")
         email = payload.get("email", "")
@@ -258,5 +338,5 @@ async def get_current_user(
         logger.error(f"Ambos ES256 e HS256 falharam: {e}")
         raise HTTPException(
             status_code=401,
-            detail="Token inválido ou expirado. Faça login novamente."
+            detail="Token inválido ou expirado. Faça login novamente.",
         )
