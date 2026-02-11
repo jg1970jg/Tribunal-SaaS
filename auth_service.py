@@ -6,15 +6,17 @@ Verifica tokens JWT do Supabase para proteger a API.
 Utilizadores sem token válido são rejeitados.
 
 Validação:
-  - Usa supabase.auth.get_user(token) para validar o token
-  - Compatível com HS256 (legacy) e ECC P-256 (novo)
-  - Não depende de Edge Functions externas
-  - Não faz descodificação manual do JWT
+  - Chama /auth/v1/user directamente via REST
+  - Usa SUPABASE_SERVICE_ROLE_KEY no header apikey
+  - Usa o token do utilizador no header Authorization
+  - Compatível com HS256 e ECC P-256
+  - Não depende de Edge Functions
 ============================================================
 """
 
 import os
 import logging
+import httpx
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
@@ -62,8 +64,10 @@ async def get_current_user(
 ) -> dict:
     """
     Dependency do FastAPI que valida o token JWT do Supabase
-    usando supabase.auth.get_user(). Compatível com qualquer
-    formato de JWT (HS256 legacy ou ECC P-256 novo).
+    chamando directamente o endpoint REST /auth/v1/user.
+
+    Usa a SUPABASE_SERVICE_ROLE_KEY como apikey e o token
+    do utilizador como Bearer token.
 
     Returns:
         Dict com dados do utilizador (id, email)
@@ -73,40 +77,60 @@ async def get_current_user(
     """
     token = credentials.credentials
 
-    try:
-        # Usar o cliente admin (service_role) para validar o token
-        # O service_role tem permissão para verificar qualquer token
-        sb_admin = get_supabase_admin()
-        user_response = sb_admin.auth.get_user(token)
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
-        if not user_response or not user_response.user:
-            logger.warning("Token válido mas sem dados de utilizador.")
-            raise HTTPException(
-                status_code=401,
-                detail="Token inválido ou expirado."
+    if not supabase_url or not service_role_key:
+        logger.error("SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não definidos.")
+        raise HTTPException(
+            status_code=500,
+            detail="Configuração do servidor incompleta."
+        )
+
+    auth_url = f"{supabase_url}/auth/v1/user"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                auth_url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "apikey": service_role_key,
+                },
+                timeout=10.0,
             )
 
-        user = user_response.user
-        user_id = user.id
-        email = user.email or ""
+            if resp.status_code != 200:
+                logger.warning(
+                    f"Auth falhou: status={resp.status_code}, "
+                    f"body={resp.text[:300]}"
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail="Token inválido ou expirado. Faça login novamente."
+                )
 
-        logger.info(f"Utilizador autenticado: {email} ({str(user_id)[:8]}...)")
-        return {
-            "id": str(user_id),
-            "email": email,
-        }
+            user_data = resp.json()
+            user_id = user_data.get("id", "")
+            email = user_data.get("email", "")
+
+            if not user_id:
+                logger.warning(f"Resposta sem user id. Keys: {list(user_data.keys())}")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Token inválido."
+                )
+
+            logger.info(f"Utilizador autenticado: {email} ({user_id[:8]}...)")
+            return {
+                "id": user_id,
+                "email": email,
+            }
 
     except HTTPException:
         raise
     except Exception as e:
-        error_msg = str(e)
-        if "invalid" in error_msg.lower() or "expired" in error_msg.lower():
-            logger.warning(f"Token inválido/expirado: {error_msg[:200]}")
-            raise HTTPException(
-                status_code=401,
-                detail="Token inválido ou expirado. Faça login novamente."
-            )
-        logger.error(f"Erro ao validar token via Supabase Auth: {error_msg[:300]}")
+        logger.error(f"Erro ao validar token: {e}")
         raise HTTPException(
             status_code=401,
             detail="Não foi possível validar o token."
