@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Cliente LLM UNIFICADO - Dual API System
+Cliente LLM UNIFICADO - Dual API System + PROMPT CACHING
 ═══════════════════════════════════════════════════════════════════════════
 
 FUNCIONALIDADES:
@@ -9,8 +9,10 @@ FUNCIONALIDADES:
 3. ✅ Fallback automático (se OpenAI falhar → OpenRouter)
 4. ✅ Detecção automática de modelo
 5. ✅ Logging detalhado
+6. ✅ PROMPT CACHING (NOVO!) - Economia 50-90%
 
 CHANGELOG:
+- 2026-02-12: Adicionar Prompt Caching (Anthropic manual + OpenAI/Gemini auto)
 - 2026-02-10: Fix respostas corrompidas OpenRouter (defensive JSON parsing)
 - 2026-02-10: Detectar conteúdo vazio como falha (permite retry)
 - 2026-02-10: Validação robusta do body HTTP antes de json.loads()
@@ -120,6 +122,101 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# PROMPT CACHING - CONFIGURAÇÃO
+# =============================================================================
+
+# Modelos com cache MANUAL (Anthropic - precisa cache_control)
+MODELS_MANUAL_CACHE = {
+    "anthropic/claude-sonnet-4-5",
+    "anthropic/claude-3-5-sonnet",
+    "anthropic/claude-opus-4.6",
+    "anthropic/claude-opus-4-5",
+}
+
+# Modelos com cache AUTOMÁTICO (OpenAI, Gemini, Grok)
+MODELS_AUTO_CACHE = {
+    "openai/gpt-5.2",
+    "openai/gpt-5.2-pro",
+    "openai/gpt-4o",
+    "openai/gpt-4.1",
+    "google/gemini-3-flash-preview",
+    "google/gemini-3-pro-preview",
+    "x-ai/grok-4.1-fast",
+}
+
+
+def supports_cache(model: str) -> bool:
+    """Verifica se modelo suporta prompt caching."""
+    return model in MODELS_AUTO_CACHE or model in MODELS_MANUAL_CACHE
+
+
+def requires_manual_cache(model: str) -> bool:
+    """Verifica se modelo precisa de cache_control manual (Anthropic)."""
+    return model in MODELS_MANUAL_CACHE
+
+
+def prepare_messages_with_cache(
+    messages: List[Dict[str, Any]],
+    model: str,
+    enable_cache: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    Adiciona cache_control às mensagens para modelos Anthropic.
+    
+    REGRAS:
+    1. Cache APENAS em 'user' messages
+    2. Cache nos últimos 1-4 blocos (máximo 4 breakpoints)
+    3. Cada bloco ≥ 1,024 tokens (~4096 chars)
+    
+    Args:
+        messages: Lista de mensagens
+        model: ID do modelo
+        enable_cache: Se False, não adiciona cache
+        
+    Returns:
+        Mensagens com cache_control adicionado
+    """
+    if not enable_cache or not requires_manual_cache(model):
+        return messages
+    
+    # Encontrar mensagens 'user' longas (>4096 chars ≈ 1024 tokens)
+    user_messages_idx = [
+        i for i, msg in enumerate(messages)
+        if msg.get("role") == "user" and len(str(msg.get("content", ""))) > 4096
+    ]
+    
+    if not user_messages_idx:
+        return messages
+    
+    # Cachear os últimos 1-4 blocos (max 4 breakpoints)
+    num_to_cache = min(4, len(user_messages_idx))
+    indices_to_cache = user_messages_idx[-num_to_cache:]
+    
+    # Adicionar cache_control
+    cached_messages = messages.copy()
+    for idx in indices_to_cache:
+        content = cached_messages[idx]["content"]
+        
+        if isinstance(content, str):
+            cached_messages[idx]["content"] = [
+                {
+                    "type": "text",
+                    "text": content,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ]
+        elif isinstance(content, list):
+            # Já é array, adicionar cache_control ao último texto
+            for item in reversed(content):
+                if item.get("type") == "text":
+                    item["cache_control"] = {"type": "ephemeral"}
+                    break
+    
+    logger.info(f"[CACHE] ✅ Adicionado cache_control a {num_to_cache} mensagens ({model})")
+    return cached_messages
+
+
+# =============================================================================
 # MODELOS OPENAI QUE USAM RESPONSES API
 # =============================================================================
 # GPT-5.2 e GPT-5.2-pro usam Responses API (/v1/responses) em vez de Chat API
@@ -151,12 +248,20 @@ class LLMResponse:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cached_tokens: int = 0  # NOVO: tokens que vieram do cache
     latency_ms: float = 0.0
     timestamp: datetime = field(default_factory=datetime.now)
     raw_response: Optional[Dict] = None
     error: Optional[str] = None
     success: bool = True
     api_used: str = ""  # "openai" ou "openrouter"
+
+    @property
+    def cache_hit_rate(self) -> float:
+        """Percentagem de tokens que vieram do cache."""
+        if self.prompt_tokens == 0:
+            return 0.0
+        return 100.0 * self.cached_tokens / self.prompt_tokens
 
     def to_dict(self) -> Dict:
         return {
@@ -166,6 +271,8 @@ class LLMResponse:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
+            "cached_tokens": self.cached_tokens,
+            "cache_hit_rate": self.cache_hit_rate,
             "latency_ms": self.latency_ms,
             "timestamp": self.timestamp.isoformat(),
             "error": self.error,
@@ -302,6 +409,8 @@ class OpenAIClient:
             "failed_calls": 0,
             "total_tokens": 0,
             "total_latency_ms": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
         }
 
     def _get_headers(self) -> Dict[str, str]:
@@ -400,9 +509,12 @@ class OpenAIClient:
         temperature: float = 0.7,
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
+        enable_cache: bool = True,  # NOVO parâmetro
     ) -> LLMResponse:
         """
         Envia mensagens para um modelo e retorna a resposta.
+        
+        NOVO: Suporte para prompt caching (automático em OpenAI).
         """
         self._stats["total_calls"] += 1
         start_time = datetime.now()
@@ -414,7 +526,7 @@ class OpenAIClient:
         full_messages.extend(messages)
 
         try:
-            logger.info(f"🔵 Chamando OpenAI API: {model}")
+            logger.info(f"🔵 Chamando OpenAI API: {model} (cache={'ON' if enable_cache else 'OFF'})")
 
             raw_response = self._make_request(
                 model=model,
@@ -428,6 +540,16 @@ class OpenAIClient:
             message = choice.get("message", {})
             content = message.get("content", "")
             usage = raw_response.get("usage", {})
+
+            # NOVO: Extrair cached_tokens
+            cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            
+            if cached_tokens > 0:
+                cache_pct = 100 * cached_tokens / usage.get("prompt_tokens", 1)
+                logger.info(f"💚 CACHE HIT: {cached_tokens:,} tokens ({cache_pct:.1f}% do input)")
+                self._stats["cache_hits"] += 1
+            else:
+                self._stats["cache_misses"] += 1
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
@@ -445,6 +567,7 @@ class OpenAIClient:
                     prompt_tokens=usage.get("prompt_tokens", 0),
                     completion_tokens=usage.get("completion_tokens", 0),
                     total_tokens=usage.get("total_tokens", 0),
+                    cached_tokens=cached_tokens,
                     latency_ms=latency_ms,
                     raw_response=raw_response,
                     error="Resposta com conteúdo vazio (content empty)",
@@ -459,6 +582,7 @@ class OpenAIClient:
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 total_tokens=usage.get("total_tokens", 0),
+                cached_tokens=cached_tokens,
                 latency_ms=latency_ms,
                 raw_response=raw_response,
                 success=True,
@@ -469,7 +593,10 @@ class OpenAIClient:
             self._stats["total_tokens"] += response.total_tokens
             self._stats["total_latency_ms"] += latency_ms
 
-            logger.info(f"✅ OpenAI resposta: {response.total_tokens} tokens, {latency_ms:.0f}ms")
+            logger.info(
+                f"✅ OpenAI resposta: {response.total_tokens} tokens "
+                f"(cache: {response.cache_hit_rate:.1f}%), {latency_ms:.0f}ms"
+            )
 
             return response
 
@@ -494,6 +621,7 @@ class OpenAIClient:
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 16384,
+        enable_cache: bool = True,  # NOVO parâmetro
     ) -> LLMResponse:
         """Versão simplificada de chat com apenas um prompt."""
         messages = [{"role": "user", "content": prompt}]
@@ -503,6 +631,7 @@ class OpenAIClient:
             system_prompt=system_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
+            enable_cache=enable_cache,
         )
 
     def chat_responses(
@@ -512,6 +641,7 @@ class OpenAIClient:
         temperature: float = 0.7,
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
+        enable_cache: bool = True,  # NOVO parâmetro
     ) -> LLMResponse:
         """
         Envia mensagens para um modelo usando Responses API (/v1/responses).
@@ -544,7 +674,7 @@ class OpenAIClient:
         input_text = "\n\n".join(input_parts)
 
         try:
-            logger.info(f"🔵 Chamando OpenAI Responses API: {model}")
+            logger.info(f"🔵 Chamando OpenAI Responses API: {model} (cache={'ON' if enable_cache else 'OFF'})")
 
             raw_response = self._make_request_responses(
                 model=model,
@@ -604,6 +734,10 @@ class OpenAIClient:
 
                 usage = raw_response.get("usage", {})
                 latency_ms = (datetime.now() - start_time).total_seconds() * 1000
+                
+                # NOVO: Extrair cached_tokens
+                cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+                
                 return LLMResponse(
                     content="",
                     model=raw_response.get("model", model),
@@ -611,6 +745,7 @@ class OpenAIClient:
                     prompt_tokens=usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0),
                     completion_tokens=usage.get("output_tokens", 0) or usage.get("completion_tokens", 0),
                     total_tokens=usage.get("total_tokens", 0),
+                    cached_tokens=cached_tokens,
                     latency_ms=latency_ms,
                     raw_response=raw_response,
                     error="Responses API retornou conteúdo vazio após todas as tentativas de extração",
@@ -621,6 +756,17 @@ class OpenAIClient:
             logger.info(f"[RESPONSES-API] Final output_text: {len(output_text)} chars, first 200: {output_text[:200]!r}")
 
             usage = raw_response.get("usage", {})
+            
+            # NOVO: Extrair cached_tokens
+            cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            
+            if cached_tokens > 0:
+                prompt_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                cache_pct = 100 * cached_tokens / prompt_tokens if prompt_tokens > 0 else 0
+                logger.info(f"💚 CACHE HIT: {cached_tokens:,} tokens ({cache_pct:.1f}% do input)")
+                self._stats["cache_hits"] += 1
+            else:
+                self._stats["cache_misses"] += 1
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
@@ -636,6 +782,7 @@ class OpenAIClient:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                cached_tokens=cached_tokens,
                 latency_ms=latency_ms,
                 raw_response=raw_response,
                 success=True,
@@ -646,7 +793,10 @@ class OpenAIClient:
             self._stats["total_tokens"] += response.total_tokens
             self._stats["total_latency_ms"] += latency_ms
 
-            logger.info(f"✅ OpenAI Responses resposta: {response.total_tokens} tokens, {latency_ms:.0f}ms")
+            logger.info(
+                f"✅ OpenAI Responses resposta: {response.total_tokens} tokens "
+                f"(cache: {response.cache_hit_rate:.1f}%), {latency_ms:.0f}ms"
+            )
 
             return response
 
@@ -674,6 +824,11 @@ class OpenAIClient:
         else:
             stats["avg_latency_ms"] = 0
             stats["avg_tokens"] = 0
+        
+        # NOVO: Cache hit rate
+        total_requests = stats["cache_hits"] + stats["cache_misses"]
+        stats["cache_hit_rate"] = 100 * stats["cache_hits"] / total_requests if total_requests > 0 else 0
+        
         return stats
 
     def close(self):
@@ -715,6 +870,8 @@ class OpenRouterClient:
             "failed_calls": 0,
             "total_tokens": 0,
             "total_latency_ms": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
         }
 
     def _get_headers(self) -> Dict[str, str]:
@@ -767,8 +924,13 @@ class OpenRouterClient:
         temperature: float = 0.7,
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
+        enable_cache: bool = True,  # NOVO parâmetro
     ) -> LLMResponse:
-        """Envia mensagens para um modelo e retorna a resposta."""
+        """
+        Envia mensagens para um modelo e retorna a resposta.
+        
+        NOVO: Suporte para prompt caching (Anthropic manual, outros automático).
+        """
         self._stats["total_calls"] += 1
         start_time = datetime.now()
 
@@ -778,8 +940,12 @@ class OpenRouterClient:
             full_messages.append({"role": "system", "content": system_prompt})
         full_messages.extend(messages)
 
+        # NOVO: Adicionar cache_control se Anthropic
+        if enable_cache and requires_manual_cache(model):
+            full_messages = prepare_messages_with_cache(full_messages, model, enable_cache)
+
         try:
-            logger.info(f"🟠 Chamando OpenRouter API: {model}")
+            logger.info(f"🟠 Chamando OpenRouter API: {model} (cache={'ON' if enable_cache else 'OFF'})")
 
             raw_response = self._make_request(
                 model=model,
@@ -793,6 +959,16 @@ class OpenRouterClient:
             message = choice.get("message", {})
             content = message.get("content", "")
             usage = raw_response.get("usage", {})
+
+            # NOVO: Extrair cached_tokens (Anthropic + outros)
+            cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            
+            if cached_tokens > 0:
+                cache_pct = 100 * cached_tokens / usage.get("prompt_tokens", 1)
+                logger.info(f"💚 CACHE HIT: {cached_tokens:,} tokens ({cache_pct:.1f}% do input)")
+                self._stats["cache_hits"] += 1
+            else:
+                self._stats["cache_misses"] += 1
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
@@ -813,6 +989,7 @@ class OpenRouterClient:
                     prompt_tokens=usage.get("prompt_tokens", 0),
                     completion_tokens=usage.get("completion_tokens", 0),
                     total_tokens=usage.get("total_tokens", 0),
+                    cached_tokens=cached_tokens,
                     latency_ms=latency_ms,
                     raw_response=raw_response,
                     error=f"Resposta com conteúdo vazio (finish_reason={finish_reason})",
@@ -827,6 +1004,7 @@ class OpenRouterClient:
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 total_tokens=usage.get("total_tokens", 0),
+                cached_tokens=cached_tokens,
                 latency_ms=latency_ms,
                 raw_response=raw_response,
                 success=True,
@@ -837,7 +1015,10 @@ class OpenRouterClient:
             self._stats["total_tokens"] += response.total_tokens
             self._stats["total_latency_ms"] += latency_ms
 
-            logger.info(f"✅ OpenRouter resposta: {response.total_tokens} tokens, {latency_ms:.0f}ms")
+            logger.info(
+                f"✅ OpenRouter resposta: {response.total_tokens} tokens "
+                f"(cache: {response.cache_hit_rate:.1f}%), {latency_ms:.0f}ms"
+            )
 
             return response
 
@@ -860,6 +1041,7 @@ class OpenRouterClient:
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 16384,
+        enable_cache: bool = True,  # NOVO parâmetro
     ) -> LLMResponse:
         """Versão simplificada de chat com apenas um prompt."""
         messages = [{"role": "user", "content": prompt}]
@@ -869,6 +1051,7 @@ class OpenRouterClient:
             system_prompt=system_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
+            enable_cache=enable_cache,
         )
 
     def get_stats(self) -> Dict[str, Any]:
@@ -880,6 +1063,11 @@ class OpenRouterClient:
         else:
             stats["avg_latency_ms"] = 0
             stats["avg_tokens"] = 0
+        
+        # NOVO: Cache hit rate
+        total_requests = stats["cache_hits"] + stats["cache_misses"]
+        stats["cache_hit_rate"] = 100 * stats["cache_hits"] / total_requests if total_requests > 0 else 0
+        
         return stats
 
     def close(self):
@@ -895,6 +1083,7 @@ class UnifiedLLMClient:
     1. Detecta se modelo é OpenAI ou outro
     2. Usa API apropriada (OpenAI directa ou OpenRouter)
     3. Fallback automático se OpenAI falhar
+    4. PROMPT CACHING (NOVO!)
     """
 
     def __init__(
@@ -928,7 +1117,7 @@ class UnifiedLLMClient:
             max_retries=max_retries,
         )
         
-        logger.info("✅ UnifiedLLMClient inicializado (Dual API + Fallback)")
+        logger.info("✅ UnifiedLLMClient inicializado (Dual API + Fallback + Cache)")
 
     def chat_simple(
         self,
@@ -937,11 +1126,14 @@ class UnifiedLLMClient:
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 16384,
+        enable_cache: bool = True,  # NOVO parâmetro
     ) -> LLMResponse:
         """
         Versão simplificada de chat.
         
         Detecta automaticamente qual API usar e implementa fallback.
+        
+        NOVO: Suporte para prompt caching.
         """
         messages = [{"role": "user", "content": prompt}]
         return self.chat(
@@ -950,6 +1142,7 @@ class UnifiedLLMClient:
             system_prompt=system_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
+            enable_cache=enable_cache,
         )
 
     def chat_vision(
@@ -960,6 +1153,7 @@ class UnifiedLLMClient:
         system_prompt: Optional[str] = None,
         max_tokens: int = 4096,
         temperature: float = 0.0,
+        enable_cache: bool = True,  # NOVO parâmetro
     ) -> LLMResponse:
         """
         Chat com imagem (Vision) - envia imagem + prompt ao LLM.
@@ -1009,6 +1203,7 @@ class UnifiedLLMClient:
             system_prompt=system_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
+            enable_cache=enable_cache,
         )
 
     def chat(
@@ -1018,13 +1213,14 @@ class UnifiedLLMClient:
         temperature: float = 0.7,
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
+        enable_cache: bool = True,  # NOVO parâmetro
     ) -> LLMResponse:
         """
-        Chat com detecção automática de API + fallback.
+        Chat com detecção automática de API + fallback + CACHING.
         
         1. Detecta se deve usar OpenAI directa
         2. Se OpenAI, detecta se usa Responses API ou Chat API
-        3. Tenta API apropriada
+        3. Tenta API apropriada (com cache se enable_cache=True)
         4. Se falhar E fallback habilitado → tenta OpenRouter
         """
         # Detectar se deve usar OpenAI directa
@@ -1044,6 +1240,7 @@ class UnifiedLLMClient:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
+                    enable_cache=enable_cache,
                 )
             else:
                 logger.info(f"🎯 Modelo OpenAI detectado: {model} (via Chat API)")
@@ -1055,6 +1252,7 @@ class UnifiedLLMClient:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
+                    enable_cache=enable_cache,
                 )
             
             # Se sucesso, retornar
@@ -1073,6 +1271,7 @@ class UnifiedLLMClient:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
+                    enable_cache=enable_cache,
                 )
                 
                 # Marcar que usou fallback
@@ -1095,6 +1294,7 @@ class UnifiedLLMClient:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 system_prompt=system_prompt,
+                enable_cache=enable_cache,
             )
 
     def get_stats(self) -> Dict[str, Any]:
@@ -1107,6 +1307,8 @@ class UnifiedLLMClient:
             "openrouter": openrouter_stats,
             "total_calls": openai_stats["total_calls"] + openrouter_stats["total_calls"],
             "total_tokens": openai_stats["total_tokens"] + openrouter_stats["total_tokens"],
+            "total_cache_hits": openai_stats["cache_hits"] + openrouter_stats["cache_hits"],
+            "total_cache_misses": openai_stats["cache_misses"] + openrouter_stats["cache_misses"],
         }
 
     def test_connection(self) -> Dict[str, Any]:
@@ -1232,11 +1434,14 @@ def call_llm(
     system_prompt: Optional[str] = None,
     temperature: float = 0.7,
     max_tokens: int = 16384,
+    enable_cache: bool = True,  # NOVO parâmetro
 ) -> LLMResponse:
     """
     Função de conveniência para chamar um LLM.
     
-    Usa o cliente unificado com detecção automática + fallback.
+    Usa o cliente unificado com detecção automática + fallback + CACHING.
+    
+    NOVO: Parâmetro enable_cache para controlar caching.
     """
     client = get_llm_client()
     return client.chat_simple(
@@ -1245,4 +1450,5 @@ def call_llm(
         system_prompt=system_prompt,
         temperature=temperature,
         max_tokens=max_tokens,
+        enable_cache=enable_cache,
     )
