@@ -714,6 +714,49 @@ async def add_document_to_project(
 # ============================================================
 
 @app.get("/wallet/balance")
+
+# ============================================================
+# TIER CONFIGURATION ENDPOINTS
+# ============================================================
+
+@app.get("/tiers")
+async def get_tiers():
+      """Retorna configuração de todos os tiers (Bronze/Prata/Ouro)."""
+      from src.tier_config import get_all_tiers_info
+      return {"tiers": get_all_tiers_info()}
+
+@app.post("/tiers/calculate")
+async def calculate_tier_cost(
+      tier: str,
+      document_tokens: int = 0,
+):
+      """
+          Calcula custo estimado para um tier.
+
+                  Query params:
+                          tier: bronze, silver ou gold
+                                  document_tokens: tamanho do documento em tokens (opcional)
+                                      """
+      from src.tier_config import TierLevel, calculate_tier_cost
+
+    try:
+              tier_level = TierLevel(tier.lower())
+except ValueError:
+          raise HTTPException(
+                        status_code=422,
+                        detail=f"Tier inválido: {tier}. Use: bronze, silver ou gold"
+          )
+
+    costs = calculate_tier_cost(tier_level, document_tokens)
+
+    return {
+              "tier": tier,
+              "custo_real_usd": costs["custo_real"],
+              "custo_cliente_usd": costs["custo_cliente"],
+              "bloqueio_usd": costs["bloqueio"],
+              "size_multiplier": costs["size_multiplier"],
+    }
+Page_Down
 async def wallet_balance(user: dict = Depends(get_current_user)):
     """Retorna saldo actual da wallet do utilizador."""
     try:
