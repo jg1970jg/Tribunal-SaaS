@@ -838,6 +838,37 @@ DEVES devolver APENAS um JSON válido com:
 
 IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando contradições."""
 
+    PROMPT_RLM = """Revê mantendo TODOS factos.
+PODES: Remover repetições IDÊNTICAS
+NÃO PODES: Remover factos únicos
+TEXTO: {texto}
+REVISTO:"""
+
+    def _aplicar_rlm(self, texto: str, tipo_fase: str) -> str:
+        if tipo_fase not in ["auditoria", "julgamento"]:
+            return texto
+        tokens = len(texto) // 4
+        if tokens < 25000:
+            logger.info(f"[RLM] {tipo_fase}: {tokens:,} < 25k → SKIP")
+            return texto
+        logger.info(f"[RLM] Comprimindo {tokens:,} tokens...")
+        try:
+            resultado = self.llm_client.chat_simple(
+                model="openai/gpt-4.1",
+                prompt=self.PROMPT_RLM.format(texto=texto),
+                max_tokens=tokens,
+                temperature=0.0,
+                enable_cache=False,
+            )
+            tokens_depois = len(resultado.content) // 4 if resultado else tokens
+            logger.info(f"[RLM] {tokens:,} → {tokens_depois:,}")
+            if self._output_dir:
+                self._log_to_file(f"rlm_{tipo_fase}.md", resultado.content if resultado else "ERRO")
+            return resultado.content if resultado else texto
+        except Exception as e:
+            logger.error(f"[RLM] ERRO: {e}")
+            return texto
+
     def __init__(
         self,
         extrator_models: List[str] = None,
@@ -2527,6 +2558,8 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                 [r.to_dict() for r in audit_reports],
                 f, ensure_ascii=False, indent=2
             )
+
+        consolidado = self._aplicar_rlm(consolidado, "auditoria")
 
         return audit_reports, bruto, consolidado, chefe_report
 
