@@ -34,6 +34,10 @@ import hashlib
 import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Callable
+
+# Wallet imports
+from src.wallet_manager import WalletManager
+from src.tier_config import TierLevel, calculate_tier_cost, TIER_CONFIG
 from dataclasses import dataclass
 
 # Nota: src.__init__.py estende __path__ para incluir Referencia antiga/src/
