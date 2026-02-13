@@ -739,7 +739,7 @@ async def wallet_balance(user: dict = Depends(get_current_user)):
         }
     except Exception as e:
         logger.error(f"Erro ao consultar saldo: {e}")
-        raise HTTPException(status_code=500, detail="Erro ao consultar saldo.")
+        raise HTTPException(status_code=500, detail=f"Erro ao consultar saldo: {type(e).__name__}: {e}")
 
 
 @app.get("/wallet/transactions")
