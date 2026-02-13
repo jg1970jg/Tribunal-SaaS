@@ -22,8 +22,11 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, Request, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from auth_service import get_current_user, get_supabase, get_supabase_admin
 from src.engine import (
@@ -42,6 +45,41 @@ ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").sp
 
 # Carregar variáveis de ambiente (.env)
 load_dotenv()
+
+
+# ============================================================
+# RATE LIMITING
+# ============================================================
+
+def _get_user_or_ip(request: Request) -> str:
+    """Extrai user_id do JWT (se presente) ou usa IP como fallback."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            import jwt as pyjwt
+            payload = pyjwt.decode(
+                auth[7:],
+                options={"verify_signature": False, "verify_exp": False},
+            )
+            user_id = payload.get("sub", "")
+            if user_id:
+                return f"user:{user_id}"
+        except Exception:
+            pass
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=_get_user_or_ip)
+
+
+def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Demasiados pedidos. Tente novamente em breve.",
+            "retry_after": exc.detail,
+        },
+    )
 
 
 # ============================================================
@@ -85,6 +123,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+
 # CORS - permitir frontend Lovable e localhost para dev
 app.add_middleware(
     CORSMiddleware,
@@ -125,7 +167,8 @@ async def health():
 # ============================================================
 
 @app.get("/me")
-async def me(user: dict = Depends(get_current_user)):
+@limiter.limit("60/minute")
+async def me(request: Request, user: dict = Depends(get_current_user)):
     """Retorna dados do utilizador autenticado (rota de teste)."""
     return {
         "user_id": user["id"],
@@ -134,7 +177,9 @@ async def me(user: dict = Depends(get_current_user)):
 
 
 @app.post("/analyze")
+@limiter.limit("10/minute")
 async def analyze(
+    request: Request,
     file: UploadFile = File(...),
     area_direito: str = Form("Civil"),
     perguntas_raw: str = Form(""),
@@ -427,7 +472,8 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
 
 
 @app.post("/export/pdf")
-async def export_pdf(req: ExportRequest):
+@limiter.limit("30/minute")
+async def export_pdf(request: Request, req: ExportRequest):
     """Exporta o resultado da análise como PDF."""
     try:
         pdf_bytes = _build_pdf(req.analysis_result)
@@ -444,7 +490,8 @@ async def export_pdf(req: ExportRequest):
 
 
 @app.post("/export/docx")
-async def export_docx(req: ExportRequest):
+@limiter.limit("30/minute")
+async def export_docx(request: Request, req: ExportRequest):
     """Exporta o resultado da análise como DOCX."""
     try:
         docx_bytes = _build_docx(req.analysis_result)
@@ -534,7 +581,8 @@ def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] =
 
 
 @app.post("/ask")
-async def ask_question(req: AskRequest):
+@limiter.limit("20/minute")
+async def ask_question(request: Request, req: AskRequest):
     """
     Pergunta pós-análise: envia a pergunta a 3 LLMs com contexto da análise
     anterior + histórico de Q&A e consolida as respostas.
@@ -647,7 +695,9 @@ Consolida estas respostas numa única resposta final coerente."""
 # ============================================================
 
 @app.post("/analyze/add")
+@limiter.limit("10/minute")
 async def add_document_to_project(
+    request: Request,
     file: UploadFile = File(...),
     document_id: str = Form(...),
     user: dict = Depends(get_current_user),
@@ -724,14 +774,17 @@ async def add_document_to_project(
 # ============================================================
 
 @app.get("/tiers")
-async def get_tiers():
+@limiter.limit("60/minute")
+async def get_tiers(request: Request):
     """Retorna configuração de todos os tiers (Bronze/Prata/Ouro)."""
     from src.tier_config import get_all_tiers_info
     return {"tiers": get_all_tiers_info()}
 
 
 @app.post("/tiers/calculate")
+@limiter.limit("60/minute")
 async def calculate_tier_cost_endpoint(
+    request: Request,
     tier: str,
     document_tokens: int = 0,
 ):
@@ -765,7 +818,8 @@ async def calculate_tier_cost_endpoint(
 # ============================================================
 
 @app.get("/wallet/balance")
-async def wallet_balance(user: dict = Depends(get_current_user)):
+@limiter.limit("60/minute")
+async def wallet_balance(request: Request, user: dict = Depends(get_current_user)):
     """Retorna saldo actual da wallet do utilizador."""
     try:
         wm = get_wallet_manager()
@@ -786,7 +840,9 @@ async def wallet_balance(user: dict = Depends(get_current_user)):
 
 
 @app.get("/wallet/transactions")
+@limiter.limit("60/minute")
 async def wallet_transactions(
+    request: Request,
     limit: int = 50,
     offset: int = 0,
     type_filter: Optional[str] = None,
@@ -813,7 +869,9 @@ class CreditRequest(BaseModel):
 
 
 @app.post("/wallet/credit")
+@limiter.limit("10/minute")
 async def wallet_credit(
+    request: Request,
     req: CreditRequest,
     user: dict = Depends(get_current_user),
 ):
@@ -845,7 +903,9 @@ async def wallet_credit(
 
 
 @app.get("/admin/profit-report")
+@limiter.limit("30/minute")
 async def admin_profit_report(
+    request: Request,
     days: int = 30,
     user: dict = Depends(get_current_user),
 ):
@@ -874,7 +934,8 @@ class AdminVerifyRequest(BaseModel):
 
 
 @app.post("/admin/verify")
-async def admin_verify(req: AdminVerifyRequest):
+@limiter.limit("5/minute")
+async def admin_verify(request: Request, req: AdminVerifyRequest):
     """Verifica a password de admin para acesso ao painel de diagnóstico."""
     admin_password = os.environ.get("ADMIN_PASSWORD", "")
 
