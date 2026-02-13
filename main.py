@@ -178,6 +178,8 @@ async def me(request: Request, user: dict = Depends(get_current_user)):
 
 @app.post("/analyze")
 @limiter.limit("10/minute")
+@limiter.limit("50/hour")
+@limiter.limit("100/day")
 async def analyze(
     request: Request,
     file: UploadFile = File(...),
@@ -582,6 +584,7 @@ def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] =
 
 @app.post("/ask")
 @limiter.limit("20/minute")
+@limiter.limit("100/hour")
 async def ask_question(request: Request, req: AskRequest):
     """
     Pergunta pós-análise: envia a pergunta a 3 LLMs com contexto da análise
@@ -870,6 +873,7 @@ class CreditRequest(BaseModel):
 
 @app.post("/wallet/credit")
 @limiter.limit("10/minute")
+@limiter.limit("30/hour")
 async def wallet_credit(
     request: Request,
     req: CreditRequest,
@@ -935,6 +939,8 @@ class AdminVerifyRequest(BaseModel):
 
 @app.post("/admin/verify")
 @limiter.limit("5/minute")
+@limiter.limit("15/hour")
+@limiter.limit("30/day")
 async def admin_verify(request: Request, req: AdminVerifyRequest):
     """Verifica a password de admin para acesso ao painel de diagnóstico."""
     admin_password = os.environ.get("ADMIN_PASSWORD", "")
