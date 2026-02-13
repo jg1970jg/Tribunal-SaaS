@@ -470,9 +470,8 @@ class WalletManager:
                     "avg_analysis_cost": 0.0,
                 }
 
-            total_charged = sum(float(t.get("amount") or 0) for t in transactions)
-            # Custo real = charged / markup (2.0)
-            total_real_cost = total_charged / 2.0
+            total_charged = sum(float(t.get("amount_usd") or 0) for t in transactions)
+            total_real_cost = sum(float(t.get("cost_real_usd") or 0) for t in transactions)
             total_profit = total_charged - total_real_cost
             profit_margin = (total_profit / total_charged * 100) if total_charged > 0 else 0
 
