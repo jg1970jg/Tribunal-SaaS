@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AUTH SERVICE - Tribunal SaaS V2
+AUTH SERVICE - LexForum
 ============================================================
 Verifica tokens JWT do Supabase para proteger a API.
 Utilizadores sem token válido são rejeitados.

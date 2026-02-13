@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-TRIBUNAL GOLDENMASTER GUI - Interface Principal (Streamlit)
+LEXFORUM GUI - Interface Principal (Streamlit)
 Pipeline de 3 Fases com LLMs via OpenRouter
 
 Execute com: streamlit run src/app.py
@@ -33,7 +33,7 @@ from src.config import (
     OUTPUT_DIR,
     HISTORICO_DIR,  # ← NOVO: Para apagar ficheiros do histórico
 )
-from src.pipeline.processor import TribunalProcessor, PipelineResult
+from src.pipeline.processor import LexForumProcessor, PipelineResult
 from src.pipeline.constants import (
     FLAGS_BLOQUEANTES,
     ESTADOS_RESOLVIDOS,
@@ -173,7 +173,7 @@ def carregar_resultado(run_id: str) -> PipelineResult:
 
 # Configuração da página
 st.set_page_config(
-    page_title="Tribunal GoldenMaster",
+    page_title="LexForum",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -246,7 +246,7 @@ def carregar_css():
 def inicializar_sessao():
     """Inicializa variáveis de sessão."""
     if "processor" not in st.session_state:
-        st.session_state.processor = TribunalProcessor()
+        st.session_state.processor = LexForumProcessor()
 
     if "resultado" not in st.session_state:
         st.session_state.resultado = None
@@ -356,7 +356,7 @@ def renderizar_header():
     """Renderiza o cabeçalho."""
     st.markdown("""
     <div class="main-header">
-        <h1>⚖️ TRIBUNAL GOLDENMASTER</h1>
+        <h1>⚖️ LEXFORUM</h1>
         <p>Análise Jurídica com Pipeline de 3 Fases | Direito Português 🇵🇹</p>
     </div>
     """, unsafe_allow_html=True)
@@ -418,17 +418,17 @@ def renderizar_sidebar():
             for m in AUDITOR_MODELS:
                 st.caption(f"• {m.split('/')[-1]}")
 
-            st.caption("**Fase 3 - Juízes:**")
+            st.caption("**Fase 3 - Relatores:**")
             for m in JUIZ_MODELS:
                 st.caption(f"• {m.split('/')[-1]}")
 
-            st.caption(f"**Presidente:** {PRESIDENTE_MODEL.split('/')[-1]}")
+            st.caption(f"**Conselheiro-Mor:** {PRESIDENTE_MODEL.split('/')[-1]}")
 
             st.caption(f"**Agregador:** {AGREGADOR_MODEL.split('/')[-1]}")
             st.caption(f"**Chefe:** {CHEFE_MODEL.split('/')[-1]}")
 
         st.markdown("---")
-        st.caption("Tribunal GoldenMaster v2.0\nApenas Direito Português 🇵🇹")
+        st.caption("LexForum v2.0\nApenas Direito Português 🇵🇹")
 
 
 def carregar_documentos(uploaded_files, use_pdf_safe: bool = True, out_dir: Path = None) -> List[DocumentContent]:
@@ -652,8 +652,8 @@ def pagina_analisar_documento():
         **Fase 2 - Auditoria:**
         4 LLMs auditam e validam a extração
 
-        **Fase 3 - Julgamento:**
-        3 LLMs emitem parecer + Presidente verifica
+        **Fase 3 - Relatoria:**
+        3 LLMs emitem parecer + Conselheiro-Mor verifica
         """)
 
         st.markdown("### 🏛️ Símbolos")
@@ -921,7 +921,7 @@ def executar_pipeline_documentos(documentos: List[DocumentContent], area: str, p
     # === Fim da verificacao ===
 
     try:
-        processor = TribunalProcessor(callback_progresso=callback)
+        processor = LexForumProcessor(callback_progresso=callback)
         resultado = processor.processar(documento_combinado, area, perguntas_raw, titulo)  # ← NOVO: passar titulo
         st.session_state.resultado = resultado
 
@@ -979,7 +979,7 @@ def executar_pipeline_texto(texto: str, area: str, perguntas_raw: str = ""):
     # === Fim da verificacao ===
 
     try:
-        processor = TribunalProcessor(callback_progresso=callback)
+        processor = LexForumProcessor(callback_progresso=callback)
         resultado = processor.processar_texto(texto, area, perguntas_raw)
         st.session_state.resultado = resultado
 
@@ -1017,7 +1017,7 @@ def renderizar_resultado(resultado: PipelineResult):
             {resultado.simbolo_final}
         </h1>
         <h2 style="color: {cor}; margin: 10px 0;">
-            VEREDICTO: {resultado.veredicto_final}
+            PARECER FINAL: {resultado.veredicto_final}
         </h2>
         <p>Run ID: {resultado.run_id}</p>
     </div>
@@ -1058,7 +1058,7 @@ def renderizar_resultado(resultado: PipelineResult):
     tab_names.extend([
         "📊 Fase 1: Extração",
         "🔍 Fase 2: Auditoria",
-        "⚖️ Fase 3: Julgamento",
+        "⚖️ Fase 3: Relatoria",
         "📜 Verificação Legal"
     ])
 
@@ -1087,11 +1087,11 @@ def renderizar_resultado(resultado: PipelineResult):
     tab_legal = tabs[tab_idx]
 
     with tab_presidente:
-        st.markdown("### Decisão do Presidente")
+        st.markdown("### Parecer do Conselheiro-Mor")
         if resultado.fase3_presidente:
             st.markdown(resultado.fase3_presidente)
         else:
-            st.info("Decisão do presidente não disponível")
+            st.info("Parecer do Conselheiro-Mor não disponível")
 
     # Tab Q&A (só aparece se houver perguntas)
     if tab_qa is not None:
@@ -1104,10 +1104,10 @@ def renderizar_resultado(resultado: PipelineResult):
 
             st.markdown("---")
 
-            st.markdown("#### Respostas dos Juízes")
+            st.markdown("#### Respostas dos Relatores")
             if resultado.respostas_juizes_qa:
                 for r in resultado.respostas_juizes_qa:
-                    with st.expander(f"Juiz {r.get('juiz', '?')}: {r.get('modelo', 'desconhecido')}"):
+                    with st.expander(f"Relator {r.get('juiz', '?')}: {r.get('modelo', 'desconhecido')}"):
                         st.markdown(r.get('resposta', 'Sem resposta'))
 
             st.markdown("---")
@@ -1288,12 +1288,12 @@ def renderizar_resultado(resultado: PipelineResult):
             st.info("ℹ️ Nenhuma auditoria disponível")
 
     with tab_julg:
-        st.markdown("### Fase 3: Julgamento")
+        st.markdown("### Fase 3: Relatoria")
         if resultado.fase3_pareceres:
-            st.markdown(f"*{len(resultado.fase3_pareceres)} juízes executados*")
+            st.markdown(f"*{len(resultado.fase3_pareceres)} relatores executados*")
 
             for i, juiz in enumerate(resultado.fase3_pareceres):
-                with st.expander(f"Juiz {i+1}: {juiz.modelo}", expanded=(i == 0)):
+                with st.expander(f"Relator {i+1}: {juiz.modelo}", expanded=(i == 0)):
                     st.caption(f"Tokens: {juiz.tokens_usados} | Latência: {juiz.latencia_ms:.0f}ms | Sucesso: {'✓' if juiz.sucesso else '✗'}")
                     if juiz.erro:
                         st.error(f"Erro: {juiz.erro}")
@@ -1369,13 +1369,13 @@ def renderizar_resultado(resultado: PipelineResult):
         st.download_button(
             "📋 Baixar JSON",
             data=json_data,
-            file_name=f"tribunal_{resultado.run_id}.json",
+            file_name=f"lexforum_{resultado.run_id}.json",
             mime="application/json"
         )
 
     with col2:
         # Gerar Markdown
-        md_content = f"""# Tribunal GoldenMaster - Resultado
+        md_content = f"""# LexForum - Resultado
 
 **Run ID:** {resultado.run_id}
 **Data:** {resultado.timestamp_inicio.strftime('%d/%m/%Y %H:%M') if resultado.timestamp_inicio else 'N/A'}
@@ -1384,11 +1384,11 @@ def renderizar_resultado(resultado: PipelineResult):
 
 ---
 
-## {resultado.simbolo_final} VEREDICTO: {resultado.veredicto_final}
+## {resultado.simbolo_final} PARECER FINAL: {resultado.veredicto_final}
 
 ---
 
-## Decisão do Presidente
+## Parecer do Conselheiro-Mor
 
 {resultado.fase3_presidente or 'N/A'}
 
@@ -1403,7 +1403,7 @@ def renderizar_resultado(resultado: PipelineResult):
         st.download_button(
             "📄 Baixar Markdown",
             data=md_content,
-            file_name=f"tribunal_{resultado.run_id}.md",
+            file_name=f"lexforum_{resultado.run_id}.md",
             mime="text/markdown"
         )
 
@@ -1423,7 +1423,7 @@ def pagina_historico():
 
         for run_id, titulo_display, data in analises[:20]:
             # Carregar dados completos
-            processor = TribunalProcessor()
+            processor = LexForumProcessor()
             data_completa = processor.carregar_run(run_id)
             
             if not data_completa:
@@ -1571,11 +1571,11 @@ def pagina_configuracoes():
             st.code(f"{i}. {m}")
 
     with col2:
-        st.markdown("**Fase 3 - Juízes:**")
+        st.markdown("**Fase 3 - Relatores:**")
         for i, m in enumerate(JUIZ_MODELS, 1):
             st.code(f"{i}. {m}")
 
-        st.markdown("**Presidente:**")
+        st.markdown("**Conselheiro-Mor:**")
         st.code(PRESIDENTE_MODEL)
 
         st.markdown("---")
@@ -1583,7 +1583,7 @@ def pagina_configuracoes():
         st.markdown("**Agregador (Fase 1 - LOSSLESS):**")
         st.code(AGREGADOR_MODEL)
 
-        st.markdown("**Chefe (Fase 2 - LOSSLESS):**")
+        st.markdown("**Consolidador (Fase 2 - LOSSLESS):**")
         st.code(CHEFE_MODEL)
 
     st.markdown("---")
@@ -1636,9 +1636,9 @@ def pagina_ajuda():
     st.markdown("## ❓ Como Funciona")
 
     st.markdown("""
-    ### 🏛️ O Tribunal GoldenMaster
+    ### 🏛️ O LexForum
 
-    Este sistema analisa documentos jurídicos usando **Inteligência Artificial** através de um pipeline de 3 fases com **12 chamadas a modelos LLM** (5 extratores + 3 auditores + 3 juízes + Presidente):
+    Este sistema analisa documentos jurídicos usando **Inteligência Artificial** através de um pipeline de 3 fases com **12 chamadas a modelos LLM** (5 extratores + 3 auditores + 3 relatores + Conselheiro-Mor):
 
     ---
 
@@ -1664,7 +1664,7 @@ def pagina_ajuda():
 
     ---
 
-    ### 🔍 Fase 2: Auditoria (4 modelos + Chefe LOSSLESS)
+    ### 🔍 Fase 2: Auditoria (4 modelos + Consolidador LOSSLESS)
 
     ```
     Extração Consolidada → [Auditor 1] → Auditoria A
@@ -1680,20 +1680,20 @@ def pagina_ajuda():
     - Informação em falta
     - Legislação portuguesa aplicável
 
-    **Chefe LOSSLESS:** GPT-5.2 consolida as 4 auditorias **sem perder críticas únicas**.
+    **Consolidador LOSSLESS:** GPT-5.2 consolida as 4 auditorias **sem perder críticas únicas**.
 
     ---
 
-    ### ⚖️ Fase 3: Julgamento (3 modelos + Presidente)
+    ### ⚖️ Fase 3: Relatoria (3 modelos + Conselheiro-Mor)
 
     ```
-    Auditoria Consolidada → [Juiz 1] → Parecer A
-                         → [Juiz 2] → Parecer B
-                         → [Juiz 3] → Parecer C
+    Auditoria Consolidada → [Relator 1] → Parecer A
+                         → [Relator 2] → Parecer B
+                         → [Relator 3] → Parecer C
                                           ↓
-                        [PRESIDENTE: verifica e decide]
+                        [CONSELHEIRO-MOR: verifica e decide]
                                           ↓
-                               VEREDICTO FINAL
+                               PARECER FINAL
     ```
 
     **O que emitem:**
@@ -1723,7 +1723,7 @@ def pagina_ajuda():
     - `fase1_agregado_consolidado.md` - Extração LOSSLESS
     - `fase2_*.md` - Auditorias
     - `fase3_*.md` - Pareceres
-    - `fase4_presidente.md` - Decisão final
+    - `fase4_conselheiro_mor.md` - Parecer final
     - `signals_coverage_report.json` - Relatório de cobertura de dados
 
     ---

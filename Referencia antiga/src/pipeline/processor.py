@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Processador Principal do Tribunal - Pipeline de 3 Fases com LLMs + Q&A.
+Processador Principal da Câmara de Análise - Pipeline de 3 Fases com LLMs + Q&A.
 
 Fase 1: 3 Extratores LLM -> Agregador (SEM perguntas)
-Fase 2: 3 Auditores LLM -> Chefe (SEM perguntas)
-Fase 3: 3 Juízes LLM -> Parecer + Q&A (COM perguntas)
-Fase 4: Presidente -> Veredicto + Q&A Consolidado (COM perguntas)
+Fase 2: 3 Auditores LLM -> Consolidador (SEM perguntas)
+Fase 3: 3 Relatores LLM -> Parecer + Q&A (COM perguntas)
+Fase 4: Conselheiro-Mor -> Parecer + Q&A Consolidado (COM perguntas)
 """
 
 import sys
@@ -140,7 +140,7 @@ class FaseResult:
     """Resultado de uma fase do pipeline."""
     fase: str
     modelo: str
-    role: str  # extrator_1, auditor_2, juiz_3, etc.
+    role: str  # extrator_1, auditor_2, relator_3, etc.
     conteudo: str
     tokens_usados: int = 0
     prompt_tokens: int = 0
@@ -264,9 +264,9 @@ def _call_with_retry(func, func_name="LLM", max_retries=3, backoff_times=None):
                 return None
 
 
-class TribunalProcessor:
+class LexForumProcessor:
     """
-    Processador principal do Tribunal com pipeline de 3 fases + Q&A.
+    Processador principal da Câmara de Análise com pipeline de 3 fases + Q&A.
 
     Fase 1 - EXTRAÇÃO (perguntas_count=0):
         3 LLMs extraem informação do documento
@@ -274,13 +274,13 @@ class TribunalProcessor:
 
     Fase 2 - AUDITORIA (perguntas_count=0):
         3 LLMs auditam a extração
-        Chefe concatena e consolida
+        Consolidador concatena e consolida
 
-    Fase 3 - JULGAMENTO (perguntas_count=N):
+    Fase 3 - RELATORIA (perguntas_count=N):
         3 LLMs emitem parecer jurídico + respondem Q&A
 
-    Fase 4 - PRESIDENTE (perguntas_count=N):
-        Presidente verifica e emite veredicto (✓/✗/⚠)
+    Fase 4 - CONSELHEIRO-MOR (perguntas_count=N):
+        Conselheiro-Mor verifica e emite parecer (✓/✗/⚠)
         Consolida respostas Q&A
     """
 
@@ -307,7 +307,7 @@ A tua tarefa é auditar a extração de informação e:
 
 Sê crítico e rigoroso. Fundamenta as tuas observações."""
 
-    SYSTEM_JUIZ = """És um juiz especializado em Direito Português.
+    SYSTEM_RELATOR = """És um relator especializado em Direito Português.
 Com base na análise e auditoria fornecidas, emite um parecer jurídico que inclua:
 1. Enquadramento legal (legislação portuguesa aplicável)
 2. Análise dos factos à luz da lei
@@ -317,7 +317,7 @@ Com base na análise e auditoria fornecidas, emite um parecer jurídico que incl
 
 Cita sempre os artigos específicos da legislação portuguesa."""
 
-    SYSTEM_JUIZ_QA = """És um juiz especializado em Direito Português.
+    SYSTEM_RELATOR_QA = """És um relator especializado em Direito Português.
 Com base na análise e auditoria fornecidas, emite um parecer jurídico que inclua:
 1. Enquadramento legal (legislação portuguesa aplicável)
 2. Análise dos factos à luz da lei
@@ -329,42 +329,42 @@ Cita sempre os artigos específicos da legislação portuguesa.
 
 IMPORTANTE: Após o parecer, responde às PERGUNTAS DO UTILIZADOR de forma clara e numerada."""
 
-    SYSTEM_PRESIDENTE = """És o Presidente do Tribunal, responsável pela verificação final.
+    SYSTEM_CONSELHEIRO = """És o Conselheiro-Mor da Câmara de Análise, responsável pela verificação final.
 A tua tarefa é:
-1. Analisar os pareceres dos juízes
+1. Analisar os pareceres dos relatores
 2. Verificar a fundamentação legal
 3. Identificar consensos e divergências
-4. Emitir o veredicto final
+4. Emitir o parecer final
 
 Para cada citação legal, indica:
 - ✓ se a citação está correta e aplicável
 - ✗ se a citação está incorreta ou não aplicável
 - ⚠ se requer atenção ou verificação adicional
 
-Emite o VEREDICTO FINAL:
+Emite o PARECER FINAL:
 - PROCEDENTE (✓): se o pedido deve ser deferido
 - IMPROCEDENTE (✗): se o pedido deve ser indeferido
 - PARCIALMENTE PROCEDENTE (⚠): se apenas parte do pedido procede"""
 
-    SYSTEM_PRESIDENTE_QA = """És o Presidente do Tribunal, responsável pela verificação final.
+    SYSTEM_CONSELHEIRO_QA = """És o Conselheiro-Mor da Câmara de Análise, responsável pela verificação final.
 A tua tarefa é:
-1. Analisar os pareceres dos juízes
+1. Analisar os pareceres dos relatores
 2. Verificar a fundamentação legal
 3. Identificar consensos e divergências
-4. Emitir o veredicto final
-5. CONSOLIDAR as respostas Q&A dos 3 juízes
+4. Emitir o parecer final
+5. CONSOLIDAR as respostas Q&A dos 3 relatores
 
 Para cada citação legal, indica:
 - ✓ se a citação está correta e aplicável
 - ✗ se a citação está incorreta ou não aplicável
 - ⚠ se requer atenção ou verificação adicional
 
-Emite o VEREDICTO FINAL:
+Emite o PARECER FINAL:
 - PROCEDENTE (✓): se o pedido deve ser deferido
 - IMPROCEDENTE (✗): se o pedido deve ser indeferido
 - PARCIALMENTE PROCEDENTE (⚠): se apenas parte do pedido procede
 
-IMPORTANTE: Após o veredicto, consolida as RESPOSTAS Q&A eliminando contradições e fornecendo respostas finais claras e numeradas."""
+IMPORTANTE: Após o parecer, consolida as RESPOSTAS Q&A eliminando contradições e fornecendo respostas finais claras e numeradas."""
 
     SYSTEM_AGREGADOR = """És o AGREGADOR da Fase 1. Recebes 3 extrações do mesmo documento feitas por modelos diferentes.
 
@@ -452,7 +452,7 @@ LEGENDA:
 
 REGRA NÃO-NEGOCIÁVEL: Na dúvida, MANTÉM. Melhor redundância que perda de dados."""
 
-    SYSTEM_CHEFE = """És o CHEFE da Fase 2. Recebes 4 auditorias da mesma extração feitas por modelos diferentes.
+    SYSTEM_CONSOLIDADOR = """És o CONSOLIDADOR da Fase 2. Recebes 4 auditorias da mesma extração feitas por modelos diferentes.
 
 TAREFA CRÍTICA - CONSOLIDAÇÃO LOSSLESS:
 - NUNCA percas críticas únicas
@@ -547,9 +547,9 @@ PRIORIDADE: Validade legal > Inconsistências críticas > Completude > Sugestõe
 
 REGRA NÃO-NEGOCIÁVEL: Na dúvida, MANTÉM. Melhor redundância que perda de críticas."""
 
-    SYSTEM_CHEFE_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+    SYSTEM_CONSOLIDADOR_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
-És o CHEFE da Fase 2. Recebes auditorias da mesma extração feitas por múltiplos modelos.
+És o CONSOLIDADOR da Fase 2. Recebes auditorias da mesma extração feitas por múltiplos modelos.
 Deves consolidar todas as auditorias num ÚNICO relatório JSON estruturado.
 
 DADOS DE ENTRADA:
@@ -691,9 +691,9 @@ REGRAS CRÍTICAS:
 8. CRÍTICO - EXCERPT: O campo "excerpt" nas citations DEVE ser uma cópia LITERAL e EXACTA do texto do documento entre start_char e end_char. NÃO parafrasear, NÃO resumir, NÃO reformular. Copiar carácter por carácter do documento original.
 9. Se não conseguires determinar o texto exacto para o excerpt, coloca uma string vazia ("") - NUNCA inventes ou reescrevas o texto."""
 
-    SYSTEM_JUIZ_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+    SYSTEM_RELATOR_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
-És um juiz especializado em Direito Português.
+És um relator especializado em Direito Português.
 Com base na análise e auditoria fornecidas, emite um parecer jurídico em formato JSON.
 
 DEVES devolver APENAS um JSON válido com a seguinte estrutura:
@@ -742,9 +742,9 @@ REGRAS:
 6. CRÍTICO - EXCERPT: O campo "excerpt" nas citations DEVE ser uma cópia LITERAL e EXACTA do texto do documento. NÃO parafrasear, NÃO resumir, NÃO reformular. Copiar carácter por carácter.
 7. Se não conseguires determinar o texto exacto, coloca uma string vazia ("") no excerpt."""
 
-    SYSTEM_JUIZ_JSON_QA = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+    SYSTEM_RELATOR_JSON_QA = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
-És um juiz especializado em Direito Português.
+És um relator especializado em Direito Português.
 Com base na análise e auditoria fornecidas, emite um parecer jurídico em formato JSON.
 
 DEVES devolver APENAS um JSON válido com a seguinte estrutura:
@@ -764,10 +764,10 @@ DEVES devolver APENAS um JSON válido com a seguinte estrutura:
 IMPORTANTE: O campo qa_responses DEVE conter respostas a todas as perguntas do utilizador.
 Cita sempre artigos específicos da legislação portuguesa."""
 
-    SYSTEM_PRESIDENTE_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+    SYSTEM_CONSELHEIRO_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
-És o Presidente do Tribunal, responsável pela verificação final.
-Analisa os pareceres dos juízes e emite o veredicto final em formato JSON.
+És o Conselheiro-Mor da Câmara de Análise, responsável pela verificação final.
+Analisa os pareceres dos relatores e emite o parecer final em formato JSON.
 
 DEVES devolver APENAS um JSON válido com a seguinte estrutura:
 {
@@ -811,17 +811,17 @@ REGRAS:
 1. decision_type: procedente, improcedente, parcialmente_procedente, ou inconclusivo
 2. confidence: 0.0 a 1.0
 3. Cada prova em proofs DEVE ter start_char/end_char
-4. Resolve conflitos entre juízes em conflicts_resolved
+4. Resolve conflitos entre relatores em conflicts_resolved
 5. CRÍTICO - EXCERPT: O campo "excerpt" em proofs e citations DEVE ser uma cópia LITERAL e EXACTA do texto do documento. NÃO parafrasear. Copiar carácter por carácter."""
 
-    SYSTEM_PRESIDENTE_JSON_QA = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+    SYSTEM_CONSELHEIRO_JSON_QA = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
-És o Presidente do Tribunal, responsável pela verificação final.
+És o Conselheiro-Mor da Câmara de Análise, responsável pela verificação final.
 Analisa os pareceres e consolida as respostas Q&A em formato JSON.
 
 DEVES devolver APENAS um JSON válido com:
 {
-  "final_answer": "Veredicto final",
+  "final_answer": "Parecer final",
   "decision_type": "procedente|improcedente|parcialmente_procedente|inconclusivo",
   "confidence": 0.9,
   "decision_points_final": [...],
@@ -830,13 +830,13 @@ DEVES devolver APENAS um JSON válido com:
   "qa_final": [
     {
       "question": "pergunta original",
-      "final_answer": "resposta consolidada dos 3 juízes",
+      "final_answer": "resposta consolidada dos 3 relatores",
       "sources": ["J1", "J2", "J3"]
     }
   ]
 }
 
-IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 juízes, eliminando contradições."""
+IMPORTANTE: qa_final DEVE consolidar as respostas dos 3 relatores, eliminando contradições."""
 
     PROMPT_RLM = """Revê mantendo TODOS factos.
 PODES: Remover repetições IDÊNTICAS
@@ -845,7 +845,7 @@ TEXTO: {texto}
 REVISTO:"""
 
     def _aplicar_rlm(self, texto: str, tipo_fase: str) -> str:
-        if tipo_fase not in ["auditoria", "julgamento"]:
+        if tipo_fase not in ["auditoria", "relatoria"]:
             return texto
         tokens = len(texto) // 4
         if tokens < 25000:
@@ -873,7 +873,7 @@ REVISTO:"""
         self,
         extrator_models: List[str] = None,
         auditor_models: List[str] = None,
-        juiz_models: List[str] = None,
+        relator_models: List[str] = None,
         presidente_model: str = None,
         agregador_model: str = None,
         chefe_model: str = None,
@@ -881,7 +881,7 @@ REVISTO:"""
     ):
         self.extrator_models = extrator_models or EXTRATOR_MODELS
         self.auditor_models = auditor_models or AUDITOR_MODELS
-        self.juiz_models = juiz_models or JUIZ_MODELS
+        self.relator_models = relator_models or JUIZ_MODELS
         self.presidente_model = presidente_model or PRESIDENTE_MODEL
         self.agregador_model = agregador_model or AGREGADOR_MODEL
         self.chefe_model = chefe_model or CHEFE_MODEL
@@ -2185,7 +2185,7 @@ TAREFA: Consolida TODOS os batches numa extração FINAL LOSSLESS.
 
     def _fase2_auditoria(self, agregado_fase1: str, area: str) -> tuple:
         """
-        Fase 2: 4 Auditores LLM -> Chefe LLM (LOSSLESS).
+        Fase 2: 4 Auditores LLM -> Consolidador LLM (LOSSLESS).
         NOTA: Auditores são CEGOS a perguntas do utilizador.
 
         Returns:
@@ -2262,8 +2262,8 @@ Audita a extração acima, verificando completude, precisão e relevância jurí
         bruto = "\n".join(bruto_parts)
         self._log_to_file("fase2_auditorias_brutas.md", bruto)
 
-        # Chamar Chefe LLM para consolidação LOSSLESS
-        self._reportar_progresso("fase2", 55, f"Chefe consolidando {n_auditores} auditorias: {self.chefe_model}")
+        # Chamar Consolidador LLM para consolidação LOSSLESS
+        self._reportar_progresso("fase2", 55, f"Consolidador consolidando {n_auditores} auditorias: {self.chefe_model}")
 
         prompt_chefe = f"""AUDITORIAS DOS {n_auditores} MODELOS:
 
@@ -2275,12 +2275,12 @@ Consolida estas {n_auditores} auditorias numa única auditoria LOSSLESS.
         chefe_result = self._call_llm(
             model=self.chefe_model,
             prompt=prompt_chefe,
-            system_prompt=self.SYSTEM_CHEFE,
-            role_name="chefe",
+            system_prompt=self.SYSTEM_CONSOLIDADOR,
+            role_name="consolidador",
         )
 
-        consolidado = f"# AUDITORIA CONSOLIDADA (CHEFE: {self.chefe_model})\n\n{chefe_result.conteudo}"
-        self._log_to_file("fase2_chefe_consolidado.md", consolidado)
+        consolidado = f"# AUDITORIA CONSOLIDADA (CONSOLIDADOR: {self.chefe_model})\n\n{chefe_result.conteudo}"
+        self._log_to_file("fase2_consolidador_consolidado.md", consolidado)
 
         # Backwards compat: guardar também como fase2_chefe.md
         self._log_to_file("fase2_chefe.md", consolidado)
@@ -2488,10 +2488,10 @@ INSTRUÇÕES:
         bruto = "\n".join(bruto_parts)
         self._log_to_file("fase2_auditorias_brutas.md", bruto)
 
-        # Consolidar auditorias (Chefe JSON)
-        self._reportar_progresso("fase2", 55, f"Chefe consolidando (JSON): {self.chefe_model}")
+        # Consolidar auditorias (Consolidador JSON)
+        self._reportar_progresso("fase2", 55, f"Consolidador consolidando (JSON): {self.chefe_model}")
 
-        # Preparar JSON dos auditores para o Chefe
+        # Preparar JSON dos auditores para o Consolidador
         auditors_json_str = json_module.dumps(
             [r.to_dict() for r in audit_reports],
             ensure_ascii=False,
@@ -2516,38 +2516,38 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         chefe_result = self._call_llm(
             model=self.chefe_model,
             prompt=prompt_chefe_json,
-            system_prompt=self.SYSTEM_CHEFE_JSON,
-            role_name="chefe_json",
+            system_prompt=self.SYSTEM_CONSOLIDADOR_JSON,
+            role_name="consolidador_json",
         )
 
-        # Parsear JSON do Chefe com soft-fail
+        # Parsear JSON do Consolidador com soft-fail
         chefe_report = parse_chefe_report(
             output=chefe_result.conteudo,
             model_name=self.chefe_model,
             run_id=run_id,
         )
 
-        # CRÍTICO: Guardar JSON do Chefe (fonte de verdade)
-        chefe_json_path = self._output_dir / "fase2_chefe_consolidado.json"
-        logger.info(f"[JSON-WRITE] Escrevendo fase2_chefe_consolidado.json em: {chefe_json_path.absolute()}")
+        # CRITICO: Guardar JSON do Consolidador (fonte de verdade)
+        chefe_json_path = self._output_dir / "fase2_consolidador_consolidado.json"
+        logger.info(f"[JSON-WRITE] Escrevendo fase2_consolidador_consolidado.json em: {chefe_json_path.absolute()}")
         try:
             with open(chefe_json_path, 'w', encoding='utf-8') as f:
                 json_module.dump(chefe_report.to_dict(), f, ensure_ascii=False, indent=2)
-            logger.info(f"✓ Chefe JSON guardado: {chefe_json_path.absolute()}")
+            logger.info(f"✓ Consolidador JSON guardado: {chefe_json_path.absolute()}")
         except Exception as e:
-            logger.error(f"[JSON-WRITE-ERROR] Falha ao escrever fase2_chefe_consolidado.json: {e}")
+            logger.error(f"[JSON-WRITE-ERROR] Falha ao escrever fase2_consolidador_consolidado.json: {e}")
 
         # Gerar Markdown (derivado do JSON)
         consolidado_md = chefe_report.to_markdown()
-        self._log_to_file("fase2_chefe_consolidado.md", consolidado_md)
+        self._log_to_file("fase2_consolidador_consolidado.md", consolidado_md)
         self._log_to_file("fase2_chefe.md", consolidado_md)
 
         # Para compatibilidade com Fase 3, criar string consolidada
-        consolidado = f"# AUDITORIA CONSOLIDADA (CHEFE: {self.chefe_model})\n\n"
+        consolidado = f"# AUDITORIA CONSOLIDADA (CONSOLIDADOR: {self.chefe_model})\n\n"
         consolidado += consolidado_md
 
         logger.info(
-            f"✓ Chefe consolidou: {len(chefe_report.consolidated_findings)} findings, "
+            f"✓ Consolidador consolidou: {len(chefe_report.consolidated_findings)} findings, "
             f"{len(chefe_report.divergences)} divergências, {len(chefe_report.errors)} erros"
         )
 
@@ -2563,7 +2563,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
 
         return audit_reports, bruto, consolidado, chefe_report
 
-    def _fase3_julgamento_unified(
+    def _fase3_relatoria_unified(
         self,
         chefe_fase2: str,
         area: str,
@@ -2571,7 +2571,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         run_id: str
     ) -> tuple:
         """
-        Fase 3 UNIFICADA: 3 Juízes -> JSON estruturado.
+        Fase 3 UNIFICADA: 3 Relatores -> JSON estruturado.
 
         Returns:
             tuple: (judge_opinions: List[JudgeOpinion], respostas_qa: List[Dict])
@@ -2579,8 +2579,8 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         import json as json_module
 
         n_perguntas = len(perguntas)
-        logger.info(f"Fase 3 UNIFIED - 3 Juízes JSON, {n_perguntas} perguntas")
-        self._reportar_progresso("fase3", 60, f"Julgamento JSON com 3 LLMs...")
+        logger.info(f"Fase 3 UNIFIED - 3 Relatores JSON, {n_perguntas} perguntas")
+        self._reportar_progresso("fase3", 60, f"Relatoria JSON com 3 LLMs...")
 
         # Bloco Q&A se houver perguntas
         bloco_qa = ""
@@ -2603,13 +2603,13 @@ Emite parecer jurídico em JSON.{bloco_qa}
 CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanation, or markdown before or after the JSON. Start your response with {{ and end with }}."""
 
         # Escolher prompt
-        system_prompt = self.SYSTEM_JUIZ_JSON_QA if perguntas else self.SYSTEM_JUIZ_JSON
+        system_prompt = self.SYSTEM_RELATOR_JSON_QA if perguntas else self.SYSTEM_RELATOR_JSON
 
         judge_opinions: List[JudgeOpinion] = []
         respostas_qa = []
 
         def _run_judge(i, model):
-            """Executa um juiz. Thread-safe."""
+            """Executa um relator. Thread-safe."""
             judge_id = f"J{i+1}"
 
             def _do_judge():
@@ -2617,13 +2617,13 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                     model=model,
                     prompt=prompt_base,
                     system_prompt=system_prompt,
-                    role_name=f"juiz_{i+1}_json",
+                    role_name=f"relator_{i+1}_json",
                 )
 
-            resultado = _call_with_retry(_do_judge, func_name=f"Juiz-{judge_id}")
+            resultado = _call_with_retry(_do_judge, func_name=f"Relator-{judge_id}")
 
             if resultado is None or not resultado.conteudo:
-                logger.error(f"✗ Juiz {judge_id} falhou após retries")
+                logger.error(f"✗ Relator {judge_id} falhou após retries")
                 return None
 
             # Parsear JSON
@@ -2639,16 +2639,16 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                 opinion = self._integrity_validator.validate_and_annotate_judge(opinion)
 
             # Guardar JSON
-            json_path = self._output_dir / f"fase3_juiz_{i+1}.json"
+            json_path = self._output_dir / f"fase3_relator_{i+1}.json"
             with open(json_path, 'w', encoding='utf-8') as f:
                 json_module.dump(opinion.to_dict(), f, ensure_ascii=False, indent=2)
 
             # Guardar Markdown
             md_content = opinion.to_markdown()
-            self._log_to_file(f"fase3_juiz_{i+1}.md", md_content)
+            self._log_to_file(f"fase3_relator_{i+1}.md", md_content)
 
             logger.info(
-                f"✓ Juiz {judge_id}: {opinion.recommendation.value}, "
+                f"✓ Relator {judge_id}: {opinion.recommendation.value}, "
                 f"{len(opinion.decision_points)} pontos, {len(opinion.errors)} erros"
             )
 
@@ -2663,10 +2663,10 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                 "completion_tokens": resultado.completion_tokens if resultado else 0,
             }
 
-        logger.info(f"[PARALELO] Lançando {len(self.juiz_models)} juízes em paralelo...")
-        with ThreadPoolExecutor(max_workers=min(3, len(self.juiz_models))) as executor:
+        logger.info(f"[PARALELO] Lançando {len(self.relator_models)} relatores em paralelo...")
+        with ThreadPoolExecutor(max_workers=min(3, len(self.relator_models))) as executor:
             futures = {}
-            for i, model in enumerate(self.juiz_models):
+            for i, model in enumerate(self.relator_models):
                 future = executor.submit(_run_judge, i, model)
                 futures[future] = f"J{i+1}"
 
@@ -2696,7 +2696,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
             })
 
         if len(judge_opinions) < 1:
-            raise Exception("Nenhum juiz funcionou (mínimo 1). Pipeline abortado.")
+            raise Exception("Nenhum relator funcionou (mínimo 1). Pipeline abortado.")
 
         # Guardar Q&A se houver perguntas
         if perguntas:
@@ -2721,20 +2721,20 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         run_id: str
     ) -> FinalDecision:
         """
-        Fase 4 UNIFICADA: Presidente -> JSON FinalDecision.
+        Fase 4 UNIFICADA: Conselheiro-Mor -> JSON FinalDecision.
 
         Returns:
-            FinalDecision com veredicto e Q&A consolidado
+            FinalDecision com parecer e Q&A consolidado
         """
         import json as json_module
 
         n_perguntas = len(perguntas)
-        logger.info(f"Fase 4 UNIFIED - Presidente JSON, {n_perguntas} perguntas")
-        self._reportar_progresso("fase4", 80, f"Presidente JSON: {self.presidente_model}")
+        logger.info(f"Fase 4 UNIFIED - Conselheiro-Mor JSON, {n_perguntas} perguntas")
+        self._reportar_progresso("fase4", 80, f"Conselheiro-Mor JSON: {self.presidente_model}")
 
         # Concatenar pareceres
         pareceres_concat = "\n\n".join([
-            f"## JUIZ {i+1} ({o.model_name})\n"
+            f"## RELATOR {i+1} ({o.model_name})\n"
             f"Recomendação: {o.recommendation.value}\n"
             f"Confiança média: {sum(float(p.confidence) for p in o.decision_points) / len(o.decision_points) if o.decision_points else 0:.0%}\n"
             f"{o.to_markdown()}\n---"
@@ -2746,7 +2746,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         if perguntas:
             perguntas_fmt = "\n".join([f"{i+1}. {p}" for i, p in enumerate(perguntas)])
             respostas_fmt = "\n\n".join([
-                f"### Juiz {r['juiz']} ({r['modelo']}):\n{r.get('opinion', {})}"
+                f"### Relator {r['juiz']} ({r['modelo']}):\n{r.get('opinion', {})}"
                 for r in respostas_qa if r.get('opinion')
             ])
             bloco_qa = f"""
@@ -2756,19 +2756,19 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
 ### Perguntas:
 {perguntas_fmt}
 
-### Respostas dos Juízes:
+### Respostas dos Relatores:
 {respostas_fmt}
 """
 
-        prompt = f"""PARECERES DOS 3 JUÍZES:
+        prompt = f"""PARECERES DOS 3 RELATORES:
 
 {pareceres_concat}
 
-Emite VEREDICTO FINAL em JSON.{bloco_qa}
+Emite PARECER FINAL em JSON.{bloco_qa}
 
 CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanation, or markdown before or after the JSON. Start your response with {{ and end with }}."""
 
-        system_prompt = self.SYSTEM_PRESIDENTE_JSON_QA if perguntas else self.SYSTEM_PRESIDENTE_JSON
+        system_prompt = self.SYSTEM_CONSELHEIRO_JSON_QA if perguntas else self.SYSTEM_CONSELHEIRO_JSON
 
         resultado = self._call_llm(
             model=self.presidente_model,
@@ -2807,7 +2807,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
 
         # Gerar e guardar Markdown
         md_content = decision.generate_markdown()
-        self._log_to_file("fase4_presidente.md", md_content)
+        self._log_to_file("fase4_conselheiro.md", md_content)
 
         # Q&A final
         if perguntas:
@@ -2815,20 +2815,20 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
             self._log_to_file("fase4_qa_final.md", qa_final)
 
         logger.info(
-            f"✓ Presidente: {decision.decision_type.value}, "
+            f"✓ Conselheiro-Mor: {decision.decision_type.value}, "
             f"confiança {decision.confidence:.0%}, {len(decision.errors)} erros"
         )
 
         return decision
 
-    def _fase3_julgamento(self, chefe_fase2: str, area: str, perguntas: List[str]) -> tuple:
+    def _fase3_relatoria(self, chefe_fase2: str, area: str, perguntas: List[str]) -> tuple:
         """
-        Fase 3: 3 Juízes LLM -> Parecer + Q&A.
-        NOTA: Juízes RECEBEM as perguntas do utilizador.
+        Fase 3: 3 Relatores LLM -> Parecer + Q&A.
+        NOTA: Relatores RECEBEM as perguntas do utilizador.
         """
         n_perguntas = len(perguntas)
-        logger.info(f"Fase 3 - Juizes: perguntas_count={n_perguntas}")
-        self._reportar_progresso("fase3", 60, f"Iniciando julgamento com 3 LLMs... ({n_perguntas} perguntas)")
+        logger.info(f"Fase 3 - Relatores: perguntas_count={n_perguntas}")
+        self._reportar_progresso("fase3", 60, f"Iniciando relatoria com 3 LLMs... ({n_perguntas} perguntas)")
 
         # Construir bloco de perguntas se houver
         bloco_qa = ""
@@ -2855,19 +2855,19 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
 Com base na análise acima, emite o teu parecer jurídico fundamentado.{bloco_qa}"""
 
         # Escolher system prompt apropriado
-        system_prompt = self.SYSTEM_JUIZ_QA if perguntas else self.SYSTEM_JUIZ
+        system_prompt = self.SYSTEM_RELATOR_QA if perguntas else self.SYSTEM_RELATOR
 
         resultados = []
         respostas_qa = []
 
-        for i, model in enumerate(self.juiz_models):
-            self._reportar_progresso("fase3", 65 + i * 5, f"Juiz {i+1}: {model}")
+        for i, model in enumerate(self.relator_models):
+            self._reportar_progresso("fase3", 65 + i * 5, f"Relator {i+1}: {model}")
 
             resultado = self._call_llm(
                 model=model,
                 prompt=prompt_base,
                 system_prompt=system_prompt,
-                role_name=f"juiz_{i+1}",
+                role_name=f"relator_{i+1}",
             )
             resultados.append(resultado)
 
@@ -2878,9 +2878,9 @@ Com base na análise acima, emite o teu parecer jurídico fundamentado.{bloco_qa
                 "resposta": resultado.conteudo
             })
 
-            self._log_to_file(f"fase3_juiz_{i+1}.md", f"# Juiz {i+1}: {model}\n\n{resultado.conteudo}")
+            self._log_to_file(f"fase3_relator_{i+1}.md", f"# Relator {i+1}: {model}\n\n{resultado.conteudo}")
 
-        # Guardar ficheiro Q&A dos juízes (se houver perguntas)
+        # Guardar ficheiro Q&A dos relatores (se houver perguntas)
         if perguntas:
             qa_content = self._gerar_qa_juizes(perguntas, respostas_qa)
             self._log_to_file("fase3_qa_respostas.md", qa_content)
@@ -2889,25 +2889,25 @@ Com base na análise acima, emite o teu parecer jurídico fundamentado.{bloco_qa
 
     def _fase4_presidente(self, pareceres: List[FaseResult], perguntas: List[str], respostas_qa: List[Dict]) -> str:
         """
-        Fase 4: Presidente verifica + consolida Q&A.
-        NOTA: Presidente RECEBE as perguntas e respostas dos juízes.
+        Fase 4: Conselheiro-Mor verifica + consolida Q&A.
+        NOTA: Conselheiro-Mor RECEBE as perguntas e respostas dos relatores.
         """
         n_perguntas = len(perguntas)
-        logger.info(f"Fase 4 - Presidente: perguntas_count={n_perguntas}")
-        self._reportar_progresso("fase4", 80, f"Presidente verificando: {self.presidente_model}")
+        logger.info(f"Fase 4 - Conselheiro-Mor: perguntas_count={n_perguntas}")
+        self._reportar_progresso("fase4", 80, f"Conselheiro-Mor verificando: {self.presidente_model}")
 
         # Concatenar pareceres
         pareceres_concat = "\n\n".join([
-            f"## [JUIZ {i+1}: {r.modelo}]\n{r.conteudo}\n---"
+            f"## [RELATOR {i+1}: {r.modelo}]\n{r.conteudo}\n---"
             for i, r in enumerate(pareceres)
         ])
 
-        # Construir bloco Q&A para presidente
+        # Construir bloco Q&A para conselheiro-mor
         bloco_qa = ""
         if perguntas:
             perguntas_formatadas = "\n".join([f"{i+1}. {p}" for i, p in enumerate(perguntas)])
             respostas_formatadas = "\n\n".join([
-                f"### Juiz {r['juiz']} ({r['modelo']}):\n{r['resposta']}"
+                f"### Relator {r['juiz']} ({r['modelo']}):\n{r['resposta']}"
                 for r in respostas_qa
             ])
             bloco_qa = f"""
@@ -2917,7 +2917,7 @@ Com base na análise acima, emite o teu parecer jurídico fundamentado.{bloco_qa
 ### PERGUNTAS ORIGINAIS:
 {perguntas_formatadas}
 
-### RESPOSTAS DOS 3 JUÍZES:
+### RESPOSTAS DOS 3 RELATORES:
 {respostas_formatadas}
 
 **Instruções para consolidação Q&A:**
@@ -2927,14 +2927,14 @@ Com base na análise acima, emite o teu parecer jurídico fundamentado.{bloco_qa
 - Numere as respostas finais
 """
 
-        prompt_presidente = f"""PARECERES DOS JUÍZES:
+        prompt_presidente = f"""PARECERES DOS RELATORES:
 
 {pareceres_concat}
 
-Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{bloco_qa}"""
+Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bloco_qa}"""
 
         # Escolher system prompt apropriado
-        system_prompt = self.SYSTEM_PRESIDENTE_QA if perguntas else self.SYSTEM_PRESIDENTE
+        system_prompt = self.SYSTEM_CONSELHEIRO_QA if perguntas else self.SYSTEM_CONSELHEIRO
 
         presidente_result = self._call_llm(
             model=self.presidente_model,
@@ -2943,7 +2943,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             role_name="presidente",
         )
 
-        self._log_to_file("fase4_presidente.md", f"# PRESIDENTE: {self.presidente_model}\n\n{presidente_result.conteudo}")
+        self._log_to_file("fase4_conselheiro.md", f"# CONSELHEIRO-MOR: {self.presidente_model}\n\n{presidente_result.conteudo}")
 
         # Guardar ficheiro Q&A final (se houver perguntas)
         if perguntas:
@@ -2953,9 +2953,9 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
         return presidente_result.conteudo
 
     def _gerar_qa_juizes(self, perguntas: List[str], respostas_qa: List[Dict]) -> str:
-        """Gera ficheiro markdown com respostas Q&A dos juízes."""
+        """Gera ficheiro markdown com respostas Q&A dos relatores."""
         linhas = [
-            "# RESPOSTAS Q&A DOS JUÍZES",
+            "# RESPOSTAS Q&A DOS RELATORES",
             "",
             "## Perguntas do Utilizador",
             "",
@@ -2969,7 +2969,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
         linhas.append("")
 
         for r in respostas_qa:
-            linhas.append(f"## Juiz {r['juiz']} ({r['modelo']})")
+            linhas.append(f"## Relator {r['juiz']} ({r['modelo']})")
             linhas.append("")
             linhas.append(r['resposta'])
             linhas.append("")
@@ -2979,9 +2979,9 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
         return "\n".join(linhas)
 
     def _gerar_qa_final(self, perguntas: List[str], resposta_presidente: str) -> str:
-        """Gera ficheiro markdown com Q&A consolidado pelo presidente."""
+        """Gera ficheiro markdown com Q&A consolidado pelo Conselheiro-Mor."""
         linhas = [
-            "# RESPOSTAS FINAIS (CONSOLIDADO PRESIDENTE)",
+            "# RESPOSTAS FINAIS (CONSOLIDADO CONSELHEIRO-MOR)",
             "",
             "## Perguntas",
             "",
@@ -3011,8 +3011,8 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
 
         return verificacoes
 
-    def _determinar_veredicto(self, texto_presidente: str) -> tuple:
-        """Extrai o veredicto final do texto do presidente."""
+    def _determinar_parecer(self, texto_presidente: str) -> tuple:
+        """Extrai o parecer final do texto do Conselheiro-Mor."""
         texto_upper = texto_presidente.upper()
 
         if "PROCEDENTE" in texto_upper and "IMPROCEDENTE" not in texto_upper:
@@ -3146,7 +3146,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                 )
                 logger.info("✓ IntegrityValidator inicializado")
 
-            # Fase 2: Auditoria (SEM perguntas) + Chefe LOSSLESS
+            # Fase 2: Auditoria (SEM perguntas) + Consolidador LOSSLESS
             audit_reports = None
             chefe_report = None
             if USE_UNIFIED_PROVENANCE:
@@ -3191,11 +3191,11 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             result.fase2_chefe_consolidado = consolidado_f2
             result.fase2_chefe = consolidado_f2  # Backwards compat
 
-            # FALLBACK: Se Chefe produziu 0 findings, usar auditorias individuais
+            # FALLBACK: Se Consolidador produziu 0 findings, usar auditorias individuais
             if chefe_report and hasattr(chefe_report, 'consolidated_findings'):
                 if not chefe_report.consolidated_findings or len(chefe_report.consolidated_findings) == 0:
                     logger.warning(
-                        "Chefe Auditor com 0 findings consolidados - "
+                        "Consolidador Auditor com 0 findings consolidados - "
                         "usando auditorias individuais (bruto) como input para Fase 3"
                     )
                     consolidado_f2 = bruto_f2
@@ -3207,7 +3207,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                             partes.append(md)
                         if partes:
                             consolidado_f2 = (
-                                f"# AUDITORIAS INDIVIDUAIS (fallback - Chefe com 0 findings)\n\n"
+                                f"# AUDITORIAS INDIVIDUAIS (fallback - Consolidador com 0 findings)\n\n"
                                 + "\n\n---\n\n".join(partes)
                             )
                             logger.info(
@@ -3215,11 +3215,11 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                                 f"usadas como input para Fase 3"
                             )
 
-            # Fase 3: Julgamento (COM perguntas)
+            # Fase 3: Relatoria (COM perguntas)
             judge_opinions = None
             if USE_UNIFIED_PROVENANCE:
                 # MODO UNIFIED: JSON estruturado
-                judge_opinions, respostas_qa = self._fase3_julgamento_unified(
+                judge_opinions, respostas_qa = self._fase3_relatoria_unified(
                     consolidado_f2, area_direito, perguntas, run_id
                 )
                 # Criar FaseResult para compatibilidade
@@ -3229,20 +3229,20 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                     fase_tokens = 0
                     fase_prompt = 0
                     fase_completion = 0
-                    # judge_id = "J1" → número = "1", phase = "juiz_1_json"
+                    # judge_id = "J1" -> numero = "1", phase = "relator_1_json"
                     jid_num = o.judge_id.replace("J", "").replace("j", "")
                     if hasattr(self, '_cost_controller') and self._cost_controller:
                         for pu in self._cost_controller.usage.phases:
-                            if f"juiz_{jid_num}" in pu.phase:
+                            if f"relator_{jid_num}" in pu.phase:
                                 fase_tokens += pu.total_tokens
                                 fase_prompt += pu.prompt_tokens
                                 fase_completion += pu.completion_tokens
                     if fase_tokens == 0:
                         fase_tokens = len(o.to_markdown()) // 3  # fallback
                     pareceres.append(FaseResult(
-                        fase="julgamento",
+                        fase="relatoria",
                         modelo=o.model_name,
-                        role=f"juiz_{o.judge_id}",
+                        role=f"relator_{o.judge_id}",
                         conteudo=o.to_markdown(),
                         tokens_usados=fase_tokens,
                         prompt_tokens=fase_prompt,
@@ -3251,12 +3251,12 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                         sucesso=len(o.errors) == 0,
                     ))
             else:
-                pareceres, respostas_qa = self._fase3_julgamento(consolidado_f2, area_direito, perguntas)
+                pareceres, respostas_qa = self._fase3_relatoria(consolidado_f2, area_direito, perguntas)
 
             result.fase3_pareceres = pareceres
             result.respostas_juizes_qa = respostas_qa
 
-            # Fase 4: Presidente (COM perguntas)
+            # Fase 4: Conselheiro-Mor (COM perguntas)
             final_decision = None
             if USE_UNIFIED_PROVENANCE and judge_opinions:
                 # MODO UNIFIED: JSON estruturado
@@ -3274,7 +3274,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             verificacoes = self._verificar_legislacao(presidente)
             result.verificacoes_legais = verificacoes
 
-            # Determinar veredicto — preferir decision_type do JSON (mais fiável)
+            # Determinar parecer — preferir decision_type do JSON (mais fiável)
             if final_decision and hasattr(final_decision, 'decision_type'):
                 dt = final_decision.decision_type
                 veredicto_map = {
@@ -3286,9 +3286,9 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
                 veredicto, simbolo, status = veredicto_map.get(
                     dt, ("INCONCLUSIVO", SIMBOLOS_VERIFICACAO["atencao"], "atencao")
                 )
-                logger.info(f"Veredicto extraído do JSON: {dt.value} → {veredicto}")
+                logger.info(f"Parecer extraído do JSON: {dt.value} → {veredicto}")
             else:
-                veredicto, simbolo, status = self._determinar_veredicto(presidente)
+                veredicto, simbolo, status = self._determinar_parecer(presidente)
             result.veredicto_final = veredicto
             result.simbolo_final = simbolo
             result.status_final = status
@@ -3475,7 +3475,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
     def _gerar_resumo_md(self, result: PipelineResult) -> str:
         """Gera um resumo em Markdown."""
         linhas = [
-            f"# TRIBUNAL GOLDENMASTER - RESULTADO",
+            f"# LEXFORUM GOLDENMASTER - RESULTADO",
             f"",
             f"**Run ID:** {result.run_id}",
             f"**Data:** {result.timestamp_inicio.strftime('%d/%m/%Y %H:%M')}",
@@ -3485,7 +3485,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             f"",
             f"---",
             f"",
-            f"## {result.simbolo_final} VEREDICTO FINAL: {result.veredicto_final}",
+            f"## {result.simbolo_final} PARECER FINAL: {result.veredicto_final}",
             f"",
             f"---",
             f"",
@@ -3513,15 +3513,15 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             f"- `fase2_auditor_3.md` - Auditor 3 (Gemini 3 Pro)",
             f"- `fase2_auditor_4.md` - Auditor 4 (Grok 4.1 Fast)",
             f"- `fase2_auditorias_brutas.md` - 4 auditorias concatenadas",
-            f"- `fase2_chefe_consolidado.md` - **Auditoria LOSSLESS (Chefe)**",
+            f"- `fase2_consolidador.md` - **Auditoria LOSSLESS (Consolidador)**",
             f"",
-            f"### Fase 3: Julgamento",
-            f"- `fase3_juiz_1.md` - Juiz 1",
-            f"- `fase3_juiz_2.md` - Juiz 2",
-            f"- `fase3_juiz_3.md` - Juiz 3",
+            f"### Fase 3: Relatoria",
+            f"- `fase3_relator_1.md` - Relator 1",
+            f"- `fase3_relator_2.md` - Relator 2",
+            f"- `fase3_relator_3.md` - Relator 3",
             f"",
-            f"### Fase 4: Presidente",
-            f"- `fase4_presidente.md` - Decisao final",
+            f"### Fase 4: Conselheiro-Mor",
+            f"- `fase4_conselheiro.md` - Decisao final",
             f"- `verificacao_legal.md` - Relatorio de verificacao DRE",
             f"",
             f"---",
@@ -3548,7 +3548,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             f"",
             f"---",
             f"",
-            f"## Decisao do Presidente",
+            f"## Decisao do Conselheiro-Mor",
             f"",
             result.fase3_presidente,
         ])
@@ -3594,3 +3594,7 @@ Analisa os pareceres, verifica as citações legais, e emite o VEREDICTO FINAL.{
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
         return None
+
+
+# Backward compatibility alias
+TribunalProcessor = LexForumProcessor

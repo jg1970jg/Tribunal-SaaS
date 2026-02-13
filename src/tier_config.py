@@ -50,13 +50,13 @@ MODEL_COSTS = {
     "claude-opus-4-audit": 0.40,  # Com cache
     "gpt-5.2-pro": 0.60,
 
-    # Juízes (Fase 3)
+    # Relatores (Fase 3)
     "gpt-5.2-judge": 0.10,
     "gemini-3-pro-judge": 0.14,
     "claude-sonnet-4.5-judge": 0.10,  # Com cache
     "claude-opus-4-judge": 0.38,  # Com cache
 
-    # Presidente (Fase 4)
+    # Conselheiro-Mor (Fase 4)
     "gpt-5.2-presidente": 0.30,
     "gpt-5.2-pro-presidente": 0.60,
 }
@@ -332,7 +332,7 @@ OPENROUTER_MODEL_MAPPING = {
     "gpt-4o": "openai/gpt-4o",
     "deepseek": "deepseek/deepseek-chat",
 
-    # Auditores e Juízes
+    # Auditores e Relatores
     "gpt-5.2": "openai/gpt-5.2",
     "gpt-5.2-pro": "openai/gpt-5.2-pro",
     "claude-sonnet-4.5": "anthropic/claude-sonnet-4-5-20250929",
@@ -341,7 +341,7 @@ OPENROUTER_MODEL_MAPPING = {
     "gemini-3-pro-preview": "google/gemini-3-pro-preview",
     "grok-4.1": "x-ai/grok-4.1",
 
-    # Presidente
+    # Conselheiro-Mor
     "gpt-5.2-presidente": "openai/gpt-5.2",
     "gpt-5.2-pro-presidente": "openai/gpt-5.2-pro",
 }

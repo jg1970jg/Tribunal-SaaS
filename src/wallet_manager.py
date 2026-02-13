@@ -248,7 +248,7 @@ class WalletManager:
                 "cost_real_usd": real_cost_usd,
                 "markup_applied": markup,
                 "run_id": analysis_id,
-                "description": f"Liquidação análise {analysis_id}",
+                "description": f"Liquidação relatoria {analysis_id}",
             }).execute()
 
             settlement = {

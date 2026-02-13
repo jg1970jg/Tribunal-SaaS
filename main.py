@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-MAIN - Tribunal SaaS V2 (FastAPI)
+MAIN - LexForum (FastAPI)
 ============================================================
 Servidor principal com:
   - Conexão ao Supabase
@@ -255,7 +255,7 @@ async def lifespan(app: FastAPI):
         get_supabase_admin()
         print(f"[OK] Supabase (service_role) conectado.")
 
-    print("[OK] Tribunal SaaS V2 - Servidor iniciado.")
+    print("[OK] LexForum - Servidor iniciado.")
     yield
     # -- Shutdown --
     print("[OK] Servidor encerrado.")
@@ -266,8 +266,8 @@ async def lifespan(app: FastAPI):
 # ============================================================
 
 app = FastAPI(
-    title="Tribunal SaaS V2",
-    description="API para análise jurídica com IA",
+    title="LexForum",
+    description="Câmara de Análise Jurídica com IA",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -461,7 +461,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
 
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(
-        "TribunalTitle", parent=styles["Title"],
+        "LexForumTitle", parent=styles["Title"],
         fontSize=20, textColor=HexColor("#1a1a2e"), spaceAfter=20,
     ))
     styles.add(ParagraphStyle(
@@ -477,7 +477,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     elements = []
 
     # Título
-    elements.append(Paragraph("Relatório de Análise Jurídica — Tribunal AI", styles["TribunalTitle"]))
+    elements.append(Paragraph("Relatório de Análise Jurídica — LexForum", styles["LexForumTitle"]))
     elements.append(Spacer(1, 10))
 
     # Metadados
@@ -501,10 +501,10 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     elements.append(t)
     elements.append(Spacer(1, 16))
 
-    # Veredicto Final
+    # Parecer Final
     simbolo = data.get("simbolo_final", "")
-    veredicto = data.get("veredicto_final", "Sem veredicto")
-    elements.append(Paragraph("Veredicto Final", styles["SectionHead"]))
+    veredicto = data.get("veredicto_final", "Sem parecer")
+    elements.append(Paragraph("Parecer Final", styles["SectionHead"]))
     elements.append(Paragraph(f"{simbolo} {veredicto}", styles["BodyText2"]))
     elements.append(Spacer(1, 10))
 
@@ -527,7 +527,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     elements.append(Spacer(1, 10))
 
     # Fase 3
-    elements.append(Paragraph("Fase 3 — Julgamento", styles["SectionHead"]))
+    elements.append(Paragraph("Fase 3 — Relatoria", styles["SectionHead"]))
     for p in data.get("fase3_pareceres", []):
         conteudo = p.get("conteudo", "") if isinstance(p, dict) else ""
         modelo = p.get("modelo", "") if isinstance(p, dict) else ""
@@ -540,9 +540,9 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
         elements.append(Spacer(1, 6))
 
     # Fase 4
-    elements.append(Paragraph("Fase 4 — Decisão do Presidente", styles["SectionHead"]))
+    elements.append(Paragraph("Fase 4 — Parecer do Conselheiro-Mor", styles["SectionHead"]))
     f4 = data.get("fase3_presidente", "")
-    for line in (f4 or "Sem decisão do presidente.").split("\n"):
+    for line in (f4 or "Sem parecer do Conselheiro-Mor.").split("\n"):
         if line.strip():
             safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             elements.append(Paragraph(safe, styles["BodyText2"]))
@@ -550,7 +550,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     # Rodapé
     elements.append(Spacer(1, 30))
     elements.append(Paragraph(
-        "Gerado automaticamente por Tribunal AI — Este documento não substitui aconselhamento jurídico.",
+        "Gerado automaticamente por LexForum — Este documento não substitui aconselhamento jurídico.",
         ParagraphStyle("Footer", parent=styles["Normal"], fontSize=7, textColor=HexColor("#999999")),
     ))
 
@@ -569,7 +569,7 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
     style.font.size = Pt(10)
     style.font.name = "Calibri"
 
-    title = doc.add_heading("Relatório de Análise Jurídica — Tribunal AI", level=0)
+    title = doc.add_heading("Relatório de Análise Jurídica — LexForum", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     table = doc.add_table(rows=5, cols=2)
@@ -590,9 +590,9 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
                     run.font.size = Pt(9)
     doc.add_paragraph("")
 
-    doc.add_heading("Veredicto Final", level=1)
+    doc.add_heading("Parecer Final", level=1)
     simbolo = data.get("simbolo_final", "")
-    veredicto = data.get("veredicto_final", "Sem veredicto")
+    veredicto = data.get("veredicto_final", "Sem parecer")
     p = doc.add_paragraph(f"{simbolo} {veredicto}")
     p.runs[0].bold = True
 
@@ -604,7 +604,7 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
     f2 = data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", "")
     doc.add_paragraph(f2 or "Sem dados de auditoria.")
 
-    doc.add_heading("Fase 3 — Julgamento", level=1)
+    doc.add_heading("Fase 3 — Relatoria", level=1)
     for p_data in data.get("fase3_pareceres", []):
         if isinstance(p_data, dict):
             modelo = p_data.get("modelo", "")
@@ -613,13 +613,13 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
                 doc.add_heading(modelo, level=2)
             doc.add_paragraph(conteudo)
 
-    doc.add_heading("Fase 4 — Decisão do Presidente", level=1)
+    doc.add_heading("Fase 4 — Parecer do Conselheiro-Mor", level=1)
     f4 = data.get("fase3_presidente", "")
-    doc.add_paragraph(f4 or "Sem decisão do presidente.")
+    doc.add_paragraph(f4 or "Sem parecer do Conselheiro-Mor.")
 
     doc.add_paragraph("")
     footer = doc.add_paragraph(
-        "Gerado automaticamente por Tribunal AI — "
+        "Gerado automaticamente por LexForum — "
         "Este documento não substitui aconselhamento jurídico."
     )
     footer.runs[0].font.size = Pt(7)
@@ -708,7 +708,7 @@ def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] =
     veredicto = data.get("veredicto_final", "")
     simbolo = data.get("simbolo_final", "")
     if veredicto:
-        parts.append(f"Veredicto: {simbolo} {veredicto}")
+        parts.append(f"Parecer: {simbolo} {veredicto}")
 
     f1 = data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", "")
     if f1:
@@ -720,7 +720,7 @@ def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] =
 
     f4 = data.get("fase3_presidente", "")
     if f4:
-        parts.append(f"DECISÃO PRESIDENTE:\n{f4[:3000]}")
+        parts.append(f"PARECER CONSELHEIRO-MOR:\n{f4[:3000]}")
 
     docs_adicionais = data.get("documentos_adicionais", [])
     if docs_adicionais:

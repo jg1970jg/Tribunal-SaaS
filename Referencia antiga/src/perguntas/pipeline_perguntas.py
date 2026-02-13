@@ -506,7 +506,7 @@ def executar_fase3_juizes(
 
     Inclui contexto COMPLETO: análise original + histórico Q&A + documentos anexados.
     """
-    logger.info("=== FASE 3: Iniciando julgamento (perguntas) ===")
+    logger.info("=== FASE 3: Iniciando relatoria (perguntas) ===")
 
     # Construir seção histórico (mesmo padrão dos auditores)
     secao_historico = ""
@@ -545,7 +545,7 @@ def executar_fase3_juizes(
 
         logger.info(f"Juiz {i}/{len(juiz_models)}: {modelo}")
 
-        prompt = f"""Você é um JUIZ ESPECIALISTA.
+        prompt = f"""Você é um RELATOR ESPECIALISTA.
 
 ═══════════════════════════════════════════════════════════════
 EXTRAÇÃO (Fase 1 - Análise Original):
@@ -566,7 +566,7 @@ PERGUNTA ATUAL:
 {pergunta}
 
 ═══════════════════════════════════════════════════════════════
-SUA MISSÃO COMO JUIZ:
+SUA MISSÃO COMO RELATOR:
 ═══════════════════════════════════════════════════════════════
 
 Analise TODO o contexto acima (análise original + histórico de perguntas anteriores + documentos anexados + auditoria) e produza PARECER JURÍDICO fundamentado:
@@ -624,7 +624,7 @@ PARECER:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# FASE 4: PRESIDENTE (mantém igual)
+# FASE 4: CONSELHEIRO-MOR
 # ═══════════════════════════════════════════════════════════════════════════
 
 def executar_fase4_presidente(
@@ -637,13 +637,13 @@ def executar_fase4_presidente(
     fase1_extracao: str = ""
 ) -> Tuple[str, int, int]:
     """
-    Executa Fase 4: Presidente sintetiza.
+    Executa Fase 4: Conselheiro-Mor sintetiza.
 
     Inclui contexto COMPLETO para decisão informada.
     """
-    logger.info("=== FASE 4: Presidente decidindo (perguntas) ===")
+    logger.info("=== FASE 4: Conselheiro-Mor decidindo (perguntas) ===")
 
-    # Construir seção de contexto acumulado para o Presidente
+    # Construir seção de contexto acumulado para o Conselheiro-Mor
     secao_contexto = ""
     if fase1_extracao:
         secao_contexto += "\n═══════════════════════════════════════════════════════════════\n"
@@ -673,11 +673,11 @@ def executar_fase4_presidente(
     # Construir pareceres dos juízes
     pareceres_juizes = ""
     for j, resultado in enumerate(juizes_resultados, 1):
-        pareceres_juizes += f"### JUIZ {j} ({resultado.modelo}):\n\n"
+        pareceres_juizes += f"### RELATOR {j} ({resultado.modelo}):\n\n"
         pareceres_juizes += f"{resultado.conteudo}\n\n"
         pareceres_juizes += "───────────────────────────────────────────────────────────────\n\n"
 
-    prompt = f"""Você é o JUIZ PRESIDENTE do tribunal.
+    prompt = f"""Você é o CONSELHEIRO-MOR do LexForum.
 {secao_contexto}
 ═══════════════════════════════════════════════════════════════
 PERGUNTA DO UTILIZADOR:
@@ -686,18 +686,18 @@ PERGUNTA DO UTILIZADOR:
 {pergunta}
 
 ═══════════════════════════════════════════════════════════════
-PARECERES DOS JUÍZES:
+PARECERES DOS RELATORES:
 ═══════════════════════════════════════════════════════════════
 
 {pareceres_juizes}
 
 ═══════════════════════════════════════════════════════════════
-SUA MISSÃO COMO PRESIDENTE:
+SUA MISSÃO COMO CONSELHEIRO-MOR:
 ═══════════════════════════════════════════════════════════════
 
-Considerando TODO o contexto (análise original + histórico + documentos + pareceres dos juízes), sintetize numa RESPOSTA FINAL:
+Considerando TODO o contexto (análise original + histórico + documentos + pareceres dos relatores), sintetize numa RESPOSTA FINAL:
 
-## Consensos entre Juízes
+## Consensos entre Relatores
 [pontos acordados]
 
 ## Divergências (se houver)

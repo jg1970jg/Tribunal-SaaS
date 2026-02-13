@@ -4,8 +4,8 @@ COMPONENTE: Seleção de Modelos Premium
 ═══════════════════════════════════════════════════════════════════════════
 
 Interface para utilizador escolher entre GPT-5.2 e GPT-5.2-PRO para:
-- Chefe dos Auditores
-- Presidente dos Juízes
+- Consolidador dos Auditores
+- Conselheiro-Mor
 
 ONDE USAR:
 - Adicionar ANTES do botão "Processar Documento"
@@ -53,11 +53,11 @@ def selecao_modelos_premium():
     col_left, col_right = st.columns(2)
     
     # ===================================================================
-    # CHEFE DOS AUDITORES
+    # CONSOLIDADOR DOS AUDITORES
     # ===================================================================
-    
+
     with col_left:
-        st.markdown("### 👔 Chefe dos Auditores")
+        st.markdown("### 👔 Consolidador dos Auditores")
         
         st.markdown("""
         Consolida as 3 auditorias numa síntese única.
@@ -92,15 +92,15 @@ def selecao_modelos_premium():
             st.success("✅ Recomendado para uso geral")
     
     # ===================================================================
-    # PRESIDENTE DOS JUÍZES
+    # CONSELHEIRO-MOR
     # ===================================================================
-    
+
     with col_right:
-        st.markdown("### 👨‍⚖️ Presidente dos Juízes")
-        
+        st.markdown("### 👨‍⚖️ Conselheiro-Mor")
+
         st.markdown("""
-        Decisão final baseada em auditorias e pareceres.
-        Determina o veredicto conclusivo.
+        Parecer final baseado em auditorias e relatórios.
+        Determina o parecer conclusivo.
         """)
         
         # Opções
@@ -151,14 +151,14 @@ def selecao_modelos_premium():
         st.metric(
             "💰 Custo Base",
             f"${custo_base:.2f}",
-            help="Extratores + Auditores + Juízes (outros modelos)"
+            help="Extratores + Auditores + Relatores (outros modelos)"
         )
     
     with col_custo2:
         st.metric(
             "⭐ Custo Premium",
             f"${custo_total_premium:.2f}",
-            help="Chefe + Presidente (modelos escolhidos)"
+            help="Consolidador + Conselheiro-Mor (modelos escolhidos)"
         )
     
     with col_custo3:

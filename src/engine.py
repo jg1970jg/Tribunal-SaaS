@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-ENGINE - Motor de Analise do Tribunal SaaS V2
+ENGINE - Motor de Analise do LexForum
 ============================================================
 Logica PURA de processamento, sem qualquer dependencia Streamlit.
-Coordena o pipeline de 4 fases (Extracao, Auditoria, Julgamento, Presidente).
+Coordena o pipeline de 4 fases (Extracao, Auditoria, Relatoria, Conselheiro-Mor).
 
 Recebe:
   - file_bytes (bytes) ou texto (str)
@@ -60,7 +60,7 @@ from src.config import (
     OPENROUTER_API_KEY,
     OUTPUT_DIR,
 )
-from src.pipeline.processor import TribunalProcessor, PipelineResult, FaseResult
+from src.pipeline.processor import LexForumProcessor, PipelineResult, FaseResult
 from src.document_loader import DocumentLoader, DocumentContent
 from src.llm_client import get_llm_client
 from src.utils.perguntas import parse_perguntas, validar_perguntas
@@ -379,7 +379,7 @@ def executar_analise(
     callback_progresso: Optional[Callable[[str, int, str], None]] = None,
 ) -> PipelineResult:
     """
-    Funcao principal do engine. Executa a analise completa do Tribunal.
+    Funcao principal do engine. Executa a analise completa do LexForum.
 
     Fluxo:
       1. Determina tier e modelos
@@ -425,10 +425,10 @@ def executar_analise(
     print(f"[ENGINE] Tier: {tier_level.value} | Analysis ID: {analysis_id}")
 
     # Extrair modelos do tier
-    chefe_model_key = tier_models.get("audit_chief", "gpt-5.2")
-    presidente_model_key = tier_models.get("president", "gpt-5.2")
+    consolidador_model_key = tier_models.get("audit_chief", "gpt-5.2")
+    conselheiro_model_key = tier_models.get("president", "gpt-5.2")
     auditor_claude_model = tier_models.get("audit_claude", "sonnet-4.5")
-    juiz_claude_model = tier_models.get("judgment_claude", "sonnet-4.5")
+    relator_claude_model = tier_models.get("judgment_claude", "sonnet-4.5")
     extraction_model = tier_models.get("extraction", "sonnet-4.5")
 
     # ── 2. Verificar saldo basico ──
@@ -476,24 +476,24 @@ def executar_analise(
     )
     import src.config as config_module
 
-    config_module.CHEFE_MODEL = get_chefe_model(chefe_model_key)
-    config_module.PRESIDENTE_MODEL = get_presidente_model(presidente_model_key)
+    config_module.CHEFE_MODEL = get_chefe_model(consolidador_model_key)
+    config_module.PRESIDENTE_MODEL = get_presidente_model(conselheiro_model_key)
 
     auditor_model = get_auditor_claude_model(auditor_claude_model)
-    juiz_model = get_juiz_claude_model(juiz_claude_model)
+    relator_model = get_juiz_claude_model(relator_claude_model)
 
     if len(config_module.AUDITOR_MODELS) > 1:
         config_module.AUDITOR_MODELS[1] = auditor_model
         config_module.AUDITORES[1]["model"] = auditor_model
 
     if len(config_module.JUIZ_MODELS) > 1:
-        config_module.JUIZ_MODELS[1] = juiz_model
-        config_module.JUIZES[1]["model"] = juiz_model
+        config_module.JUIZ_MODELS[1] = relator_model
+        config_module.JUIZES[1]["model"] = relator_model
 
     print(
         f"[ENGINE] Modelos ({tier_level.value}): "
-        f"Chefe={chefe_model_key}, Presidente={presidente_model_key}, "
-        f"Auditor_Claude={auditor_claude_model}, Juiz_Claude={juiz_claude_model}"
+        f"Consolidador={consolidador_model_key}, Conselheiro={conselheiro_model_key}, "
+        f"Auditor_Claude={auditor_claude_model}, Relator_Claude={relator_claude_model}"
     )
 
     # ── 6. Carregar documento ou criar a partir de texto ──
@@ -557,7 +557,7 @@ def executar_analise(
     print(f"[ENGINE] Documento: {documento.filename} ({documento.num_chars:,} chars)")
 
     try:
-        processor = TribunalProcessor(callback_progresso=callback)
+        processor = LexForumProcessor(callback_progresso=callback)
         resultado = processor.processar(documento, area_direito, perguntas_raw, titulo)
     except ValueError as e:
         # ── ERRO: Cancelar bloqueio ──
@@ -593,7 +593,7 @@ def executar_analise(
     # ── 12. Reportar resultado ──
     duracao = (datetime.now() - timestamp_inicio).total_seconds()
     print(f"[ENGINE] Pipeline concluido em {duracao:.1f}s")
-    print(f"[ENGINE] Veredicto: {resultado.simbolo_final} {resultado.veredicto_final}")
+    print(f"[ENGINE] Parecer: {resultado.simbolo_final} {resultado.veredicto_final}")
     print(f"[ENGINE] Tokens: {resultado.total_tokens:,}")
     if custo_real_usd > 0:
         print(f"[ENGINE] Custo APIs: ${custo_real_usd:.4f}")

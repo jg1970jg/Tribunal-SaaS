@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Tribunal SaaS V2 - Package src
+LexForum - Package src
 Estende o package para incluir modulos da Referencia antiga/src.
 """
 

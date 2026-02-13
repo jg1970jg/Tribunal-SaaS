@@ -269,7 +269,7 @@ def guardar_pergunta_resposta(
     
     for i, juiz in enumerate(resultado.juizes, 1):
         conteudo_completo += f"""
-### Juiz {i} ({juiz.modelo})
+### Relator {i} ({juiz.modelo})
 
 {juiz.conteudo}
 
@@ -277,7 +277,7 @@ def guardar_pergunta_resposta(
 """
     
     conteudo_completo += f"""
-## 👨‍⚖️ FASE 4: DECISÃO FINAL DO PRESIDENTE
+## 👨‍⚖️ FASE 4: PARECER FINAL DO CONSELHEIRO-MOR
 
 {resultado.resposta_final}
 
@@ -715,7 +715,7 @@ def tab_perguntas_adicionais(
             # ═════════════════════════════════════════════════════════════
             
             st.divider()
-            st.subheader("✅ Resposta do Tribunal")
+            st.subheader("✅ Resposta do LexForum")
             
             col_m1, col_m2, col_m3, col_m4 = st.columns(4)
             
@@ -730,7 +730,7 @@ def tab_perguntas_adicionais(
             
             st.markdown("---")
             
-            st.markdown("### 👨‍⚖️ Decisão Final do Presidente")
+            st.markdown("### 👨‍⚖️ Parecer Final do Conselheiro-Mor")
             st.success(resultado.resposta_final)
             
             # ═════════════════════════════════════════════════════════════
@@ -790,7 +790,7 @@ def tab_perguntas_adicionais(
                 
                 st.markdown("#### Fase 3: Pareceres Jurídicos")
                 for i, juiz in enumerate(resultado.juizes, 1):
-                    with st.expander(f"⚖️ Juiz {i} ({juiz.modelo})"):
+                    with st.expander(f"⚖️ Relator {i} ({juiz.modelo})"):
                         st.markdown(juiz.conteudo)
             
             st.success("✅ Pergunta processada, guardada e disponível para exportação!")

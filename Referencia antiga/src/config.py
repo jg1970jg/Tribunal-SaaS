@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-CONFIGURAÇÃO TRIBUNAL GOLDENMASTER - DUAL API SYSTEM
+CONFIGURAÇÃO LEXFORUM - DUAL API SYSTEM
 ═══════════════════════════════════════════════════════════════════════════
 
 NOVIDADES:
@@ -12,9 +12,9 @@ NOVIDADES:
 CONFIGURAÇÃO ACTUAL:
 - 5 Extratores com PROMPT UNIVERSAL
 - Auditores: A2=Sonnet 4.5, A3=Gemini 3 Pro
-- Juízes: J3=Gemini 3 Pro
-- Chefe: Configurável (5.2 ou 5.2-pro)
-- Presidente: Configurável (5.2 ou 5.2-pro)
+- Relatores: J3=Gemini 3 Pro
+- Consolidador: Configurável (5.2 ou 5.2-pro)
+- Conselheiro-Mor: Configurável (5.2 ou 5.2-pro)
 - NOVO: Failover GPT-5.2 → GPT-4.1 → Grok (3 níveis)
 - NOVO: max_tokens dinâmico por tamanho de documento
 - NOVO: max_tokens por FASE (consolidadores recebem mais)
@@ -69,7 +69,7 @@ LOG_LEVEL = "INFO"
 # MODELOS PREMIUM - OPÇÕES DISPONÍVEIS
 # =============================================================================
 
-# Opções para Chefe dos Auditores
+# Opções para Consolidador dos Auditores
 CHEFE_MODEL_OPTIONS = {
     "gpt-5.2": {
         "model": "openai/gpt-5.2",
@@ -87,8 +87,8 @@ CHEFE_MODEL_OPTIONS = {
     },
 }
 
-# Opções para Presidente dos Juízes
-PRESIDENTE_MODEL_OPTIONS = {
+# Opções para Conselheiro-Mor
+CONSELHEIRO_MODEL_OPTIONS = {
     "gpt-5.2": {
         "model": "openai/gpt-5.2",
         "display_name": "GPT-5.2 (económico)",
@@ -104,6 +104,9 @@ PRESIDENTE_MODEL_OPTIONS = {
         "recommended": False,
     },
 }
+
+# Alias de compatibilidade
+PRESIDENTE_MODEL_OPTIONS = CONSELHEIRO_MODEL_OPTIONS
 
 # Opções para Auditor Claude (A2)
 AUDITOR_CLAUDE_OPTIONS = {
@@ -123,8 +126,8 @@ AUDITOR_CLAUDE_OPTIONS = {
     },
 }
 
-# Opções para Juiz Claude (J2)
-JUIZ_CLAUDE_OPTIONS = {
+# Opções para Relator Claude (J2)
+RELATOR_CLAUDE_OPTIONS = {
     "sonnet-4.5": {
         "model": "anthropic/claude-sonnet-4-5",
         "display_name": "Sonnet 4.5 (económico) — Recomendado",
@@ -141,18 +144,28 @@ JUIZ_CLAUDE_OPTIONS = {
     },
 }
 
+# Alias de compatibilidade
+JUIZ_CLAUDE_OPTIONS = RELATOR_CLAUDE_OPTIONS
+
 # Defaults (podem ser alterados pelo utilizador na interface)
-CHEFE_MODEL_DEFAULT = "gpt-5.2"        # económico por defeito
-PRESIDENTE_MODEL_DEFAULT = "gpt-5.2"   # económico por defeito
-AUDITOR_CLAUDE_DEFAULT = "sonnet-4.5"  # económico por defeito
-JUIZ_CLAUDE_DEFAULT = "sonnet-4.5"     # económico por defeito
+CHEFE_MODEL_DEFAULT = "gpt-5.2"            # económico por defeito
+CONSELHEIRO_MODEL_DEFAULT = "gpt-5.2"      # económico por defeito
+AUDITOR_CLAUDE_DEFAULT = "sonnet-4.5"      # económico por defeito
+RELATOR_CLAUDE_DEFAULT = "sonnet-4.5"      # económico por defeito
+
+# Aliases de compatibilidade (engine.py e app.py importam estes nomes)
+PRESIDENTE_MODEL_DEFAULT = CONSELHEIRO_MODEL_DEFAULT
+JUIZ_CLAUDE_DEFAULT = RELATOR_CLAUDE_DEFAULT
 
 # =============================================================================
 # MODELOS ACTUAIS (usados se não houver escolha do utilizador)
 # =============================================================================
 
-PRESIDENTE_MODEL = PRESIDENTE_MODEL_OPTIONS[PRESIDENTE_MODEL_DEFAULT]["model"]
+CONSELHEIRO_MODEL = CONSELHEIRO_MODEL_OPTIONS[CONSELHEIRO_MODEL_DEFAULT]["model"]
 CHEFE_MODEL = CHEFE_MODEL_OPTIONS[CHEFE_MODEL_DEFAULT]["model"]
+
+# Alias de compatibilidade
+PRESIDENTE_MODEL = CONSELHEIRO_MODEL
 AGREGADOR_MODEL = "openai/gpt-5.2"  # Agregador sempre 5.2 (via OpenRouter)
 
 # =============================================================================
@@ -196,17 +209,19 @@ APPLY_CONFIDENCE_POLICY = True
 
 # =============================================================================
 # MAX OUTPUT TOKENS POR FASE (NOVO!)
-# Consolidadores (Chefe/Presidente/Agregador) processam MUITO mais dados
-# que auditores/juízes individuais, por isso precisam de mais tokens.
+# Consolidadores (Consolidador/Conselheiro-Mor/Agregador) processam MUITO mais dados
+# que auditores/relatores individuais, por isso precisam de mais tokens.
 # =============================================================================
 
 MAX_TOKENS_POR_FASE = {
     "extrator":     None,   # Usa calcular_max_tokens() dinâmico (por doc size)
     "auditor":      None,   # Usa calcular_max_tokens() dinâmico
-    "juiz":         None,   # Usa calcular_max_tokens() dinâmico
+    "relator":      None,   # Usa calcular_max_tokens() dinâmico
+    "juiz":         None,   # Alias (compatibilidade)
     "agregador":    32768,  # Consolida 5 extractores — precisa de mais
     "chefe":        32768,  # Consolida 4 auditorias — precisa de mais
-    "presidente":   32768,  # Decisão final global — precisa de mais
+    "conselheiro":  32768,  # Parecer final global — precisa de mais
+    "presidente":   32768,  # Alias (compatibilidade)
     "sintese":      8192,   # Sínteses curtas (cross-zona futuro)
 }
 
@@ -215,7 +230,7 @@ def get_max_tokens_para_fase(role_name: str) -> int:
     Retorna max_tokens fixo para a fase, ou None para usar cálculo dinâmico.
     
     Args:
-        role_name: Nome do papel (ex: "A1", "J2", "Chefe", "Presidente")
+        role_name: Nome do papel (ex: "A1", "J2", "Chefe", "Conselheiro")
     
     Returns:
         int ou None (None = usar calcular_max_tokens dinâmico)
@@ -226,12 +241,12 @@ def get_max_tokens_para_fase(role_name: str) -> int:
         return MAX_TOKENS_POR_FASE["agregador"]
     elif "chefe" in role_lower:
         return MAX_TOKENS_POR_FASE["chefe"]
-    elif "presidente" in role_lower:
-        return MAX_TOKENS_POR_FASE["presidente"]
+    elif "conselheiro" in role_lower or "presidente" in role_lower:
+        return MAX_TOKENS_POR_FASE["conselheiro"]
     elif "sintese" in role_lower:
         return MAX_TOKENS_POR_FASE["sintese"]
     
-    # Extratores, auditores, juízes → None = dinâmico
+    # Extratores, auditores, relatores → None = dinâmico
     return None
 
 # =============================================================================
@@ -300,21 +315,25 @@ AUDITORES = [
 ]
 
 # =============================================================================
-# JUÍZES - GPT-5.2 + SONNET 4.5 + GEMINI 3 PRO
+# RELATORES - GPT-5.2 + SONNET 4.5 + GEMINI 3 PRO
 # MUDANÇA: J2 de Opus 4.6 para Sonnet 4.5 (5× mais barato)
 # =============================================================================
 
-JUIZ_MODELS = [
+RELATOR_MODELS = [
     "openai/gpt-5.2",                  # J1: GPT-5.2 (titular, failover → gpt-4.1)
     "anthropic/claude-sonnet-4-5",      # J2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
     "google/gemini-3-pro-preview"       # J3: Gemini 3 Pro (ctx 1.049K, out 66K)
 ]
 
-JUIZES = [
-    {"id": "J1", "model": JUIZ_MODELS[0], "temperature": 0.2},
-    {"id": "J2", "model": JUIZ_MODELS[1], "temperature": 0.1},
-    {"id": "J3", "model": JUIZ_MODELS[2], "temperature": 0.0},
+RELATORES = [
+    {"id": "J1", "model": RELATOR_MODELS[0], "temperature": 0.2},
+    {"id": "J2", "model": RELATOR_MODELS[1], "temperature": 0.1},
+    {"id": "J3", "model": RELATOR_MODELS[2], "temperature": 0.0},
 ]
+
+# Aliases de compatibilidade
+JUIZ_MODELS = RELATOR_MODELS
+JUIZES = RELATORES
 
 # =============================================================================
 # LIMITES DE CONTEXTO E OUTPUT POR MODELO (tokens)
@@ -371,7 +390,10 @@ LIMITE_NIVEL3_CHARS = 5_600_000     # ~2.000K tokens x 4 x 0.70 = docs até ~2.5
 
 SYSTEM_AGREGADOR = PROMPT_AGREGADOR_PRESERVADOR
 SYSTEM_CHEFE = "Consolide auditorias."
-SYSTEM_PRESIDENTE = "Decisão final fundamentada."
+SYSTEM_CONSELHEIRO = "Parecer final fundamentado."
+
+# Alias de compatibilidade
+SYSTEM_PRESIDENTE = SYSTEM_CONSELHEIRO
 
 # =============================================================================
 # CONFIGURAÇÕES RESTANTES (inalteradas)
@@ -402,7 +424,7 @@ VISION_CAPABLE_MODELS = {
 DRE_BASE_URL = "https://diariodarepublica.pt"
 DRE_SEARCH_URL = "https://diariodarepublica.pt/dr/pesquisa"
 
-EXPORT_CONFIG = {"pdf_title": "Tribunal GoldenMaster", "pdf_author": "Sistema", "date_format": "%d/%m/%Y %H:%M:%S"}
+EXPORT_CONFIG = {"pdf_title": "LexForum", "pdf_author": "Sistema", "date_format": "%d/%m/%Y %H:%M:%S"}
 
 SUPPORTED_EXTENSIONS = {".pdf": "PDF", ".docx": "Word", ".xlsx": "Excel", ".txt": "Texto"}
 
@@ -420,7 +442,7 @@ PERGUNTAS_SOFT_LIMIT = MAX_PERGUNTAS_WARN
 
 def get_chefe_model(choice: str = None) -> str:
     """
-    Retorna modelo do Chefe conforme escolha do utilizador.
+    Retorna modelo do Consolidador conforme escolha do utilizador.
 
     Args:
         choice: "gpt-5.2" ou "gpt-5.2-pro" (None = default)
@@ -433,9 +455,9 @@ def get_chefe_model(choice: str = None) -> str:
     return CHEFE_MODEL_OPTIONS.get(choice, CHEFE_MODEL_OPTIONS[CHEFE_MODEL_DEFAULT])["model"]
 
 
-def get_presidente_model(choice: str = None) -> str:
+def get_conselheiro_model(choice: str = None) -> str:
     """
-    Retorna modelo do Presidente conforme escolha do utilizador.
+    Retorna modelo do Conselheiro-Mor conforme escolha do utilizador.
 
     Args:
         choice: "gpt-5.2" ou "gpt-5.2-pro" (None = default)
@@ -444,8 +466,11 @@ def get_presidente_model(choice: str = None) -> str:
         Nome do modelo
     """
     if choice is None:
-        choice = PRESIDENTE_MODEL_DEFAULT
-    return PRESIDENTE_MODEL_OPTIONS.get(choice, PRESIDENTE_MODEL_OPTIONS[PRESIDENTE_MODEL_DEFAULT])["model"]
+        choice = CONSELHEIRO_MODEL_DEFAULT
+    return CONSELHEIRO_MODEL_OPTIONS.get(choice, CONSELHEIRO_MODEL_OPTIONS[CONSELHEIRO_MODEL_DEFAULT])["model"]
+
+# Alias de compatibilidade
+get_presidente_model = get_conselheiro_model
 
 
 def get_auditor_claude_model(choice: str = None) -> str:
@@ -455,11 +480,14 @@ def get_auditor_claude_model(choice: str = None) -> str:
     return AUDITOR_CLAUDE_OPTIONS.get(choice, AUDITOR_CLAUDE_OPTIONS[AUDITOR_CLAUDE_DEFAULT])["model"]
 
 
-def get_juiz_claude_model(choice: str = None) -> str:
-    """Retorna modelo Claude para Juiz J2."""
+def get_relator_claude_model(choice: str = None) -> str:
+    """Retorna modelo Claude para Relator J2."""
     if choice is None:
-        choice = JUIZ_CLAUDE_DEFAULT
-    return JUIZ_CLAUDE_OPTIONS.get(choice, JUIZ_CLAUDE_OPTIONS[JUIZ_CLAUDE_DEFAULT])["model"]
+        choice = RELATOR_CLAUDE_DEFAULT
+    return RELATOR_CLAUDE_OPTIONS.get(choice, RELATOR_CLAUDE_OPTIONS[RELATOR_CLAUDE_DEFAULT])["model"]
+
+# Alias de compatibilidade
+get_juiz_claude_model = get_relator_claude_model
 
 
 # =============================================================================
@@ -471,7 +499,7 @@ def calcular_max_tokens(doc_chars: int, modelo: str, role_name: str = "") -> int
     Calcula max_tokens dinâmico baseado no tamanho do documento,
     respeitando o limite real de cada modelo.
     
-    NOVO: Consolidadores (Chefe, Presidente, Agregador) recebem max_tokens
+    NOVO: Consolidadores (Consolidador, Conselheiro-Mor, Agregador) recebem max_tokens
     fixo porque processam dados de MUITAS fases e precisam de espaço.
 
     Args:
@@ -529,7 +557,7 @@ def selecionar_modelo_com_failover(modelo_titular: str, doc_chars: int, papel: s
     Args:
         modelo_titular: Modelo original (ex: "openai/gpt-5.2")
         doc_chars: Número de caracteres do documento
-        papel: Nome do papel (ex: "A1", "J1", "Chefe", "Presidente")
+        papel: Nome do papel (ex: "A1", "J1", "Consolidador", "Conselheiro")
 
     Returns:
         Modelo a usar (titular ou suplente)
