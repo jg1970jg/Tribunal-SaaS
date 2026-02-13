@@ -149,18 +149,34 @@ class WalletManager:
                     available=balance["available"]
                 )
 
-            # Chamar função SQL para bloquear
-            result = self.sb.rpc(
-                "block_credits",
-                {
-                    "p_user_id": user_id,
-                    "p_analysis_id": analysis_id,
-                    "p_amount": blocked_usd,
-                    "p_reason": reason,
-                }
-            ).execute()
+            # Bloquear directamente via tabelas (sem SQL function)
+            # 1. Atualizar credits_blocked no profile
+            new_blocked = balance["blocked"] + blocked_usd
+            self.sb.table("profiles").update({
+                "credits_blocked": new_blocked,
+            }).eq("id", user_id).execute()
 
-            transaction_id = result.data
+            # 2. Registar transação
+            tx_result = self.sb.table("wallet_transactions").insert({
+                "user_id": user_id,
+                "type": "block",
+                "amount_usd": blocked_usd,
+                "balance_after_usd": balance["total"],
+                "cost_real_usd": estimated_cost_usd,
+                "run_id": analysis_id,
+                "description": reason,
+            }).execute()
+
+            transaction_id = tx_result.data[0]["id"] if tx_result.data else None
+
+            # 3. Registar na tabela blocked_credits
+            self.sb.table("blocked_credits").insert({
+                "user_id": user_id,
+                "analysis_id": analysis_id,
+                "amount": blocked_usd,
+                "transaction_id": transaction_id,
+                "status": "blocked",
+            }).execute()
 
             logger.info(
                 f"Créditos bloqueados: user={user_id}, "
@@ -206,30 +222,64 @@ class WalletManager:
             }
         """
         try:
-            result = self.sb.rpc(
-                "settle_credits",
-                {
-                    "p_analysis_id": analysis_id,
-                    "p_real_cost": real_cost_usd,
-                }
-            ).execute()
+            # 1. Obter bloqueio original
+            block_resp = self.sb.table("blocked_credits").select(
+                "id, user_id, amount"
+            ).eq("analysis_id", analysis_id).eq("status", "blocked").execute()
 
-            settlement = result.data
+            if not block_resp.data:
+                logger.warning(f"Nenhum bloqueio encontrado para analysis={analysis_id}")
+                return {"status": "no_block", "real_cost": real_cost_usd}
 
-            if settlement and settlement.get("status") == "margin_breach":
-                logger.error(
-                    f"⚠️ MARGIN BREACH! analysis={analysis_id}, "
-                    f"blocked=${settlement['blocked']:.4f}, "
-                    f"real=${settlement['real_cost']:.4f}, "
-                    f"extra=${settlement.get('extra_charged', 0):.4f}"
-                )
-            else:
-                logger.info(
-                    f"Créditos liquidados: analysis={analysis_id}, "
-                    f"blocked=${settlement.get('blocked', 0):.4f}, "
-                    f"real=${settlement.get('real_cost', 0):.4f}, "
-                    f"refunded=${settlement.get('refunded', 0):.4f}"
-                )
+            block = block_resp.data[0]
+            user_id = block["user_id"]
+            blocked_amount = float(block["amount"])
+            markup = self.get_markup_multiplier()
+            custo_cliente = real_cost_usd * markup
+            refunded = max(0, blocked_amount - custo_cliente)
+
+            # 2. Debitar custo real do saldo
+            balance = self.get_balance(user_id)
+            new_balance = max(0, balance["total"] - custo_cliente)
+            new_blocked = max(0, balance["blocked"] - blocked_amount)
+
+            self.sb.table("profiles").update({
+                "credits_balance": new_balance,
+                "credits_blocked": new_blocked,
+            }).eq("id", user_id).execute()
+
+            # 3. Marcar bloqueio como settled
+            self.sb.table("blocked_credits").update({
+                "status": "settled",
+                "settled_at": datetime.now().isoformat(),
+            }).eq("id", block["id"]).execute()
+
+            # 4. Registar transação de debit
+            self.sb.table("wallet_transactions").insert({
+                "user_id": user_id,
+                "type": "debit",
+                "amount_usd": custo_cliente,
+                "balance_after_usd": new_balance,
+                "cost_real_usd": real_cost_usd,
+                "markup_applied": markup,
+                "run_id": analysis_id,
+                "description": f"Liquidação análise {analysis_id}",
+            }).execute()
+
+            settlement = {
+                "status": "success",
+                "blocked": blocked_amount,
+                "real_cost": real_cost_usd,
+                "custo_cliente": custo_cliente,
+                "refunded": refunded,
+            }
+
+            logger.info(
+                f"Créditos liquidados: analysis={analysis_id}, "
+                f"blocked=${blocked_amount:.4f}, "
+                f"real=${real_cost_usd:.4f}, "
+                f"refunded=${refunded:.4f}"
+            )
 
             return settlement
 
@@ -245,10 +295,26 @@ class WalletManager:
             analysis_id: UUID da análise
         """
         try:
-            self.sb.rpc(
-                "cancel_credit_block",
-                {"p_analysis_id": analysis_id}
-            ).execute()
+            # Obter bloqueio
+            block_resp = self.sb.table("blocked_credits").select(
+                "id, user_id, amount"
+            ).eq("analysis_id", analysis_id).eq("status", "blocked").execute()
+
+            if block_resp.data:
+                block = block_resp.data[0]
+                # Devolver créditos bloqueados
+                balance = self.get_balance(block["user_id"])
+                new_blocked = max(0, balance["blocked"] - float(block["amount"]))
+                self.sb.table("profiles").update({
+                    "credits_blocked": new_blocked,
+                }).eq("id", block["user_id"]).execute()
+
+                # Marcar como cancelado
+                self.sb.table("blocked_credits").update({
+                    "status": "cancelled",
+                    "settled_at": datetime.now().isoformat(),
+                }).eq("id", block["id"]).execute()
+
             logger.info(f"Bloqueio cancelado: analysis={analysis_id}")
         except Exception as e:
             logger.error(f"Erro ao cancelar bloqueio: {e}")
@@ -290,12 +356,12 @@ class WalletManager:
             self.sb.table("wallet_transactions").insert({
                 "user_id": user_id,
                 "type": "debit",
-                "amount": custo_cliente,
-                "balance_before": saldo_antes,
-                "balance_after": max(0, new_balance),
-                "reason": f"Análise run_id={run_id}",
-                "status": "completed",
-                "completed_at": datetime.now().isoformat(),
+                "amount_usd": custo_cliente,
+                "balance_after_usd": max(0, new_balance),
+                "cost_real_usd": cost_real_usd,
+                "markup_applied": markup,
+                "run_id": run_id,
+                "description": f"Análise run_id={run_id}",
             }).execute()
 
             lucro = custo_cliente - cost_real_usd
@@ -374,12 +440,10 @@ class WalletManager:
             tx_result = self.sb.table("wallet_transactions").insert({
                 "user_id": user_id,
                 "type": "admin_credit",
-                "amount": amount_usd,
-                "balance_before": current,
-                "balance_after": new_balance,
-                "reason": description,
-                "status": "completed",
-                "completed_at": datetime.now().isoformat(),
+                "amount_usd": amount_usd,
+                "balance_after_usd": new_balance,
+                "description": description,
+                "admin_id": admin_id,
             }).execute()
 
             transaction_id = tx_result.data[0]["id"]
