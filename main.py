@@ -88,15 +88,48 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRespons
     )
 
 
+def _extract_user_info(request: Request) -> dict:
+    """Extrai user_id, email e IP do request."""
+    ip = get_remote_address(request)
+    info = {"ip": ip, "user_id": None, "email": None}
+
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            import jwt as pyjwt
+            payload = pyjwt.decode(
+                auth[7:],
+                options={"verify_signature": False, "verify_exp": False},
+            )
+            info["user_id"] = payload.get("sub", "")
+            info["email"] = payload.get("email", "")
+        except Exception:
+            pass
+
+    return info
+
+
 def _register_security_alert(request: Request, limit_detail: str):
     """Regista alerta de segurança quando limite diário é atingido."""
-    offender = _get_user_or_ip(request)
+    user_info = _extract_user_info(request)
     endpoint = request.url.path
-    detail = f"Limite diário atingido: {limit_detail} em {endpoint}"
+
+    # Construir descrição legível
+    parts = [f"Limite diário atingido: {limit_detail}"]
+    parts.append(f"Endpoint: {endpoint}")
+    parts.append(f"IP: {user_info['ip']}")
+    if user_info["email"]:
+        parts.append(f"Email: {user_info['email']}")
+    if user_info["user_id"]:
+        parts.append(f"User ID: {user_info['user_id']}")
+    detail = " | ".join(parts)
+
+    # Identificar o ofensor (email > user_id > IP)
+    offender = user_info["email"] or user_info["user_id"] or user_info["ip"]
 
     logger.critical(
         f"[SECURITY ALERT] Bloqueio 24h activado! "
-        f"Ofensor: {offender} | Endpoint: {endpoint} | Detalhe: {limit_detail}"
+        f"Ofensor: {offender} | IP: {user_info['ip']} | Endpoint: {endpoint}"
     )
 
     try:
