@@ -14,6 +14,7 @@ Servidor principal com:
 import io
 import os
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -22,6 +23,9 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 from pydantic import BaseModel
 
 from auth_service import get_current_user, get_supabase, get_supabase_admin
@@ -84,14 +88,29 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS - permitir frontend Lovable e qualquer subdomínio
+# Security headers
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS - permitir frontend Lovable e localhost para dev
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://.*\.lovableproject\.com",
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+    ],
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -143,8 +162,30 @@ async def analyze(
       3. Liquida créditos (custo real) ou cancela bloqueio (se erro)
       4. Retorna resultado completo em JSON
     """
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+    ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".doc"}
+
     try:
         file_bytes = await file.read()
+
+        if len(file_bytes) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Ficheiro demasiado grande. Máximo: 50MB.",
+            )
+
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Tipo de ficheiro não suportado. Aceites: {', '.join(ALLOWED_EXTENSIONS)}",
+            )
+
+        if tier not in ("bronze", "silver", "gold"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Tier inválido. Opções: bronze, silver, gold.",
+            )
 
         resultado = executar_analise_documento(
             user_id=user["id"],
@@ -395,14 +436,15 @@ async def export_pdf(req: ExportRequest):
     try:
         pdf_bytes = _build_pdf(req.analysis_result)
         run_id = req.analysis_result.get("run_id", "relatorio")
+        safe_id = "".join(c for c in str(run_id) if c.isalnum() or c in "-_")[:64]
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename=relatorio_{run_id}.pdf"},
+            headers={"Content-Disposition": f'attachment; filename="relatorio_{safe_id}.pdf"'},
         )
     except Exception as e:
         logger.exception("Erro ao gerar PDF")
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao gerar PDF.")
 
 
 @app.post("/export/docx")
@@ -411,14 +453,15 @@ async def export_docx(req: ExportRequest):
     try:
         docx_bytes = _build_docx(req.analysis_result)
         run_id = req.analysis_result.get("run_id", "relatorio")
+        safe_id = "".join(c for c in str(run_id) if c.isalnum() or c in "-_")[:64]
         return StreamingResponse(
             io.BytesIO(docx_bytes),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f"attachment; filename=relatorio_{run_id}.docx"},
+            headers={"Content-Disposition": f'attachment; filename="relatorio_{safe_id}.docx"'},
         )
     except Exception as e:
         logger.exception("Erro ao gerar DOCX")
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar DOCX: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao gerar DOCX.")
 
 
 # ============================================================
@@ -505,6 +548,8 @@ async def ask_question(req: AskRequest):
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="A pergunta não pode estar vazia.")
+    if len(question) > 5000:
+        raise HTTPException(status_code=422, detail="Pergunta demasiado longa. Máximo: 5000 caracteres.")
 
     context = _build_ask_context(req.analysis_result, req.previous_qa)
 
@@ -627,7 +672,7 @@ async def add_document_to_project(
         doc = carregar_documento_de_bytes(file_bytes, filename)
         novo_texto = doc.text
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Erro ao extrair texto: {e}")
+        raise HTTPException(status_code=422, detail="Erro ao extrair texto do documento.")
 
     if not novo_texto or len(novo_texto.strip()) < 50:
         raise HTTPException(
@@ -639,10 +684,10 @@ async def add_document_to_project(
         sb = get_supabase_admin()
         doc_resp = sb.table("documents").select("analysis_result, user_id").eq("id", document_id).single().execute()
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Documento não encontrado: {e}")
+        raise HTTPException(status_code=404, detail="Documento não encontrado.")
 
     doc_user_id = doc_resp.data.get("user_id", "")
-    if doc_user_id and doc_user_id != user.get("id"):
+    if doc_user_id != user.get("id"):
         raise HTTPException(status_code=403, detail="Sem permissão para este documento.")
 
     current_result = doc_resp.data.get("analysis_result") or {}
@@ -660,7 +705,7 @@ async def add_document_to_project(
             {"analysis_result": current_result}
         ).eq("id", document_id).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao guardar no Supabase: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao guardar documento.")
 
     logger.info(
         f"Documento adicionado: doc={document_id}, file={filename}, "
@@ -828,18 +873,22 @@ async def admin_profit_report(
 # ADMIN - VERIFICAÇÃO DE PASSWORD
 # ============================================================
 
-@app.get("/admin/verify")
-async def admin_verify(password: str = ""):
+class AdminVerifyRequest(BaseModel):
+    password: str
+
+
+@app.post("/admin/verify")
+async def admin_verify(req: AdminVerifyRequest):
     """Verifica a password de admin para acesso ao painel de diagnóstico."""
     admin_password = os.environ.get("ADMIN_PASSWORD", "")
 
     if not admin_password:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ADMIN_PASSWORD não configurada no servidor.",
+            detail="Configuração de admin em falta.",
         )
 
-    if password != admin_password:
+    if not secrets.compare_digest(req.password, admin_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Password incorrecta.",

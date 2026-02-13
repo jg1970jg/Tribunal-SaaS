@@ -26,6 +26,7 @@ NOTA TÉCNICA (Fev 2026):
 """
 
 import os
+import hashlib
 import logging
 import time
 import jwt as pyjwt
@@ -78,8 +79,8 @@ def get_supabase_admin() -> Client:
 
 
 def _get_token_hash(token: str) -> str:
-    """Hash rápido do token para cache (primeiros e últimos 16 chars)."""
-    return f"{token[:16]}...{token[-16:]}"
+    """SHA256 hash do token para cache."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _decode_and_validate_token(token: str) -> dict | None:
