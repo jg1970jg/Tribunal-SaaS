@@ -10,18 +10,21 @@ Recebe:
   - area_direito (str)
   - perguntas_raw (str, opcional)
   - user_id (str) para verificacao de saldo no Supabase
+  - tier (str) para selecao de modelos (bronze/silver/gold)
 
 Retorna:
   - PipelineResult com todos os resultados
 
-Verificacao de saldo:
-  - Antes de iniciar, consulta user_wallets no Supabase
-  - Se saldo < SALDO_MINIMO (2.00 EUR), lanca InsufficientBalanceError
+Sistema de Wallet (block/settle/cancel):
+  - ANTES de processar: bloqueia creditos estimados
+  - APOS sucesso: liquida creditos (debita real, devolve diferenca)
+  - SE erro: cancela bloqueio (devolve tudo)
 ============================================================
 """
 
 import os
 import sys
+import uuid
 from pathlib import Path
 
 # Garantir que o projecto raiz esta no path (para auth_service, etc.)
@@ -35,13 +38,23 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Callable
 
-# Wallet imports
-from src.wallet_manager import WalletManager
-from src.tier_config import TierLevel, calculate_tier_cost, TIER_CONFIG
+# --- Wallet imports (APENAS de wallet_manager.py) ---
+from src.wallet_manager import (
+    WalletManager as NewWalletManager,
+    InsufficientCreditsError,
+    WalletError,
+)
+
+# --- Tier imports ---
+from src.tier_config import (
+    TierLevel,
+    calculate_tier_cost,
+    get_tier_models,
+    TIER_CONFIG,
+)
+
 from dataclasses import dataclass
 
-# Nota: src.__init__.py estende __path__ para incluir Referencia antiga/src/
-# Portanto todos os imports `from src.*` encontram os modulos da referencia.
 from src.config import (
     AREAS_DIREITO,
     OPENROUTER_API_KEY,
@@ -52,12 +65,9 @@ from src.document_loader import DocumentLoader, DocumentContent
 from src.llm_client import get_llm_client
 from src.utils.perguntas import parse_perguntas, validar_perguntas
 from src.utils.metadata_manager import gerar_titulo_automatico
-from src.wallet import WalletManager, InsufficientBalanceError as WalletInsufficientBalance
-
 from auth_service import get_supabase_admin
 
 logger = logging.getLogger(__name__)
-
 
 # ============================================================
 # EXCEPCOES CUSTOMIZADAS
@@ -67,10 +77,8 @@ class EngineError(Exception):
     """Erro base do engine."""
     pass
 
-
 class InsufficientBalanceError(EngineError):
     """Saldo insuficiente para executar a analise."""
-
     def __init__(self, saldo_atual: float, saldo_necessario: float = 0.50):
         self.saldo_atual = saldo_atual
         self.saldo_minimo = saldo_necessario  # compat com main.py
@@ -80,11 +88,9 @@ class InsufficientBalanceError(EngineError):
             f"Necessario: ~${saldo_necessario:.2f} USD."
         )
 
-
 class InvalidDocumentError(EngineError):
     """Documento invalido ou sem texto extraivel."""
     pass
-
 
 class MissingApiKeyError(EngineError):
     """API Key nao configurada."""
@@ -95,80 +101,140 @@ class MissingApiKeyError(EngineError):
 # WALLET MANAGER (singleton)
 # ============================================================
 
-_wallet_manager: Optional[WalletManager] = None
+_wallet_manager: Optional[NewWalletManager] = None
 
-
-def get_wallet_manager() -> WalletManager:
+def get_wallet_manager() -> NewWalletManager:
     """Retorna WalletManager singleton (usa service_role key)."""
     global _wallet_manager
     if _wallet_manager is None:
         sb = get_supabase_admin()
-        _wallet_manager = WalletManager(sb)
+        _wallet_manager = NewWalletManager(sb)
     return _wallet_manager
+
+
+def _is_wallet_skip() -> bool:
+    """Verifica se SKIP_WALLET_CHECK esta ativo."""
+    return os.environ.get("SKIP_WALLET_CHECK", "").lower() == "true"
 
 
 def verificar_saldo_wallet(user_id: str, num_chars: int = 0) -> Dict[str, Any]:
     """
     Verifica saldo do utilizador usando WalletManager.
-
     Se SKIP_WALLET_CHECK=true, ignora a verificação.
-
-    Args:
-        user_id: UUID do utilizador
-        num_chars: Caracteres do documento (para estimativa)
-
-    Returns:
-        Dict com saldo_atual, custo_estimado, suficiente
-
-    Raises:
-        InsufficientBalanceError: Se saldo insuficiente
     """
-    skip = os.environ.get("SKIP_WALLET_CHECK", "").lower() == "true"
-
-    if skip:
+    if _is_wallet_skip():
         print(f"[WALLET] SKIP_WALLET_CHECK ativo - ignorando verificação de saldo")
         return {"saldo_atual": 999.99, "custo_estimado": 0.0, "suficiente": True}
 
     wm = get_wallet_manager()
-
     try:
-        return wm.check_sufficient_balance(user_id, num_chars=num_chars)
-    except WalletInsufficientBalance as e:
-        raise InsufficientBalanceError(
-            saldo_atual=e.saldo_atual,
-            saldo_necessario=e.saldo_necessario,
-        )
+        balance = wm.get_balance(user_id)
+        return {
+            "saldo_atual": balance["available"],
+            "custo_estimado": 0.0,
+            "suficiente": balance["available"] > 0.50,
+        }
+    except Exception as e:
+        logger.error(f"Erro ao verificar saldo: {e}")
+        raise InsufficientBalanceError(saldo_atual=0.0, saldo_necessario=0.50)
 
 
-def debitar_wallet(user_id: str, cost_real_usd: float, run_id: str) -> Dict[str, Any]:
+def bloquear_creditos(
+    user_id: str,
+    analysis_id: str,
+    tier: TierLevel,
+    document_tokens: int = 0,
+) -> Dict[str, Any]:
     """
-    Debita custo real da análise (× markup) da wallet.
+    Bloqueia creditos ANTES do processamento.
 
     Args:
         user_id: UUID do utilizador
-        cost_real_usd: Custo real das APIs em USD
-        run_id: ID da execução
+        analysis_id: UUID da analise
+        tier: Nivel do tier selecionado
+        document_tokens: Tamanho do documento em tokens
 
     Returns:
-        Dict com custo_real, custo_cliente, saldo_antes, saldo_depois, etc.
+        Dict com transaction_id, blocked_usd, balance_after
+
+    Raises:
+        InsufficientBalanceError: Se saldo insuficiente
     """
-    skip = os.environ.get("SKIP_WALLET_CHECK", "").lower() == "true"
-    if skip:
-        print(f"[WALLET] SKIP_WALLET_CHECK ativo - débito ignorado (custo real=${cost_real_usd:.4f})")
+    if _is_wallet_skip():
+        print(f"[WALLET] SKIP - bloqueio ignorado para analysis {analysis_id}")
         return {
-            "custo_real": cost_real_usd,
-            "custo_cliente": 0.0,
-            "valor_debitado": 0.0,
-            "saldo_antes": 999.99,
-            "saldo_depois": 999.99,
-            "markup": 1.47,
-            "debito_parcial": False,
-            "lucro": 0.0,
-            "run_id": run_id,
+            "transaction_id": "skip",
+            "blocked_usd": 0.0,
+            "balance_after": 999.99,
         }
 
     wm = get_wallet_manager()
-    return wm.debit(user_id, cost_real_usd=cost_real_usd, run_id=run_id)
+
+    # Calcular custo estimado com base no tier
+    costs = calculate_tier_cost(tier, document_tokens)
+    estimated_cost = costs["custo_cliente"]  # Ja inclui margem 100%
+
+    try:
+        result = wm.block_credits(
+            user_id=user_id,
+            analysis_id=analysis_id,
+            estimated_cost_usd=estimated_cost,
+            reason=f"Analise tier={tier.value}",
+        )
+        print(
+            f"[WALLET] Bloqueio OK: analysis={analysis_id}, "
+            f"tier={tier.value}, blocked=${result['blocked_usd']:.4f}"
+        )
+        return result
+    except InsufficientCreditsError as e:
+        raise InsufficientBalanceError(
+            saldo_atual=e.available,
+            saldo_necessario=e.required,
+        )
+
+
+def liquidar_creditos(analysis_id: str, custo_real_usd: float) -> Dict[str, Any]:
+    """
+    Liquida creditos APOS processamento com sucesso.
+    Debita custo real x2 (margem 100%), devolve diferenca.
+    """
+    if _is_wallet_skip():
+        print(f"[WALLET] SKIP - liquidacao ignorada (custo real=${custo_real_usd:.4f})")
+        return {
+            "status": "skipped",
+            "real_cost": custo_real_usd,
+            "blocked": 0.0,
+            "refunded": 0.0,
+        }
+
+    wm = get_wallet_manager()
+    try:
+        result = wm.settle_credits(
+            analysis_id=analysis_id,
+            real_cost_usd=custo_real_usd,
+        )
+        print(
+            f"[WALLET] Liquidacao OK: analysis={analysis_id}, "
+            f"real=${custo_real_usd:.4f}, refunded=${result.get('refunded', 0):.4f}"
+        )
+        return result
+    except Exception as e:
+        logger.error(f"[WALLET] ERRO ao liquidar (analise JA executada): {e}")
+        return {"status": "error", "error": str(e), "real_cost": custo_real_usd}
+
+
+def cancelar_bloqueio(analysis_id: str) -> None:
+    """Cancela bloqueio se analise falhar. Devolve tudo."""
+    if _is_wallet_skip():
+        print(f"[WALLET] SKIP - cancelamento ignorado para {analysis_id}")
+        return
+
+    wm = get_wallet_manager()
+    try:
+        wm.cancel_block(analysis_id=analysis_id)
+        print(f"[WALLET] Bloqueio cancelado: analysis={analysis_id}")
+    except Exception as e:
+        logger.error(f"[WALLET] ERRO ao cancelar bloqueio: {e}")
 
 
 # ============================================================
@@ -259,7 +325,6 @@ def carregar_multiplos_documentos(
             documentos.append(doc)
         except InvalidDocumentError as e:
             print(f"[AVISO] {e}")
-
     return documentos
 
 
@@ -309,71 +374,82 @@ def executar_analise(
     area_direito: str = "Civil",
     perguntas_raw: str = "",
     titulo: str = "",
+    tier: str = "bronze",
     use_pdf_safe: bool = True,
-    chefe_model_key: str = "gpt-5.2",
-    presidente_model_key: str = "gpt-5.2",
-    auditor_claude_model: str = "sonnet-4.5",
-    juiz_claude_model: str = "sonnet-4.5",
     callback_progresso: Optional[Callable[[str, int, str], None]] = None,
 ) -> PipelineResult:
     """
     Funcao principal do engine. Executa a analise completa do Tribunal.
 
     Fluxo:
-        1. Verifica saldo no Supabase (>= 2.00 EUR)
-        2. Valida API keys
-        3. Carrega documento (bytes) ou usa texto direto
-        4. Executa pipeline de 4 fases via TribunalProcessor
-        5. Retorna PipelineResult
+      1. Determina tier e modelos
+      2. Valida API keys e inputs
+      3. Carrega documento
+      4. BLOQUEIA creditos (wallet)
+      5. Executa pipeline de 4 fases
+      6. LIQUIDA creditos (sucesso) ou CANCELA bloqueio (erro)
+      7. Retorna PipelineResult
 
     Args:
         user_id: UUID do utilizador autenticado
-        file_bytes: Conteudo binario do ficheiro (mutualmente exclusivo com texto)
-        filename: Nome do ficheiro (obrigatorio se file_bytes fornecido)
-        texto: Texto direto para analise (mutualmente exclusivo com file_bytes)
+        file_bytes: Conteudo binario do ficheiro
+        filename: Nome do ficheiro
+        texto: Texto direto para analise
         area_direito: Area do direito (Civil, Penal, Trabalho, etc.)
         perguntas_raw: Perguntas do utilizador separadas por ---
-        titulo: Titulo do projecto (opcional, gerado automaticamente se vazio)
+        titulo: Titulo do projecto (opcional)
+        tier: Tier selecionado (bronze, silver, gold)
         use_pdf_safe: Usar extracao segura pagina-a-pagina para PDFs
-        chefe_model_key: Chave do modelo Chefe ("gpt-5.2" ou "gpt-5.2-pro")
-        presidente_model_key: Chave do modelo Presidente ("gpt-5.2" ou "gpt-5.2-pro")
-        auditor_claude_model: Chave do modelo Auditor Claude ("sonnet-4.5" ou "opus-4.6")
-        juiz_claude_model: Chave do modelo Juiz Claude ("sonnet-4.5" ou "opus-4.6")
         callback_progresso: Callback(fase, progresso_percent, mensagem)
 
     Returns:
         PipelineResult com todos os resultados
 
     Raises:
-        InsufficientBalanceError: Se saldo < 2.00 EUR
+        InsufficientBalanceError: Se saldo insuficiente
         InvalidDocumentError: Se documento invalido
         MissingApiKeyError: Se API key nao configurada
         EngineError: Outros erros
     """
     timestamp_inicio = datetime.now()
+    analysis_id = str(uuid.uuid4())
 
-    # ── 1. Verificar saldo na wallet (com estimativa por tamanho) ──
+    # ── 1. Determinar tier e modelos ──
+    try:
+        tier_level = TierLevel(tier.lower())
+    except ValueError:
+        tier_level = TierLevel.BRONZE
+        print(f"[ENGINE] Tier '{tier}' invalido, usando BRONZE")
+
+    tier_models = get_tier_models(tier_level)
+    print(f"[ENGINE] Tier: {tier_level.value} | Analysis ID: {analysis_id}")
+
+    # Extrair modelos do tier
+    chefe_model_key = tier_models.get("audit_chief", "gpt-5.2")
+    presidente_model_key = tier_models.get("president", "gpt-5.2")
+    auditor_claude_model = tier_models.get("audit_claude", "sonnet-4.5")
+    juiz_claude_model = tier_models.get("judgment_claude", "sonnet-4.5")
+    extraction_model = tier_models.get("extraction", "sonnet-4.5")
+
+    # ── 2. Verificar saldo basico ──
     print(f"[ENGINE] Verificando saldo wallet para user {user_id[:8]}...")
-    wallet_info = verificar_saldo_wallet(user_id, num_chars=0)  # chars estimados após carregar doc
+    wallet_info = verificar_saldo_wallet(user_id, num_chars=0)
     print(f"[ENGINE] Saldo OK: ${wallet_info['saldo_atual']:.2f} USD")
 
-    # ── 2. Validar API keys ──
+    # ── 3. Validar API keys ──
     if not OPENROUTER_API_KEY or len(OPENROUTER_API_KEY) < 10:
         raise MissingApiKeyError(
             "OPENROUTER_API_KEY nao configurada. "
             "Defina no ficheiro .env"
         )
 
-    # ── 3. Validar inputs ──
+    # ── 4. Validar inputs ──
     if file_bytes is None and texto is None:
         raise EngineError("Deve fornecer file_bytes ou texto.")
-
     if file_bytes is not None and texto is not None:
         raise EngineError("Forneça file_bytes OU texto, nao ambos.")
-
     if file_bytes is not None and not filename:
         raise EngineError("filename e obrigatorio quando file_bytes e fornecido.")
-
     if area_direito not in AREAS_DIREITO:
         raise EngineError(
             f"Area do direito invalida: '{area_direito}'. "
@@ -391,36 +467,36 @@ def executar_analise(
     else:
         print("[ENGINE] Sem perguntas do utilizador")
 
-    # ── 4. Configurar modelos premium ──
+    # ── 5. Configurar modelos conforme tier ──
     from src.config import (
-        get_chefe_model, get_presidente_model,
-        get_auditor_claude_model, get_juiz_claude_model,
+        get_chefe_model,
+        get_presidente_model,
+        get_auditor_claude_model,
+        get_juiz_claude_model,
     )
     import src.config as config_module
 
     config_module.CHEFE_MODEL = get_chefe_model(chefe_model_key)
     config_module.PRESIDENTE_MODEL = get_presidente_model(presidente_model_key)
 
-    # Configurar modelo Claude para Auditor A2 e Juiz J2
     auditor_model = get_auditor_claude_model(auditor_claude_model)
     juiz_model = get_juiz_claude_model(juiz_claude_model)
 
-    # Actualizar A2 na lista de auditores
     if len(config_module.AUDITOR_MODELS) > 1:
         config_module.AUDITOR_MODELS[1] = auditor_model
         config_module.AUDITORES[1]["model"] = auditor_model
 
-    # Actualizar J2 na lista de juízes
     if len(config_module.JUIZ_MODELS) > 1:
         config_module.JUIZ_MODELS[1] = juiz_model
         config_module.JUIZES[1]["model"] = juiz_model
 
     print(
-        f"[ENGINE] Modelos: Chefe={chefe_model_key}, Presidente={presidente_model_key}, "
+        f"[ENGINE] Modelos ({tier_level.value}): "
+        f"Chefe={chefe_model_key}, Presidente={presidente_model_key}, "
         f"Auditor_Claude={auditor_claude_model}, Juiz_Claude={juiz_claude_model}"
     )
 
-    # ── 5. Carregar documento ou criar a partir de texto ──
+    # ── 6. Carregar documento ou criar a partir de texto ──
     if file_bytes is not None:
         print(f"[ENGINE] Carregando documento: {filename}")
         temp_out_dir = OUTPUT_DIR / f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -431,10 +507,8 @@ def executar_analise(
             out_dir=temp_out_dir if use_pdf_safe else None,
         )
     else:
-        # Texto direto
         if len(texto.strip()) < 50:
             raise EngineError("Texto deve ter pelo menos 50 caracteres.")
-
         documento = DocumentContent(
             filename="texto_direto.txt",
             extension=".txt",
@@ -445,28 +519,39 @@ def executar_analise(
         )
         print(f"[ENGINE] Texto direto: {len(texto):,} caracteres")
 
-    # ── 5b. Re-verificar saldo com estimativa baseada no tamanho real ──
-    num_chars = documento.num_chars if documento else 0
-    if num_chars > 0:
-        wallet_info = verificar_saldo_wallet(user_id, num_chars=num_chars)
-        print(
-            f"[ENGINE] Saldo re-check com {num_chars:,} chars: "
-            f"saldo=${wallet_info['saldo_atual']:.2f} "
-            f"estimativa=~${wallet_info['custo_estimado']:.2f}"
-        )
-
-    # ── 6. Gerar titulo se nao fornecido ──
+    # ── 7. Gerar titulo se nao fornecido ──
     if not titulo:
         titulo = gerar_titulo_automatico(documento.filename, area_direito)
     print(f"[ENGINE] Titulo: {titulo}")
 
-    # ── 7. Callback de progresso (wrapper para print) ──
+    # ── 8. BLOQUEAR CREDITOS (antes de processar) ──
+    num_chars = documento.num_chars if documento else 0
+    document_tokens = num_chars // 4  # Estimativa grosseira
+
+    try:
+        block_result = bloquear_creditos(
+            user_id=user_id,
+            analysis_id=analysis_id,
+            tier=tier_level,
+            document_tokens=document_tokens,
+        )
+        print(
+            f"[ENGINE] Creditos bloqueados: ${block_result['blocked_usd']:.4f}, "
+            f"saldo restante: ${block_result['balance_after']:.2f}"
+        )
+    except InsufficientBalanceError:
+        raise  # Re-raise para o main.py tratar
+    except Exception as e:
+        logger.error(f"[ENGINE] Erro ao bloquear creditos: {e}")
+        raise EngineError(f"Erro ao preparar pagamento: {e}")
+
+    # ── 9. Callback de progresso ──
     def _callback_default(fase: str, progresso: int, mensagem: str):
         print(f"[{progresso:3d}%] {fase}: {mensagem}")
 
     callback = callback_progresso or _callback_default
 
-    # ── 8. Executar pipeline ──
+    # ── 10. Executar pipeline ──
     print(f"[ENGINE] Iniciando pipeline de 4 fases...")
     print(f"[ENGINE] Area: {area_direito}")
     print(f"[ENGINE] Documento: {documento.filename} ({documento.num_chars:,} chars)")
@@ -475,44 +560,44 @@ def executar_analise(
         processor = TribunalProcessor(callback_progresso=callback)
         resultado = processor.processar(documento, area_direito, perguntas_raw, titulo)
     except ValueError as e:
+        # ── ERRO: Cancelar bloqueio ──
+        cancelar_bloqueio(analysis_id)
         raise EngineError(f"Erro de validacao no pipeline: {e}")
     except Exception as e:
+        # ── ERRO: Cancelar bloqueio ──
+        cancelar_bloqueio(analysis_id)
         logger.exception("Erro fatal no pipeline")
         raise EngineError(f"Erro no pipeline: {e}")
 
-    # ── 9. Debitar wallet com custo REAL ──
+    # ── 11. LIQUIDAR CREDITOS (sucesso) ──
     custo_real_usd = 0.0
     if resultado.custos and resultado.custos.get("custo_total_usd"):
         custo_real_usd = float(resultado.custos["custo_total_usd"])
 
-    wallet_debit = None
+    wallet_settlement = None
     if custo_real_usd > 0:
-        try:
-            wallet_debit = debitar_wallet(user_id, custo_real_usd, resultado.run_id)
-            print(
-                f"[ENGINE] Wallet debitada: real=${custo_real_usd:.4f} "
-                f"cliente=${wallet_debit['custo_cliente']:.4f} "
-                f"saldo=${wallet_debit['saldo_depois']:.2f}"
-            )
-        except Exception as e:
-            logger.error(f"[ENGINE] ERRO ao debitar wallet (análise JÁ executada): {e}")
-            wallet_debit = {"erro": str(e), "custo_real": custo_real_usd}
+        wallet_settlement = liquidar_creditos(analysis_id, custo_real_usd)
     else:
-        logger.warning("[ENGINE] Custo real = $0.00 — débito ignorado")
+        # Custo = 0, cancelar bloqueio
+        logger.warning("[ENGINE] Custo real = $0.00 — cancelando bloqueio")
+        cancelar_bloqueio(analysis_id)
+        wallet_settlement = {"status": "cancelled_zero_cost", "real_cost": 0.0}
 
     # Adicionar info da wallet ao resultado
     if resultado.custos is None:
         resultado.custos = {}
-    if wallet_debit:
-        resultado.custos["wallet"] = wallet_debit
+    resultado.custos["wallet"] = wallet_settlement
+    resultado.custos["tier"] = tier_level.value
+    resultado.custos["analysis_id"] = analysis_id
 
-    # ── 10. Reportar resultado ──
+    # ── 12. Reportar resultado ──
     duracao = (datetime.now() - timestamp_inicio).total_seconds()
     print(f"[ENGINE] Pipeline concluido em {duracao:.1f}s")
     print(f"[ENGINE] Veredicto: {resultado.simbolo_final} {resultado.veredicto_final}")
     print(f"[ENGINE] Tokens: {resultado.total_tokens:,}")
     if custo_real_usd > 0:
         print(f"[ENGINE] Custo APIs: ${custo_real_usd:.4f}")
+    print(f"[ENGINE] Tier: {tier_level.value} | Analysis ID: {analysis_id}")
     print(f"[ENGINE] Run ID: {resultado.run_id}")
 
     return resultado
@@ -525,9 +610,7 @@ def executar_analise_texto(
     perguntas_raw: str = "",
     **kwargs,
 ) -> PipelineResult:
-    """
-    Atalho para executar_analise com texto direto.
-    """
+    """Atalho para executar_analise com texto direto."""
     return executar_analise(
         user_id=user_id,
         texto=texto,
@@ -545,9 +628,7 @@ def executar_analise_documento(
     perguntas_raw: str = "",
     **kwargs,
 ) -> PipelineResult:
-    """
-    Atalho para executar_analise com ficheiro binario.
-    """
+    """Atalho para executar_analise com ficheiro binario."""
     return executar_analise(
         user_id=user_id,
         file_bytes=file_bytes,
@@ -564,6 +645,7 @@ def executar_analise_multiplos_documentos(
     area_direito: str = "Civil",
     perguntas_raw: str = "",
     titulo: str = "",
+    tier: str = "bronze",
     use_pdf_safe: bool = True,
     **kwargs,
 ) -> PipelineResult:
@@ -576,6 +658,7 @@ def executar_analise_multiplos_documentos(
         area_direito: Area do direito
         perguntas_raw: Perguntas separadas por ---
         titulo: Titulo do projecto
+        tier: Tier selecionado (bronze, silver, gold)
         use_pdf_safe: Usar PDF Seguro
         **kwargs: Argumentos adicionais para executar_analise
 
@@ -600,7 +683,7 @@ def executar_analise_multiplos_documentos(
     # Combinar documentos
     documento_combinado = combinar_documentos(documentos)
 
-    # Executar com o documento combinado (sem re-verificar saldo)
+    # Executar com o documento combinado
     return executar_analise(
         user_id=user_id,
         file_bytes=documento_combinado.text.encode("utf-8"),
@@ -609,6 +692,7 @@ def executar_analise_multiplos_documentos(
         area_direito=area_direito,
         perguntas_raw=perguntas_raw,
         titulo=titulo,
+        tier=tier,
         use_pdf_safe=False,  # Ja foi processado
         **kwargs,
     )
