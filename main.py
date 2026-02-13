@@ -730,10 +730,12 @@ async def wallet_balance(user: dict = Depends(get_current_user)):
         wm = get_wallet_manager()
         saldo = wm.get_balance(user["id"], user_email=user.get("email", ""))
         markup = wm.get_markup_multiplier()
+        # get_balance retorna float (saldo total em USD)
+        balance = saldo if isinstance(saldo, (int, float)) else saldo.get("available", 0)
         return {
-            "balance_usd": saldo["available"],
-            "total_usd": saldo["total"],
-            "blocked_usd": saldo["blocked"],
+            "balance_usd": balance,
+            "total_usd": balance,
+            "blocked_usd": 0.0,
             "moeda": "USD",
             "markup_multiplier": markup,
         }
