@@ -6,7 +6,8 @@ Servidor principal com:
   - Conexão ao Supabase
   - Rota de saúde (GET /health)
   - Rota protegida de teste (GET /me)
-  - Rota de análise (POST /analyze)
+  - Rota de análise (POST /analyze) com suporte a tiers
+  - Endpoints de wallet e admin
 ============================================================
 """
 
@@ -50,7 +51,6 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     """Inicializa recursos no arranque e limpa no shutdown."""
     # -- Startup --
-    # Validar que as variáveis obrigatórias existem
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_key = os.environ.get("SUPABASE_KEY", "")
     service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -68,9 +68,7 @@ async def lifespan(app: FastAPI):
         print(f"[OK] Supabase (service_role) conectado.")
 
     print("[OK] Tribunal SaaS V2 - Servidor iniciado.")
-
     yield
-
     # -- Shutdown --
     print("[OK] Servidor encerrado.")
 
@@ -126,19 +124,24 @@ async def analyze(
     area_direito: str = Form("Civil"),
     perguntas_raw: str = Form(""),
     titulo: str = Form(""),
-    chefe_model_key: str = Form("gpt-5.2"),
-    presidente_model_key: str = Form("gpt-5.2"),
-    auditor_claude_model: str = Form("sonnet-4.5"),
-    juiz_claude_model: str = Form("sonnet-4.5"),
+    tier: str = Form("bronze"),
     user: dict = Depends(get_current_user),
 ):
     """
     Executa a análise jurídica completa de um documento.
 
-    - Verifica saldo do utilizador (mínimo 2.00 EUR)
-    - Extrai texto do ficheiro (PDF, DOCX, XLSX, TXT)
-    - Executa pipeline de 4 fases (Extração, Auditoria, Julgamento, Presidente)
-    - Retorna resultado completo em JSON
+    Parâmetros:
+      - file: Ficheiro (PDF, DOCX, XLSX, TXT)
+      - area_direito: Área do direito (Civil, Penal, Trabalho, etc.)
+      - perguntas_raw: Perguntas separadas por ---
+      - titulo: Título do projecto (opcional)
+      - tier: Tier selecionado (bronze, silver, gold)
+
+    Fluxo:
+      1. Bloqueia créditos estimados (wallet)
+      2. Executa pipeline de 4 fases
+      3. Liquida créditos (custo real) ou cancela bloqueio (se erro)
+      4. Retorna resultado completo em JSON
     """
     try:
         file_bytes = await file.read()
@@ -150,10 +153,7 @@ async def analyze(
             area_direito=area_direito,
             perguntas_raw=perguntas_raw,
             titulo=titulo,
-            chefe_model_key=chefe_model_key,
-            presidente_model_key=presidente_model_key,
-            auditor_claude_model=auditor_claude_model,
-            juiz_claude_model=juiz_claude_model,
+            tier=tier,
         )
 
         return resultado.to_dict()
@@ -168,27 +168,23 @@ async def analyze(
                 "moeda": "USD",
             },
         )
-
     except InvalidDocumentError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e),
         )
-
     except MissingApiKeyError as e:
         logger.error(f"API Key em falta: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Serviço temporariamente indisponível. Contacte o suporte.",
         )
-
     except EngineError as e:
         logger.error(f"Erro do engine: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
         )
-
     except Exception as e:
         logger.exception("Erro inesperado no endpoint /analyze")
         raise HTTPException(
@@ -229,7 +225,8 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     ))
     styles.add(ParagraphStyle(
         "SectionHead", parent=styles["Heading1"],
-        fontSize=14, textColor=HexColor("#16213e"), spaceBefore=16, spaceAfter=8,
+        fontSize=14, textColor=HexColor("#16213e"),
+        spaceBefore=16, spaceAfter=8,
     ))
     styles.add(ParagraphStyle(
         "BodyText2", parent=styles["BodyText"],
@@ -270,7 +267,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     elements.append(Paragraph(f"{simbolo} {veredicto}", styles["BodyText2"]))
     elements.append(Spacer(1, 10))
 
-    # Fase 1 — Extração
+    # Fase 1
     elements.append(Paragraph("Fase 1 — Extração", styles["SectionHead"]))
     f1 = data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", "")
     for line in (f1 or "Sem dados de extração.").split("\n"):
@@ -279,7 +276,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
             elements.append(Paragraph(safe, styles["BodyText2"]))
     elements.append(Spacer(1, 10))
 
-    # Fase 2 — Auditoria
+    # Fase 2
     elements.append(Paragraph("Fase 2 — Auditoria", styles["SectionHead"]))
     f2 = data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", "")
     for line in (f2 or "Sem dados de auditoria.").split("\n"):
@@ -288,7 +285,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
             elements.append(Paragraph(safe, styles["BodyText2"]))
     elements.append(Spacer(1, 10))
 
-    # Fase 3 — Julgamento
+    # Fase 3
     elements.append(Paragraph("Fase 3 — Julgamento", styles["SectionHead"]))
     for p in data.get("fase3_pareceres", []):
         conteudo = p.get("conteudo", "") if isinstance(p, dict) else ""
@@ -301,7 +298,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
                 elements.append(Paragraph(safe, styles["BodyText2"]))
         elements.append(Spacer(1, 6))
 
-    # Fase 4 — Presidente
+    # Fase 4
     elements.append(Paragraph("Fase 4 — Decisão do Presidente", styles["SectionHead"]))
     f4 = data.get("fase3_presidente", "")
     for line in (f4 or "Sem decisão do presidente.").split("\n"):
@@ -327,16 +324,13 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     doc = Document()
-
     style = doc.styles["Normal"]
     style.font.size = Pt(10)
     style.font.name = "Calibri"
 
-    # Título
     title = doc.add_heading("Relatório de Análise Jurídica — Tribunal AI", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # Metadados (tabela)
     table = doc.add_table(rows=5, cols=2)
     table.style = "Light Grid Accent 1"
     meta_rows = [
@@ -353,27 +347,22 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
             for paragraph in cell.paragraphs:
                 for run in paragraph.runs:
                     run.font.size = Pt(9)
-
     doc.add_paragraph("")
 
-    # Veredicto Final
     doc.add_heading("Veredicto Final", level=1)
     simbolo = data.get("simbolo_final", "")
     veredicto = data.get("veredicto_final", "Sem veredicto")
     p = doc.add_paragraph(f"{simbolo} {veredicto}")
     p.runs[0].bold = True
 
-    # Fase 1
     doc.add_heading("Fase 1 — Extração", level=1)
     f1 = data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", "")
     doc.add_paragraph(f1 or "Sem dados de extração.")
 
-    # Fase 2
     doc.add_heading("Fase 2 — Auditoria", level=1)
     f2 = data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", "")
     doc.add_paragraph(f2 or "Sem dados de auditoria.")
 
-    # Fase 3
     doc.add_heading("Fase 3 — Julgamento", level=1)
     for p_data in data.get("fase3_pareceres", []):
         if isinstance(p_data, dict):
@@ -383,12 +372,10 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
                 doc.add_heading(modelo, level=2)
             doc.add_paragraph(conteudo)
 
-    # Fase 4
     doc.add_heading("Fase 4 — Decisão do Presidente", level=1)
     f4 = data.get("fase3_presidente", "")
     doc.add_paragraph(f4 or "Sem decisão do presidente.")
 
-    # Rodapé
     doc.add_paragraph("")
     footer = doc.add_paragraph(
         "Gerado automaticamente por Tribunal AI — "
@@ -490,7 +477,6 @@ def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] =
     if f4:
         parts.append(f"DECISÃO PRESIDENTE:\n{f4[:3000]}")
 
-    # Documentos adicionais (se existirem)
     docs_adicionais = data.get("documentos_adicionais", [])
     if docs_adicionais:
         parts.append("DOCUMENTOS ADICIONAIS:")
@@ -499,7 +485,6 @@ def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] =
             texto = doc.get("text", "")[:2000]
             parts.append(f"--- {nome} ---\n{texto}")
 
-    # Histórico de Q&A anteriores
     if previous_qa:
         parts.append("PERGUNTAS E RESPOSTAS ANTERIORES:")
         for qa in previous_qa:
@@ -512,8 +497,8 @@ def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] =
 @app.post("/ask")
 async def ask_question(req: AskRequest):
     """
-    Pergunta pós-análise: envia a pergunta a 3 LLMs com contexto
-    da análise anterior + histórico de Q&A e consolida as respostas.
+    Pergunta pós-análise: envia a pergunta a 3 LLMs com contexto da análise
+    anterior + histórico de Q&A e consolida as respostas.
     """
     from src.llm_client import get_llm_client
 
@@ -524,7 +509,6 @@ async def ask_question(req: AskRequest):
     context = _build_ask_context(req.analysis_result, req.previous_qa)
 
     prompt = f"""ANÁLISE JURÍDICA ANTERIOR:
-
 {context}
 
 PERGUNTA DO UTILIZADOR:
@@ -535,7 +519,6 @@ Responde de forma clara, citando legislação quando aplicável."""
     llm = get_llm_client()
     individual_responses: List[Dict[str, str]] = []
 
-    # Enviar a 3 LLMs
     for model in ASK_MODELS:
         try:
             resp = llm.chat_simple(
@@ -556,7 +539,6 @@ Responde de forma clara, citando legislação quando aplicável."""
                 "response": f"[Erro: modelo indisponível]",
             })
 
-    # Consolidar respostas
     if len([r for r in individual_responses if not r["response"].startswith("[Erro")]) == 0:
         raise HTTPException(
             status_code=503,
@@ -572,7 +554,6 @@ Responde de forma clara, citando legislação quando aplicável."""
     consolidation_prompt = f"""PERGUNTA: {question}
 
 RESPOSTAS DOS 3 JURISTAS:
-
 {respostas_texto}
 
 Consolida estas respostas numa única resposta final coerente."""
@@ -593,13 +574,11 @@ Consolida estas respostas numa única resposta final coerente."""
             "Não foi possível gerar resposta.",
         )
 
-    # Guardar Q&A no Supabase (se document_id fornecido)
     if req.document_id:
         try:
             sb = get_supabase_admin()
             doc_resp = sb.table("documents").select("analysis_result").eq("id", req.document_id).single().execute()
             current_result = doc_resp.data.get("analysis_result") or {}
-
             qa_history = current_result.get("qa_history", [])
             qa_history.append({
                 "question": question,
@@ -608,11 +587,9 @@ Consolida estas respostas numa única resposta final coerente."""
                 "timestamp": datetime.now().isoformat(),
             })
             current_result["qa_history"] = qa_history
-
             sb.table("documents").update(
                 {"analysis_result": current_result}
             ).eq("id", req.document_id).execute()
-
             logger.info(f"Q&A guardada no Supabase: doc={req.document_id}, total_qa={len(qa_history)}")
         except Exception as e:
             logger.warning(f"Erro ao guardar Q&A no Supabase: {e}")
@@ -640,14 +617,12 @@ async def add_document_to_project(
     """
     from src.engine import carregar_documento_de_bytes
 
-    # 1. Ler o ficheiro novo
     file_bytes = await file.read()
     filename = file.filename or "documento"
 
     if len(file_bytes) == 0:
         raise HTTPException(status_code=422, detail="Ficheiro vazio.")
 
-    # 2. Extrair texto
     try:
         doc = carregar_documento_de_bytes(file_bytes, filename)
         novo_texto = doc.text
@@ -660,21 +635,17 @@ async def add_document_to_project(
             detail="O documento não contém texto suficiente.",
         )
 
-    # 3. Ler analysis_result actual do Supabase
     try:
         sb = get_supabase_admin()
         doc_resp = sb.table("documents").select("analysis_result, user_id").eq("id", document_id).single().execute()
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Documento não encontrado: {e}")
 
-    # Verificar que o documento pertence ao utilizador
     doc_user_id = doc_resp.data.get("user_id", "")
     if doc_user_id and doc_user_id != user.get("id"):
         raise HTTPException(status_code=403, detail="Sem permissão para este documento.")
 
     current_result = doc_resp.data.get("analysis_result") or {}
-
-    # 4. Adicionar o novo texto ao campo "documentos_adicionais"
     docs_adicionais = current_result.get("documentos_adicionais", [])
     docs_adicionais.append({
         "filename": filename,
@@ -684,7 +655,6 @@ async def add_document_to_project(
     })
     current_result["documentos_adicionais"] = docs_adicionais
 
-    # 5. Gravar no Supabase
     try:
         sb.table("documents").update(
             {"analysis_result": current_result}
@@ -697,7 +667,6 @@ async def add_document_to_project(
         f"chars={len(novo_texto)}, total_docs_adicionais={len(docs_adicionais)}"
     )
 
-    # 6. Retornar confirmação
     return {
         "status": "ok",
         "document_id": document_id,
@@ -710,53 +679,51 @@ async def add_document_to_project(
 
 
 # ============================================================
-# WALLET ENDPOINTS
-# ============================================================
-
-@app.get("/wallet/balance")
-
-# ============================================================
 # TIER CONFIGURATION ENDPOINTS
 # ============================================================
 
 @app.get("/tiers")
 async def get_tiers():
-      """Retorna configuração de todos os tiers (Bronze/Prata/Ouro)."""
-      from src.tier_config import get_all_tiers_info
-      return {"tiers": get_all_tiers_info()}
+    """Retorna configuração de todos os tiers (Bronze/Prata/Ouro)."""
+    from src.tier_config import get_all_tiers_info
+    return {"tiers": get_all_tiers_info()}
+
 
 @app.post("/tiers/calculate")
-async def calculate_tier_cost(
-      tier: str,
-      document_tokens: int = 0,
+async def calculate_tier_cost_endpoint(
+    tier: str,
+    document_tokens: int = 0,
 ):
-      """
-          Calcula custo estimado para um tier.
-
-                  Query params:
-                          tier: bronze, silver ou gold
-                                  document_tokens: tamanho do documento em tokens (opcional)
-                                      """
-      from src.tier_config import TierLevel, calculate_tier_cost
-
+    """
+    Calcula custo estimado para um tier.
+    Query params:
+      tier: bronze, silver ou gold
+      document_tokens: tamanho do documento em tokens (opcional)
+    """
+    from src.tier_config import TierLevel, calculate_tier_cost as calc_cost
     try:
-              tier_level = TierLevel(tier.lower())
-except ValueError:
-          raise HTTPException(
-                        status_code=422,
-                        detail=f"Tier inválido: {tier}. Use: bronze, silver ou gold"
-          )
+        tier_level = TierLevel(tier.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Tier inválido: {tier}. Use: bronze, silver ou gold"
+        )
 
-    costs = calculate_tier_cost(tier_level, document_tokens)
-
+    costs = calc_cost(tier_level, document_tokens)
     return {
-              "tier": tier,
-              "custo_real_usd": costs["custo_real"],
-              "custo_cliente_usd": costs["custo_cliente"],
-              "bloqueio_usd": costs["bloqueio"],
-              "size_multiplier": costs["size_multiplier"],
+        "tier": tier,
+        "custo_real_usd": costs["custo_real"],
+        "custo_cliente_usd": costs["custo_cliente"],
+        "bloqueio_usd": costs["bloqueio"],
+        "size_multiplier": costs["size_multiplier"],
     }
-Page_Down
+
+
+# ============================================================
+# WALLET ENDPOINTS
+# ============================================================
+
+@app.get("/wallet/balance")
 async def wallet_balance(user: dict = Depends(get_current_user)):
     """Retorna saldo actual da wallet do utilizador."""
     try:
@@ -764,7 +731,9 @@ async def wallet_balance(user: dict = Depends(get_current_user)):
         saldo = wm.get_balance(user["id"], user_email=user.get("email", ""))
         markup = wm.get_markup_multiplier()
         return {
-            "balance_usd": saldo,
+            "balance_usd": saldo["available"],
+            "total_usd": saldo["total"],
+            "blocked_usd": saldo["blocked"],
             "moeda": "USD",
             "markup_multiplier": markup,
         }
@@ -805,15 +774,7 @@ async def wallet_credit(
     req: CreditRequest,
     user: dict = Depends(get_current_user),
 ):
-    """
-    Credita saldo na wallet de um utilizador (apenas admin).
-
-    Body:
-        user_id: UUID do utilizador a creditar
-        amount_usd: Valor em USD
-        description: Descrição do crédito
-    """
-    # Verificar se é admin
+    """Credita saldo na wallet de um utilizador (apenas admin)."""
     admin_email = (user.get("email", "") or "").lower().strip()
     if admin_email not in ADMIN_EMAILS:
         raise HTTPException(
@@ -845,12 +806,7 @@ async def admin_profit_report(
     days: int = 30,
     user: dict = Depends(get_current_user),
 ):
-    """
-    Relatório de lucro (apenas admin).
-
-    Query params:
-        days: Período em dias (default 30, max 365)
-    """
+    """Relatório de lucro (apenas admin)."""
     admin_email = (user.get("email", "") or "").lower().strip()
     if admin_email not in ADMIN_EMAILS:
         raise HTTPException(
@@ -872,22 +828,19 @@ async def admin_profit_report(
 
 @app.get("/admin/verify")
 async def admin_verify(password: str = ""):
-    """
-    Verifica a password de admin para acesso ao painel de diagnóstico.
-    A password é comparada com a variável de ambiente ADMIN_PASSWORD.
-    """
+    """Verifica a password de admin para acesso ao painel de diagnóstico."""
     admin_password = os.environ.get("ADMIN_PASSWORD", "")
-    
+
     if not admin_password:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="ADMIN_PASSWORD não configurada no servidor.",
         )
-    
+
     if password != admin_password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Password incorrecta.",
         )
-    
+
     return {"status": "ok", "message": "Acesso autorizado."}
