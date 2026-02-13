@@ -13,7 +13,7 @@ NOTA: Usa tabela `profiles` (NÃO `users`) para credits_balance/credits_blocked.
 
 import os
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from supabase import Client
 
