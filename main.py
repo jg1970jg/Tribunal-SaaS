@@ -316,7 +316,7 @@ async def security_middleware(request: Request, call_next):
 @app.get("/health")
 async def health():
     """Rota de saúde - verifica se o servidor está online."""
-    return {"status": "online", "version": "2026-02-13c"}
+    return {"status": "online", "version": "2026-02-13d"}
 
 
 # ============================================================
