@@ -73,13 +73,43 @@ limiter = Limiter(key_func=_get_user_or_ip)
 
 
 def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    limit_detail = str(exc.detail or "")
+    is_daily_block = "per 1 day" in limit_detail or "per day" in limit_detail
+
+    if is_daily_block:
+        _register_security_alert(request, limit_detail)
+
     return JSONResponse(
         status_code=429,
         content={
             "detail": "Demasiados pedidos. Tente novamente em breve.",
-            "retry_after": exc.detail,
+            "retry_after": limit_detail,
         },
     )
+
+
+def _register_security_alert(request: Request, limit_detail: str):
+    """Regista alerta de segurança quando limite diário é atingido."""
+    offender = _get_user_or_ip(request)
+    endpoint = request.url.path
+    detail = f"Limite diário atingido: {limit_detail} em {endpoint}"
+
+    logger.critical(
+        f"[SECURITY ALERT] Bloqueio 24h activado! "
+        f"Ofensor: {offender} | Endpoint: {endpoint} | Detalhe: {limit_detail}"
+    )
+
+    try:
+        from auth_service import get_supabase_admin
+        sb = get_supabase_admin()
+        sb.table("security_alerts").insert({
+            "alert_type": "daily_rate_limit",
+            "endpoint": endpoint,
+            "offender": offender,
+            "detail": detail,
+        }).execute()
+    except Exception as e:
+        logger.error(f"Erro ao registar alerta de segurança: {e}")
 
 
 # ============================================================
@@ -927,6 +957,67 @@ async def admin_profit_report(
     except Exception as e:
         logger.error(f"Erro ao gerar relatório de lucro: {e}")
         raise HTTPException(status_code=500, detail="Erro ao gerar relatório.")
+
+
+# ============================================================
+# ADMIN - ALERTAS DE SEGURANÇA
+# ============================================================
+
+@app.get("/admin/security-alerts")
+@limiter.limit("30/minute")
+async def admin_security_alerts(
+    request: Request,
+    resolved: bool = False,
+    limit: int = 50,
+    user: dict = Depends(get_current_user),
+):
+    """Lista alertas de segurança (apenas admin)."""
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores.",
+        )
+
+    try:
+        sb = get_supabase_admin()
+        result = sb.table("security_alerts").select("*").eq(
+            "resolved", resolved
+        ).order("created_at", desc=True).limit(min(limit, 100)).execute()
+        return {
+            "alerts": result.data or [],
+            "total": len(result.data or []),
+            "showing": "resolved" if resolved else "unresolved",
+        }
+    except Exception as e:
+        logger.error(f"Erro ao consultar alertas: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao consultar alertas.")
+
+
+@app.post("/admin/security-alerts/{alert_id}/resolve")
+@limiter.limit("30/minute")
+async def resolve_security_alert(
+    alert_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Marca um alerta como resolvido (apenas admin)."""
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores.",
+        )
+
+    try:
+        sb = get_supabase_admin()
+        sb.table("security_alerts").update({
+            "resolved": True,
+        }).eq("id", alert_id).execute()
+        return {"status": "ok", "alert_id": alert_id}
+    except Exception as e:
+        logger.error(f"Erro ao resolver alerta: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao resolver alerta.")
 
 
 # ============================================================
