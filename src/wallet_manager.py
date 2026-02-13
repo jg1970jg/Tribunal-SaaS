@@ -156,15 +156,15 @@ class WalletManager:
                 "credits_blocked": new_blocked,
             }).eq("id", user_id).execute()
 
-            # 2. Registar transação
+            # 2. Registar transação (type: debit para bloqueio)
             tx_result = self.sb.table("wallet_transactions").insert({
                 "user_id": user_id,
-                "type": "block",
+                "type": "debit",
                 "amount_usd": blocked_usd,
                 "balance_after_usd": balance["total"],
                 "cost_real_usd": estimated_cost_usd,
                 "run_id": analysis_id,
-                "description": reason,
+                "description": f"[BLOCK] {reason}",
             }).execute()
 
             transaction_id = tx_result.data[0]["id"] if tx_result.data else None
@@ -439,7 +439,7 @@ class WalletManager:
             # Criar transação
             tx_result = self.sb.table("wallet_transactions").insert({
                 "user_id": user_id,
-                "type": "admin_credit",
+                "type": "credit",
                 "amount_usd": amount_usd,
                 "balance_after_usd": new_balance,
                 "description": description,
