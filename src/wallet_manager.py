@@ -166,12 +166,11 @@ class WalletManager:
 
             logger.info(
                 f"Créditos bloqueados: user={user_id}, "
-                f"analysis={analysis_id}, blocked=${blocked_usd:.4f}, "
-                f"tx={transaction_id}"
+                f"analysis={analysis_id}, blocked=${blocked_usd:.4f}"
             )
 
             return {
-                "transaction_id": transaction_id,
+                "transaction_id": analysis_id,
                 "blocked_usd": blocked_usd,
                 "balance_after": balance["available"] - blocked_usd,
             }
