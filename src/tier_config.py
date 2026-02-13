@@ -5,10 +5,21 @@ TIER CONFIGURATION - Sistema Bronze/Prata/Ouro
 Define os tiers disponíveis, modelos associados e preços.
 Margem de lucro: 100%
 Margem de segurança: 25%
+
+PALAVRAS VETADAS (NUNCA usar):
+  ❌ "advogado sénior" / "nível de advogado"
+  ❌ Percentagens (95%, 99%, etc.)
+  ❌ "falsos positivos"
+  ❌ "garantimos" / "sem erros" / "infalível"
+  ❌ Números de páginas (< 20, 20-50, > 50)
+  ❌ "STJ", "Constitucional", "última instância"
+  ❌ "Litígio de alto valor"
+  ❌ Versões (4.5, 5.2, etc.)
 """
 
 from typing import Dict, List, Any
 from enum import Enum
+
 
 class TierLevel(str, Enum):
     """Níveis de tier disponíveis."""
@@ -30,7 +41,7 @@ MODEL_COSTS = {
     "sonnet-4.5": 0.08,
     "deepseek": 0.06,
     "claude-opus-4": 0.21,  # Com cache
-    
+
     # Auditores (Fase 2)
     "gpt-5.2": 0.12,
     "gemini-3-pro-preview": 0.15,
@@ -38,13 +49,13 @@ MODEL_COSTS = {
     "claude-sonnet-4.5": 0.10,  # Com cache
     "claude-opus-4-audit": 0.40,  # Com cache
     "gpt-5.2-pro": 0.60,
-    
+
     # Juízes (Fase 3)
     "gpt-5.2-judge": 0.10,
     "gemini-3-pro-judge": 0.14,
     "claude-sonnet-4.5-judge": 0.10,  # Com cache
     "claude-opus-4-judge": 0.38,  # Com cache
-    
+
     # Presidente (Fase 4)
     "gpt-5.2-presidente": 0.30,
     "gpt-5.2-pro-presidente": 0.60,
@@ -59,49 +70,50 @@ TIER_CONFIG = {
     TierLevel.BRONZE: {
         "label": "Standard",
         "icon": "🥉",
-        "description": "Análise automática básica",
+        "description": "Análise automática eficiente",
         "color_gradient": "from-amber-600 to-amber-800",
         "color_border": "border-amber-500",
         "color_bg": "bg-gradient-to-br from-amber-50 to-orange-50",
-        
+
         # Modelos por fase
         "models": {
-            "extraction": "sonnet-4.5",  # E1
+            "extraction": "sonnet-4.5",      # E1
             "audit_chief": "gpt-5.2",
-            "audit_claude": "sonnet-4.5",  # A2
+            "audit_claude": "sonnet-4.5",     # A2
             "judgment_claude": "sonnet-4.5",  # J2
             "president": "gpt-5.2",
         },
-        
+
         # Custos estimados (por fase)
         "estimated_costs": {
-            "extraction": 0.51,  # 5 extratores (E1=0.08, resto=0.43)
-            "audit": 0.90,  # 4 auditores (A2=0.10, resto=0.80)
-            "judgment": 0.96,  # 3 juízes (J2=0.10, resto=0.86)
+            "extraction": 0.51,
+            "audit": 0.90,
+            "judgment": 0.96,
             "president": 0.30,
         },
-        
-        # Features
+
+        # Features (textos APROVADOS - sem palavras vetadas)
         "features": [
-            "Análise automática básica",
-            "Identifica problemas óbvios",
+            "Análise automática eficiente",
+            "Identifica problemas principais",
             "Relatório estruturado",
+            "Múltiplas IAs a trabalhar",
         ],
-        
-        # Casos ideais
+
+        # Casos ideais (textos APROVADOS - sem palavras vetadas)
         "ideal_cases": {
-            "title": "Ideal para: Documentos simples",
+            "title": "Ideal para:",
             "cases": [
-                "Contratos standard",
-                "Petições básicas (< 20 páginas)",
-                "Casos sem complexidade técnica",
+                "Documentos do dia-a-dia",
+                "Revisão de conformidade",
+                "Casos diretos e claros",
+                "Análise com múltiplas IAs",
             ]
         },
-        
         "time_estimate": "2-3 min",
-        "included": True,  # Tier base incluído
+        "included": True,
     },
-    
+
     TierLevel.SILVER: {
         "label": "Premium",
         "icon": "🥈",
@@ -110,87 +122,90 @@ TIER_CONFIG = {
         "color_border": "border-slate-400",
         "color_bg": "bg-gradient-to-br from-slate-50 to-gray-100",
         "badge": "⭐ RECOMENDADO",
-        
+
         # Modelos por fase (Opus nas fases críticas)
         "models": {
-            "extraction": "claude-opus-4",  # UPGRADE E1
+            "extraction": "claude-opus-4",     # UPGRADE E1
             "audit_chief": "gpt-5.2",
-            "audit_claude": "claude-opus-4",  # UPGRADE A2
-            "judgment_claude": "claude-opus-4",  # UPGRADE J2
+            "audit_claude": "claude-opus-4",   # UPGRADE A2
+            "judgment_claude": "claude-opus-4", # UPGRADE J2
             "president": "gpt-5.2",
         },
-        
+
         # Custos estimados
         "estimated_costs": {
-            "extraction": 0.64,  # E1 upgrade: +0.13 (0.21 vs 0.08)
-            "audit": 1.22,  # A2 upgrade: +0.30 (0.40 vs 0.10)
-            "judgment": 1.24,  # J2 upgrade: +0.28 (0.38 vs 0.10)
+            "extraction": 0.64,
+            "audit": 1.22,
+            "judgment": 1.24,
             "president": 0.30,
         },
-        
+
+        # Features (textos APROVADOS - sem palavras vetadas)
         "features": [
-            "Análise profunda com IA avançada (Claude Opus 4)",
-            "Encontra problemas que Standard não vê",
+            "IA avançada (Claude Opus + GPT)",
+            "Encontra o que Standard não vê",
             "Relatório focado e assertivo",
-            "Menor taxa de 'falsos positivos'",
+            "Análise mais aprofundada",
         ],
-        
+
+        # Casos ideais (textos APROVADOS - sem palavras vetadas)
         "ideal_cases": {
-            "title": "Ideal para: Documentos complexos",
+            "title": "Ideal para:",
             "cases": [
-                "Acórdãos de tribunais superiores",
-                "Processos com 20-50 páginas",
-                "Casos com múltiplas partes envolvidas",
+                "Documentos importantes",
+                "Casos com várias partes",
+                "Situações que requerem atenção especial",
+                "Quando quer certeza na análise",
             ]
         },
-        
         "time_estimate": "3-4 min",
         "included": False,
     },
-    
+
     TierLevel.GOLD: {
         "label": "Elite",
         "icon": "🥇",
-        "description": "IA de última geração",
+        "description": "IAs de topo para máxima qualidade",
         "color_gradient": "from-yellow-400 to-yellow-700",
         "color_border": "border-yellow-400",
         "color_bg": "bg-gradient-to-br from-yellow-50 to-amber-100",
         "badge": "💎 MÁXIMA QUALIDADE",
-        
+
         # Modelos por fase (Tudo premium)
         "models": {
             "extraction": "claude-opus-4",
-            "audit_chief": "gpt-5.2-pro",  # UPGRADE
+            "audit_chief": "gpt-5.2-pro",     # UPGRADE
             "audit_claude": "claude-opus-4",
             "judgment_claude": "claude-opus-4",
-            "president": "gpt-5.2-pro",  # UPGRADE
+            "president": "gpt-5.2-pro",        # UPGRADE
         },
-        
+
         # Custos estimados
         "estimated_costs": {
-            "extraction": 0.64,  # Igual a Silver
-            "audit": 1.42,  # Chief upgrade: +0.20 (0.60 vs 0.40 no resto)
-            "judgment": 1.24,  # Igual a Silver
-            "president": 0.60,  # Upgrade: +0.30
+            "extraction": 0.64,
+            "audit": 1.42,
+            "judgment": 1.24,
+            "president": 0.60,
         },
-        
+
+        # Features (textos APROVADOS - sem palavras vetadas)
         "features": [
-            "IA de última geração (GPT-5.2-PRO + Claude Opus 4)",
-            "Análise ao nível de advogado sénior",
+            "IAs de topo (GPT-PRO, Claude Opus, Gemini Pro)",
+            "Análise muito detalhada e minuciosa",
             "Deteta nuances jurídicas subtis",
             "Relatório completo e fundamentado",
-            "Confiança máxima (95%+)",
         ],
-        
+
+        # Casos ideais (textos APROVADOS - sem palavras vetadas)
         "ideal_cases": {
-            "title": "Ideal para: Casos críticos e litígio",
+            "title": "Ideal para:",
             "cases": [
-                "Processos > 50 páginas",
-                "Recursos para STJ/Tribunal Constitucional",
-                "Casos com valores elevados em disputa",
+                "Casos de elevada importância",
+                "Quando muito está em jogo",
+                "Situações mais exigentes",
+                "Quando quer a máxima confiança",
             ]
         },
-        
         "time_estimate": "4-5 min",
         "included": False,
     },
@@ -204,34 +219,34 @@ TIER_CONFIG = {
 def calculate_tier_cost(tier: TierLevel, document_tokens: int = 0) -> Dict[str, float]:
     """
     Calcula o custo estimado para um tier específico.
-    
+
     Args:
         tier: Nível do tier
         document_tokens: Tamanho do documento em tokens (para ajuste)
-    
+
     Returns:
         Dict com custo_real, custo_cliente, bloqueio
     """
     config = TIER_CONFIG[tier]
-    
+
     # Somar custos de todas as fases
     total_real_cost = sum(config["estimated_costs"].values())
-    
+
     # Ajuste por tamanho do documento
     size_multiplier = 1.0
     if document_tokens > 50000:
-        size_multiplier = 1.3  # +30% para documentos muito grandes
+        size_multiplier = 1.3
     elif document_tokens > 30000:
-        size_multiplier = 1.15  # +15% para documentos grandes
-    
+        size_multiplier = 1.15
+
     total_real_cost *= size_multiplier
-    
+
     # Margem de lucro: 100% (custo × 2)
     custo_cliente = total_real_cost * 2
-    
+
     # Margem de segurança: +25% para bloqueio
     bloqueio = custo_cliente * 1.25
-    
+
     return {
         "custo_real": round(total_real_cost, 4),
         "custo_cliente": round(custo_cliente, 4),
@@ -248,11 +263,10 @@ def get_tier_models(tier: TierLevel) -> Dict[str, str]:
 def get_all_tiers_info() -> List[Dict[str, Any]]:
     """Retorna informação de todos os tiers para o frontend."""
     result = []
-    
     for tier_level in [TierLevel.BRONZE, TierLevel.SILVER, TierLevel.GOLD]:
         config = TIER_CONFIG[tier_level]
         costs = calculate_tier_cost(tier_level)
-        
+
         result.append({
             "tier": tier_level.value,
             "label": config["label"],
@@ -270,30 +284,21 @@ def get_all_tiers_info() -> List[Dict[str, Any]]:
             "custo_cliente": costs["custo_cliente"],
             "bloqueio": costs["bloqueio"],
         })
-    
+
     return result
 
 
 def validate_tier_selection(selection: Dict[str, str]) -> bool:
     """
     Valida que a seleção de tiers por fase é válida.
-    
-    Args:
-        selection: Dict com {fase: tier_level}
-        
-    Returns:
-        True se válido, False caso contrário
     """
     required_phases = ["extraction", "audit", "judgment", "decision"]
-    
     for phase in required_phases:
         if phase not in selection:
             return False
-        
         tier = selection[phase]
         if tier not in [t.value for t in TierLevel]:
             return False
-    
     return True
 
 
@@ -303,25 +308,14 @@ def calculate_custom_selection_cost(
 ) -> Dict[str, float]:
     """
     Calcula o custo para uma seleção personalizada de tiers por fase.
-    
-    Args:
-        selection: Dict com {extraction: tier, audit: tier, judgment: tier, decision: tier}
-        document_tokens: Tamanho do documento
-    
-    Returns:
-        Dict com custo_real, custo_cliente, bloqueio
     """
     if not validate_tier_selection(selection):
         raise ValueError("Seleção de tiers inválida")
-    
-    # Para simplificar, vamos calcular baseado no tier mais alto selecionado
-    # (na prática poderíamos fazer um cálculo mais granular)
+
     tiers_selected = [TierLevel(t) for t in selection.values()]
-    
-    # Ordenar por custo (Bronze < Silver < Gold)
     tier_order = {TierLevel.BRONZE: 0, TierLevel.SILVER: 1, TierLevel.GOLD: 2}
     max_tier = max(tiers_selected, key=lambda t: tier_order[t])
-    
+
     return calculate_tier_cost(max_tier, document_tokens)
 
 
@@ -337,7 +331,7 @@ OPENROUTER_MODEL_MAPPING = {
     "gemini-3-flash-preview": "google/gemini-3-flash-preview",
     "gpt-4o": "openai/gpt-4o",
     "deepseek": "deepseek/deepseek-chat",
-    
+
     # Auditores e Juízes
     "gpt-5.2": "openai/gpt-5.2",
     "gpt-5.2-pro": "openai/gpt-5.2-pro",
@@ -346,7 +340,7 @@ OPENROUTER_MODEL_MAPPING = {
     "claude-opus-4-judge": "anthropic/claude-opus-4-5-20251101",
     "gemini-3-pro-preview": "google/gemini-3-pro-preview",
     "grok-4.1": "x-ai/grok-4.1",
-    
+
     # Presidente
     "gpt-5.2-presidente": "openai/gpt-5.2",
     "gpt-5.2-pro-presidente": "openai/gpt-5.2-pro",
@@ -359,13 +353,12 @@ def get_openrouter_model(model_key: str) -> str:
 
 
 if __name__ == "__main__":
-    # Testes
     print("=== TIER CONFIGURATION ===\n")
-    
+
     for tier in [TierLevel.BRONZE, TierLevel.SILVER, TierLevel.GOLD]:
         config = TIER_CONFIG[tier]
         costs = calculate_tier_cost(tier, document_tokens=30000)
-        
+
         print(f"{config['icon']} {config['label'].upper()}")
         print(f"  Custo Real: ${costs['custo_real']:.2f}")
         print(f"  Custo Cliente: ${costs['custo_cliente']:.2f}")
