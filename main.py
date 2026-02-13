@@ -146,6 +146,92 @@ def _register_security_alert(request: Request, limit_detail: str):
 
 
 # ============================================================
+# BLACKLIST - Bloqueio de emails, IPs e domínios
+# ============================================================
+
+# Cache local (recarregado a cada 60s para não consultar DB a cada request)
+_blacklist_cache: dict = {"emails": set(), "ips": set(), "domains": set(), "loaded_at": 0}
+BLACKLIST_CACHE_TTL = 60  # Recarregar a cada 60 segundos
+
+
+def _load_blacklist():
+    """Carrega blacklist do Supabase para cache local."""
+    import time as _time
+    now = _time.time()
+    if now - _blacklist_cache["loaded_at"] < BLACKLIST_CACHE_TTL:
+        return  # Cache ainda válido
+
+    try:
+        from auth_service import get_supabase_admin
+        sb = get_supabase_admin()
+        result = sb.table("blacklist").select("type, value").execute()
+        emails, ips, domains = set(), set(), set()
+        for row in (result.data or []):
+            val = (row.get("value") or "").lower().strip()
+            t = row.get("type", "")
+            if t == "email":
+                emails.add(val)
+            elif t == "ip":
+                ips.add(val)
+            elif t == "domain":
+                domains.add(val)
+        _blacklist_cache["emails"] = emails
+        _blacklist_cache["ips"] = ips
+        _blacklist_cache["domains"] = domains
+        _blacklist_cache["loaded_at"] = now
+    except Exception as e:
+        logger.warning(f"Erro ao carregar blacklist (ignorado): {e}")
+
+
+def _check_blacklist(request: Request, user: dict = None):
+    """Verifica se o request vem de email/IP/domínio bloqueado."""
+    _load_blacklist()
+
+    # Verificar IP
+    ip = get_remote_address(request)
+    if ip in _blacklist_cache["ips"]:
+        logger.warning(f"[BLACKLIST] IP bloqueado: {ip}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso bloqueado. Contacte o administrador.",
+        )
+
+    # Verificar email e domínio (se utilizador autenticado)
+    email = ""
+    if user:
+        email = (user.get("email") or "").lower().strip()
+    else:
+        # Tentar extrair do JWT
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            try:
+                import jwt as pyjwt
+                payload = pyjwt.decode(
+                    auth[7:],
+                    options={"verify_signature": False, "verify_exp": False},
+                )
+                email = (payload.get("email") or "").lower().strip()
+            except Exception:
+                pass
+
+    if email:
+        if email in _blacklist_cache["emails"]:
+            logger.warning(f"[BLACKLIST] Email bloqueado: {email}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Conta bloqueada. Contacte o administrador.",
+            )
+
+        domain = email.split("@")[-1] if "@" in email else ""
+        if domain in _blacklist_cache["domains"]:
+            logger.warning(f"[BLACKLIST] Domínio bloqueado: {domain} (email: {email})")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Domínio de email bloqueado. Contacte o administrador.",
+            )
+
+
+# ============================================================
 # LIFESPAN - startup / shutdown
 # ============================================================
 
@@ -205,9 +291,17 @@ app.add_middleware(
 )
 
 
-# Security headers
+# Security headers + blacklist check
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next):
+async def security_middleware(request: Request, call_next):
+    # Blacklist check (skip para /health e /docs)
+    path = request.url.path
+    if path not in ("/health", "/docs", "/openapi.json", "/redoc"):
+        try:
+            _check_blacklist(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -990,6 +1084,100 @@ async def admin_profit_report(
     except Exception as e:
         logger.error(f"Erro ao gerar relatório de lucro: {e}")
         raise HTTPException(status_code=500, detail="Erro ao gerar relatório.")
+
+
+# ============================================================
+# ADMIN - BLACKLIST
+# ============================================================
+
+class BlacklistAddRequest(BaseModel):
+    type: str       # "email", "ip", ou "domain"
+    value: str      # o email, IP ou domínio a bloquear
+    reason: str = ""
+
+
+@app.get("/admin/blacklist")
+@limiter.limit("30/minute")
+async def admin_blacklist_list(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Lista todas as entradas na blacklist (apenas admin)."""
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Apenas administradores.")
+
+    try:
+        sb = get_supabase_admin()
+        result = sb.table("blacklist").select("*").order("created_at", desc=True).execute()
+        return {"blacklist": result.data or [], "total": len(result.data or [])}
+    except Exception as e:
+        logger.error(f"Erro ao consultar blacklist: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao consultar blacklist.")
+
+
+@app.post("/admin/blacklist")
+@limiter.limit("30/minute")
+async def admin_blacklist_add(
+    req: BlacklistAddRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Adiciona email, IP ou domínio à blacklist (apenas admin)."""
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Apenas administradores.")
+
+    if req.type not in ("email", "ip", "domain"):
+        raise HTTPException(status_code=422, detail="Tipo inválido. Opções: email, ip, domain.")
+
+    value = req.value.lower().strip()
+    if not value:
+        raise HTTPException(status_code=422, detail="Valor não pode estar vazio.")
+
+    try:
+        sb = get_supabase_admin()
+        result = sb.table("blacklist").insert({
+            "type": req.type,
+            "value": value,
+            "reason": req.reason or f"Bloqueado por {admin_email}",
+            "added_by": admin_email,
+        }).execute()
+
+        # Forçar recarga do cache
+        _blacklist_cache["loaded_at"] = 0
+
+        logger.info(f"[BLACKLIST] Adicionado: {req.type}={value} por {admin_email}")
+        return {"status": "ok", "blocked": result.data[0] if result.data else {}}
+    except Exception as e:
+        logger.error(f"Erro ao adicionar à blacklist: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao adicionar à blacklist.")
+
+
+@app.delete("/admin/blacklist/{entry_id}")
+@limiter.limit("30/minute")
+async def admin_blacklist_remove(
+    entry_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Remove entrada da blacklist (apenas admin)."""
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Apenas administradores.")
+
+    try:
+        sb = get_supabase_admin()
+        sb.table("blacklist").delete().eq("id", entry_id).execute()
+
+        # Forçar recarga do cache
+        _blacklist_cache["loaded_at"] = 0
+
+        logger.info(f"[BLACKLIST] Removido: {entry_id} por {admin_email}")
+        return {"status": "ok", "removed": entry_id}
+    except Exception as e:
+        logger.error(f"Erro ao remover da blacklist: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao remover da blacklist.")
 
 
 # ============================================================
