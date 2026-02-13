@@ -102,7 +102,7 @@ app.add_middleware(
 @app.get("/health")
 async def health():
     """Rota de saúde - verifica se o servidor está online."""
-    return {"status": "online"}
+    return {"status": "online", "version": "2026-02-13b"}
 
 
 # ============================================================
