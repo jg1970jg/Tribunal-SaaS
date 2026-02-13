@@ -20,12 +20,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Form, UploadFile, File, HTTPException, status
+from fastapi import Depends, FastAPI, Form, Request, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 
 from auth_service import get_current_user, get_supabase, get_supabase_admin
@@ -88,17 +85,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Security headers
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response: Response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        return response
-
-app.add_middleware(SecurityHeadersMiddleware)
-
 # CORS - permitir frontend Lovable e localhost para dev
 app.add_middleware(
     CORSMiddleware,
@@ -114,6 +100,16 @@ app.add_middleware(
 )
 
 
+# Security headers
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
 # ============================================================
 # ROTAS PÚBLICAS
 # ============================================================
@@ -121,7 +117,7 @@ app.add_middleware(
 @app.get("/health")
 async def health():
     """Rota de saúde - verifica se o servidor está online."""
-    return {"status": "online", "version": "2026-02-13b"}
+    return {"status": "online", "version": "2026-02-13c"}
 
 
 # ============================================================
