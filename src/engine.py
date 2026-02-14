@@ -558,6 +558,7 @@ def executar_analise(
 
     try:
         processor = LexForumProcessor(callback_progresso=callback)
+        processor._tier = tier  # Passar tier para o performance tracker
         resultado = processor.processar(documento, area_direito, perguntas_raw, titulo)
     except ValueError as e:
         # ── ERRO: Cancelar bloqueio ──

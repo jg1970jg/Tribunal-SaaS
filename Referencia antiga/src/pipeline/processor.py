@@ -931,11 +931,13 @@ REVISTO:"""
         """
         Chama um LLM e retorna o resultado formatado com tokens REAIS.
 
-        NOVO: Failover automatico e max_tokens dinamico.
-        - Se documento grande, troca GPT-5.2 por GPT-4.1 ou Grok
-        - max_tokens calculado com base no tamanho do documento
+        NOVO: Failover automatico, max_tokens dinamico, adaptive hints,
+        quality gates com 2 retries, e performance tracking.
         """
         from src.config import calcular_max_tokens, selecionar_modelo_com_failover
+        from src.performance_tracker import (
+            check_response_quality, build_retry_prompt, classify_error,
+        )
 
         # Failover automatico: se documento grande, trocar modelo
         doc_chars = len(self._document_text) if hasattr(self, '_document_text') and self._document_text else 0
@@ -951,14 +953,97 @@ REVISTO:"""
                 f"max_tokens={max_tokens:,}"
             )
 
+        # === ADAPTIVE HINTS ===
+        adaptive_hint_text = ""
+        adaptive_hints_used = []
+        perf_tracker = getattr(self, '_perf_tracker', None)
+        if perf_tracker:
+            # Normalizar role: "auditor_1_json" -> "A1", etc.
+            normalized_role = self._normalize_role_for_perf(role_name)
+            hints = perf_tracker.get_adaptive_hints(modelo_final, normalized_role)
+            if hints.hint_text:
+                adaptive_hint_text = hints.hint_text
+                adaptive_hints_used = hints.hints
+                logger.info(
+                    f"[ADAPTIVE] {role_name}: {len(hints.hints)} hints activos: "
+                    f"{hints.hints}"
+                )
+
+        # Injectar hints no system prompt
+        effective_system = system_prompt
+        if adaptive_hint_text:
+            effective_system = (
+                f"{system_prompt}\n\n"
+                f"--- INSTRUCOES DE QUALIDADE (HISTORICO) ---\n"
+                f"{adaptive_hint_text}"
+            )
+
+        # === CHAMADA LLM ===
+        effective_temp = temperature
         response = self.llm_client.chat_simple(
             model=modelo_final,
             prompt=prompt,
-            system_prompt=system_prompt,
-            temperature=temperature,
+            system_prompt=effective_system,
+            temperature=effective_temp,
             max_tokens=max_tokens,
         )
 
+        # === QUALITY GATE + RETRIES (max 2) ===
+        MAX_RETRIES = 2
+        for retry_num in range(1, MAX_RETRIES + 1):
+            if not response.success or not response.content:
+                quality_issue = {"code": "CALL_FAILED", "critical": True, "msg": "LLM call failed"}
+            else:
+                quality_issue = check_response_quality(response.content, role_name)
+
+            if not quality_issue or not quality_issue.get("critical"):
+                break  # Qualidade OK
+
+            logger.warning(
+                f"[QUALITY-GATE] {role_name}: {quality_issue['code']} "
+                f"(retry {retry_num}/{MAX_RETRIES}): {quality_issue['msg']}"
+            )
+
+            # Registar chamada falhada no tracker
+            if perf_tracker:
+                perf_tracker.record_call(
+                    run_id=getattr(self, '_run_id', ''),
+                    model=modelo_final,
+                    phase=role_name.split("_")[0],
+                    role=self._normalize_role_for_perf(role_name),
+                    tier=getattr(self, '_tier', 'bronze'),
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    total_tokens=response.total_tokens,
+                    cost_usd=0,
+                    latency_ms=response.latency_ms,
+                    success=False,
+                    error_message=quality_issue['msg'],
+                    error_type=quality_issue['code'],
+                    was_retry=retry_num > 1,
+                    retry_number=retry_num - 1,
+                    adaptive_hints_used=adaptive_hints_used,
+                )
+
+            # Construir prompt melhorado para retry
+            retry_system, retry_temp = build_retry_prompt(
+                system_prompt, quality_issue, retry_num, adaptive_hint_text
+            )
+            effective_temp = retry_temp
+
+            response = self.llm_client.chat_simple(
+                model=modelo_final,
+                prompt=prompt,
+                system_prompt=retry_system,
+                temperature=retry_temp,
+                max_tokens=max_tokens,
+            )
+            logger.info(
+                f"[QUALITY-GATE] {role_name}: Retry {retry_num} completado "
+                f"(success={response.success}, len={len(response.content or '')})"
+            )
+
+        # === TOKENS ===
         prompt_tokens = response.prompt_tokens
         completion_tokens = response.completion_tokens
         total_tokens = response.total_tokens
@@ -986,6 +1071,37 @@ REVISTO:"""
             except Exception as e:
                 logger.warning(f"[CUSTO] Erro ao registar uso para {role_name}: {e}")
 
+        # === REGISTAR PERFORMANCE (chamada final/bem-sucedida) ===
+        if perf_tracker:
+            cost_usd = 0.0
+            pricing_source = ""
+            if hasattr(self, '_cost_controller') and self._cost_controller:
+                phases = getattr(self._cost_controller, 'usage', None)
+                if phases and hasattr(phases, 'phases') and phases.phases:
+                    last_phase = phases.phases[-1]
+                    cost_usd = getattr(last_phase, 'cost_usd', 0)
+                    pricing_source = getattr(last_phase, 'pricing_source', '')
+
+            perf_tracker.record_call(
+                run_id=getattr(self, '_run_id', ''),
+                model=modelo_final,
+                phase=role_name.split("_")[0],
+                role=self._normalize_role_for_perf(role_name),
+                tier=getattr(self, '_tier', 'bronze'),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                cost_usd=cost_usd,
+                pricing_source=pricing_source,
+                latency_ms=response.latency_ms,
+                success=response.success,
+                error_message=response.error,
+                error_type=classify_error(response.error) if response.error else None,
+                was_retry=False,
+                retry_number=0,
+                adaptive_hints_used=adaptive_hints_used,
+            )
+
         return FaseResult(
             fase=role_name.split("_")[0],
             modelo=modelo_final,  # NOVO: modelo real usado (pode ser suplente)
@@ -998,6 +1114,40 @@ REVISTO:"""
             sucesso=response.success,
             erro=response.error,
         )
+
+    @staticmethod
+    def _normalize_role_for_perf(role_name: str) -> str:
+        """Normaliza role name para performance tracking."""
+        r = role_name.lower()
+        if "extrator" in r or "extractor" in r:
+            for tag in ("e1", "e2", "e3", "e4", "e5"):
+                if tag in r:
+                    return tag.upper()
+            return "E1"
+        if "auditor" in r or "audit" in r:
+            for tag in ("a1", "a2", "a3", "a4"):
+                if tag in r:
+                    return tag.upper()
+            # auditor_1 -> A1, auditor_2 -> A2
+            for i in range(1, 5):
+                if f"_{i}" in r:
+                    return f"A{i}"
+            return "A1"
+        if "relator" in r or "judge" in r or "juiz" in r:
+            for tag in ("j1", "j2", "j3"):
+                if tag in r:
+                    return tag.upper()
+            for i in range(1, 4):
+                if f"_{i}" in r:
+                    return f"J{i}"
+            return "J1"
+        if "presidente" in r or "conselheiro" in r:
+            return "PRESIDENTE"
+        if "agregador" in r:
+            return "AGREGADOR"
+        if "chefe" in r or "consolidador" in r:
+            return "CONSOLIDADOR"
+        return role_name[:20]
 
     def _dividir_documento_chunks(self, texto: str, chunk_size: int = 50000, overlap: int = 2500) -> List[str]:
         """
@@ -3086,6 +3236,21 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             budget_limit_usd=float(os.getenv("MAX_BUDGET_USD", "10.0")),
         )
         logger.info(f"[CUSTO] CostController inicializado para run {run_id}")
+
+        # Inicializar PerformanceTracker para feedback adaptativo
+        self._perf_tracker = None
+        try:
+            from src.performance_tracker import PerformanceTracker
+            from auth_service import get_supabase_admin
+            self._perf_tracker = PerformanceTracker.get_instance(get_supabase_admin())
+            self._perf_tracker.refresh_cache()
+            logger.info("[PERF] PerformanceTracker inicializado e cache carregado")
+        except Exception as e:
+            logger.warning(f"[PERF] PerformanceTracker indisponivel: {e}")
+
+        # Guardar run_id e tier para o performance tracker
+        self._run_id = run_id
+        self._tier = getattr(self, '_tier', 'bronze')
 
         # Inicializar variáveis usadas após o try/except principal
         final_decision = None

@@ -316,7 +316,7 @@ async def security_middleware(request: Request, call_next):
 @app.get("/health")
 async def health():
     """Rota de saúde - verifica se o servidor está online."""
-    return {"status": "online", "version": "2026-02-14a"}
+    return {"status": "online", "version": "2026-02-14b"}
 
 
 # ============================================================
@@ -423,6 +423,14 @@ async def analyze(
             if doc_id:
                 result_dict["document_id"] = doc_id
                 logger.info(f"[DOCS] Resultado guardado: doc_id={doc_id}")
+                # Ligar document_id aos registos de model_performance
+                try:
+                    from src.performance_tracker import PerformanceTracker
+                    tracker = PerformanceTracker.get_instance()
+                    if tracker:
+                        tracker.link_document_id(result_dict.get("run_id", ""), doc_id)
+                except Exception:
+                    pass  # Non-critical
         except Exception as e:
             logger.warning(f"[DOCS] Erro ao guardar resultado: {e}")
 
@@ -1090,6 +1098,105 @@ async def wallet_credit(
     except Exception as e:
         logger.error(f"Erro ao creditar saldo: {e}")
         raise HTTPException(status_code=500, detail="Erro ao creditar saldo.")
+
+
+# ============================================================
+# ADMIN - MODEL PERFORMANCE
+# ============================================================
+
+@app.get("/admin/model-performance")
+@limiter.limit("30/minute")
+async def admin_model_performance(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Dashboard de performance por modelo de IA (apenas admin)."""
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Apenas administradores.")
+
+    try:
+        sb = get_supabase_admin()
+
+        # Stats agregados por modelo+role
+        summary_resp = sb.table("model_performance").select(
+            "model, role, success, excerpt_mismatches, range_invalids, "
+            "page_mismatches, missing_citations, error_recovered, "
+            "latency_ms, total_tokens, cost_usd, error_type"
+        ).order("created_at", desc=True).limit(2000).execute()
+
+        rows = summary_resp.data or []
+
+        # Agregar por modelo
+        from collections import defaultdict
+        agg = defaultdict(lambda: {
+            "calls": 0, "success": 0, "failed": 0,
+            "total_tokens": 0, "total_cost": 0.0, "total_latency": 0.0,
+            "excerpt_mismatches": 0, "range_invalids": 0,
+            "page_mismatches": 0, "missing_citations": 0,
+            "error_types": defaultdict(int),
+        })
+        for r in rows:
+            key = f"{r['model']}|{r['role']}"
+            a = agg[key]
+            a["model"] = r["model"]
+            a["role"] = r["role"]
+            a["calls"] += 1
+            if r["success"]:
+                a["success"] += 1
+            else:
+                a["failed"] += 1
+                if r.get("error_type"):
+                    a["error_types"][r["error_type"]] += 1
+            a["total_tokens"] += r.get("total_tokens") or 0
+            a["total_cost"] += float(r.get("cost_usd") or 0)
+            a["total_latency"] += float(r.get("latency_ms") or 0)
+            a["excerpt_mismatches"] += r.get("excerpt_mismatches") or 0
+            a["range_invalids"] += r.get("range_invalids") or 0
+            a["page_mismatches"] += r.get("page_mismatches") or 0
+            a["missing_citations"] += r.get("missing_citations") or 0
+
+        models = []
+        for key, a in sorted(agg.items(), key=lambda x: -x[1]["failed"]):
+            tc = max(a["calls"], 1)
+            models.append({
+                "model": a.get("model", "?"),
+                "role": a.get("role", "?"),
+                "total_calls": a["calls"],
+                "successful": a["success"],
+                "failed": a["failed"],
+                "success_rate": round(a["success"] / tc * 100, 1),
+                "avg_tokens": round(a["total_tokens"] / tc),
+                "avg_latency_ms": round(a["total_latency"] / tc, 1),
+                "avg_cost_usd": round(a["total_cost"] / tc, 6),
+                "total_cost_usd": round(a["total_cost"], 4),
+                "excerpt_mismatches": a["excerpt_mismatches"],
+                "range_invalids": a["range_invalids"],
+                "page_mismatches": a["page_mismatches"],
+                "missing_citations": a["missing_citations"],
+                "error_types": dict(a["error_types"]),
+            })
+
+        # Piores performers (por taxa de erro)
+        worst = [m for m in models if m["failed"] > 0]
+        worst.sort(key=lambda x: x["success_rate"])
+
+        # Ultimos erros
+        errors_resp = sb.table("model_performance").select(
+            "model, role, error_type, error_message, created_at"
+        ).eq("success", False).order(
+            "created_at", desc=True
+        ).limit(50).execute()
+
+        return {
+            "total_records": len(rows),
+            "models": models,
+            "worst_performers": worst[:10],
+            "recent_errors": errors_resp.data or [],
+        }
+    except Exception as e:
+        logger.error(f"Erro em model-performance: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao consultar performance.")
 
 
 @app.get("/admin/profit-report")
