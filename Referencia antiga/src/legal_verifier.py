@@ -67,10 +67,16 @@ class VerificacaoLegal:
     timestamp: datetime = field(default_factory=datetime.now)
     hash_texto: str = ""
     mensagem: str = ""
+    # Campos temporais (verificação dual: lei à data dos factos vs lei actual)
+    versao_data_factos: Optional[str] = None    # ex: "Versão 78 (Lei 85/2019, 03/09)"
+    versao_actual: Optional[str] = None          # ex: "Versão 89 (Lei 39/2025, 01/04)"
+    existe_data_factos: Optional[bool] = None    # Artigo existia na data dos factos?
+    existe_actual: Optional[bool] = None         # Artigo existe hoje?
+    artigo_alterado: bool = False                # Versão do diploma mudou?
 
     def to_dict(self) -> Dict:
         artigo = self.citacao.artigo.replace("ºº", "º") if self.citacao.artigo else ""
-        return {
+        d = {
             "diploma": self.citacao.diploma,
             "artigo": artigo,
             "texto_original": self.citacao.texto_original,
@@ -85,6 +91,18 @@ class VerificacaoLegal:
             "hash_texto": self.hash_texto,
             "mensagem": self.mensagem,
         }
+        # Incluir campos temporais quando preenchidos
+        if self.versao_data_factos is not None:
+            d["versao_data_factos"] = self.versao_data_factos
+        if self.versao_actual is not None:
+            d["versao_actual"] = self.versao_actual
+        if self.existe_data_factos is not None:
+            d["existe_data_factos"] = self.existe_data_factos
+        if self.existe_actual is not None:
+            d["existe_actual"] = self.existe_actual
+        if self.artigo_alterado:
+            d["artigo_alterado"] = self.artigo_alterado
+        return d
 
 
 # ---------------------------------------------------------------------------
@@ -331,10 +349,14 @@ class LegalVerifier:
         }
         # Mapeamento dinâmico: nome canónico → nid
         self._nid_map: Dict[str, int] = dict(self._STATIC_NIDS)
-        # Cache em memória: nid → set de números de artigo
-        self._pgdl_articles_cache: Dict[int, set] = {}
+        # Cache em memória: (nid, nversao) → set de números de artigo
+        self._pgdl_articles_cache: Dict[Tuple[int, Optional[int]], set] = {}
         # Timestamp da última auto-descoberta
         self._last_discovery: Optional[datetime] = None
+        # Verificação temporal: data dos factos
+        self._data_factos: Optional[datetime] = None
+        # Cache em memória: nid → [(nversao, lei_alteradora, data_publicacao)]
+        self._version_history_cache: Dict[int, Tuple[List[Tuple[int, str, Optional[datetime]]], datetime]] = {}
         # Carregar NIDs descobertos anteriormente do SQLite
         self._load_discovered_nids()
 
@@ -372,6 +394,17 @@ class LegalVerifier:
                 source TEXT DEFAULT 'auto'
             )
         """)
+        # Tabela para histórico de versões dos diplomas
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pgdl_version_history (
+                nid INTEGER NOT NULL,
+                nversao INTEGER NOT NULL,
+                lei_alteradora TEXT,
+                data_publicacao TEXT,
+                cached_at TEXT,
+                PRIMARY KEY (nid, nversao)
+            )
+        """)
         conn.commit()
         conn.close()
         logger.info(f"[LEGAL] DB inicializada: {self.db_path}")
@@ -405,6 +438,10 @@ class LegalVerifier:
             conn.close()
         except Exception as e:
             logger.warning(f"[LEGAL] Erro ao guardar NID: {e}")
+
+    def set_data_factos(self, data: Optional[datetime]):
+        """Define a data dos factos para verificação temporal dual."""
+        self._data_factos = data
 
     # ------------------------------------------------------------------
     # Auto-descoberta de NIDs via PGDL Área 32
@@ -579,6 +616,250 @@ class LegalVerifier:
         return None
 
     # ------------------------------------------------------------------
+    # Histórico de versões PGDL (verificação temporal)
+    # ------------------------------------------------------------------
+
+    _VERSION_HISTORY_TTL = timedelta(days=7)
+
+    # Meses em português → número
+    _MESES_PT = {
+        "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3,
+        "abril": 4, "maio": 5, "junho": 6, "julho": 7,
+        "agosto": 8, "setembro": 9, "outubro": 10,
+        "novembro": 11, "dezembro": 12,
+    }
+
+    def _parse_version_date(self, date_text: str) -> Optional[datetime]:
+        """Extrai uma data de publicação do texto de uma versão PGDL."""
+        # Tentar extrair o ano do texto (ex: "Lei 85/2019" → 2019)
+        year_from_lei = None
+        lei_year_match = re.search(r"[/\-](\d{4})\b", date_text)
+        if lei_year_match:
+            year_from_lei = int(lei_year_match.group(1))
+
+        # Padrão: "de DD/MM" ou "de DD/MM/YYYY"
+        m = re.search(r"de\s+(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?", date_text)
+        if m:
+            day = int(m.group(1))
+            month = int(m.group(2))
+            if m.group(3):
+                year = int(m.group(3))
+                if year < 100:
+                    year += 2000
+            elif year_from_lei:
+                year = year_from_lei
+            else:
+                return None  # Sem ano → não adivinhar
+            try:
+                return datetime(year, month, day)
+            except ValueError:
+                pass
+        # Padrão: "de DD de Mês de YYYY"
+        m = re.search(
+            r"de\s+(\d{1,2})\s+de\s+(\w+)(?:\s+de\s+(\d{4}))?",
+            date_text, re.IGNORECASE,
+        )
+        if m:
+            day = int(m.group(1))
+            month_name = m.group(2).lower()
+            month = self._MESES_PT.get(month_name)
+            if m.group(3):
+                year = int(m.group(3))
+            elif year_from_lei:
+                year = year_from_lei
+            else:
+                return None  # Sem ano → não adivinhar
+            if month:
+                try:
+                    return datetime(year, month, day)
+                except ValueError:
+                    pass
+        return None
+
+    def _load_version_history_from_db(self, nid: int) -> Optional[List[Tuple[int, str, Optional[datetime]]]]:
+        """Carrega histórico de versões do SQLite se dentro do TTL."""
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            c = conn.cursor()
+            c.execute(
+                "SELECT nversao, lei_alteradora, data_publicacao, cached_at "
+                "FROM pgdl_version_history WHERE nid = ? ORDER BY nversao",
+                (nid,),
+            )
+            rows = c.fetchall()
+            conn.close()
+            if not rows:
+                return None
+            # Verificar TTL pelo cached_at da primeira entrada
+            cached_at = datetime.fromisoformat(rows[0][3])
+            if datetime.now() - cached_at > self._VERSION_HISTORY_TTL:
+                return None  # Expirado
+            versions = []
+            for nversao, lei, data_pub_str, _ in rows:
+                data_pub = datetime.fromisoformat(data_pub_str) if data_pub_str else None
+                versions.append((nversao, lei or "", data_pub))
+            return versions
+        except Exception as e:
+            logger.debug(f"[LEGAL] Erro ao ler version_history do SQLite: {e}")
+            return None
+
+    def _save_version_history_to_db(self, nid: int, versions: List[Tuple[int, str, Optional[datetime]]]):
+        """Guarda histórico de versões no SQLite."""
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            c = conn.cursor()
+            now = datetime.now().isoformat()
+            for nversao, lei, data_pub in versions:
+                c.execute("""
+                    INSERT OR REPLACE INTO pgdl_version_history
+                    (nid, nversao, lei_alteradora, data_publicacao, cached_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    nid, nversao, lei,
+                    data_pub.isoformat() if data_pub else None,
+                    now,
+                ))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"[LEGAL] Erro ao guardar version_history: {e}")
+
+    def _load_version_history(self, nid: int) -> List[Tuple[int, str, Optional[datetime]]]:
+        """
+        Carrega o histórico de versões de um diploma do PGDL.
+
+        Retorna lista de (nversao, lei_alteradora, data_publicacao) ordenada por nversao.
+        Usa cache em memória + SQLite com TTL de 7 dias.
+        """
+        # 1. Cache em memória
+        if nid in self._version_history_cache:
+            versions, cached_at = self._version_history_cache[nid]
+            if datetime.now() - cached_at < self._VERSION_HISTORY_TTL:
+                return versions
+
+        # 2. Cache SQLite
+        db_versions = self._load_version_history_from_db(nid)
+        if db_versions:
+            self._version_history_cache[nid] = (db_versions, datetime.now())
+            return db_versions
+
+        # 3. Carregar do PGDL
+        versions = []
+        try:
+            response = self._http_client.get(
+                self.PGDL_ARTICULADO,
+                params={"nid": nid, "tabela": "leis"},
+                headers={"User-Agent": "Mozilla/5.0 LexForum/2.0"},
+                follow_redirects=True,
+                timeout=15,
+            )
+            if response.status_code != 200:
+                logger.warning(f"[LEGAL] Version history: HTTP {response.status_code} para nid={nid}")
+                return []
+
+            text = response.content.decode("iso-8859-1", errors="replace")
+
+            # Extrair links de versões históricas:
+            # tabela=lei_velhas&nversao=N com texto associado (lei alteradora + data)
+            pattern = r'tabela=lei_velhas&(?:amp;)?nversao=(\d+)[^"\']*["\'][^>]*>\s*(.*?)\s*</a>'
+            matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+
+            for nversao_str, raw_text in matches:
+                nversao = int(nversao_str)
+                # Limpar HTML
+                clean = re.sub(r"<[^>]+>", " ", raw_text).strip()
+                clean = clean.replace("&nbsp;", " ").strip()
+                lei_alteradora = clean
+                data_pub = self._parse_version_date(clean)
+                versions.append((nversao, lei_alteradora, data_pub))
+
+            # Adicionar a versão actual (não aparece em lei_velhas)
+            # A versão actual é max(históricas) + 1
+            if versions:
+                max_hist = max(v[0] for v in versions)
+                current_nversao = max_hist + 1
+                # Tentar extrair info da versão actual da página
+                # (o título/cabeçalho da página mostra a lei actual)
+                current_lei = ""
+                title_match = re.search(
+                    r'<title[^>]*>(.*?)</title>', text, re.IGNORECASE | re.DOTALL
+                )
+                if title_match:
+                    current_lei = re.sub(r'<[^>]+>', '', title_match.group(1)).strip()
+                versions.append((current_nversao, current_lei or "Versão actual", datetime.now()))
+
+            # Ordenar por nversao
+            versions.sort(key=lambda v: v[0])
+
+            if versions:
+                logger.info(f"[LEGAL] Version history nid={nid}: {len(versions)} versões ({versions[-1][0]} actual)")
+                # Guardar caches
+                self._version_history_cache[nid] = (versions, datetime.now())
+                self._save_version_history_to_db(nid, versions)
+            else:
+                logger.debug(f"[LEGAL] Version history nid={nid}: nenhuma versão histórica encontrada")
+
+        except Exception as e:
+            logger.warning(f"[LEGAL] Erro ao carregar version history nid={nid}: {e}")
+
+        return versions
+
+    def _version_at_date(self, nid: int, target_date: datetime) -> Optional[int]:
+        """
+        Resolve qual versão (nversao) estava em vigor numa data.
+
+        Filtra versões com data_publicacao ≤ target_date e retorna a mais recente.
+        Retorna None se target_date é None ou sem versões aplicáveis.
+        """
+        if target_date is None:
+            return None
+
+        versions = self._load_version_history(nid)
+        if not versions:
+            return None
+
+        # Filtrar versões com data conhecida e anterior/igual à target_date
+        applicable = [
+            (nv, lei, dt) for nv, lei, dt in versions
+            if dt is not None and dt <= target_date
+        ]
+
+        if not applicable:
+            # Data dos factos anterior a todas as versões conhecidas
+            # — a lei pode não ter existido nessa data
+            logger.warning(
+                f"[LEGAL] Nenhuma versão de nid={nid} anterior a "
+                f"{target_date.strftime('%d/%m/%Y')} — usando primeira versão como aproximação"
+            )
+            return versions[0][0]
+
+        # Retornar a mais recente (maior nversao entre as aplicáveis)
+        applicable.sort(key=lambda v: v[0])
+        return applicable[-1][0]
+
+    def _get_current_version(self, nid: int) -> Optional[int]:
+        """Retorna o nversao da versão actual (a maior)."""
+        versions = self._load_version_history(nid)
+        if not versions:
+            return None
+        return max(v[0] for v in versions)
+
+    def _format_version_label(self, nid: int, nversao: Optional[int]) -> Optional[str]:
+        """Formata um label legível para uma versão (ex: 'Versão 78 (Lei 85/2019, 03/09)')."""
+        if nversao is None:
+            return None
+        versions = self._load_version_history(nid)
+        for nv, lei, dt in versions:
+            if nv == nversao:
+                label = f"Versão {nv}"
+                if lei:
+                    # Simplificar o nome da lei (remover datas redundantes)
+                    lei_short = lei.split(",")[0].strip() if "," in lei else lei
+                    label += f" ({lei_short})"
+                return label
+        return f"Versão {nversao}"
+
+    # ------------------------------------------------------------------
     # Normalização de citações
     # ------------------------------------------------------------------
 
@@ -666,18 +947,22 @@ class LegalVerifier:
     def verificar_citacao(self, citacao: CitacaoLegal) -> VerificacaoLegal:
         self._stats["total_verificacoes"] += 1
 
-        # 1. Cache local
-        cache_result = self._verificar_cache(citacao)
-        if cache_result:
-            self._stats["cache_hits"] += 1
-            return cache_result
+        # Bypass cache quando verificação temporal está activa
+        # (cache não armazena campos temporais e causaria "cache poisoning")
+        if self._data_factos is None:
+            # 1. Cache local (só quando NÃO há verificação temporal)
+            cache_result = self._verificar_cache(citacao)
+            if cache_result:
+                self._stats["cache_hits"] += 1
+                return cache_result
 
         # 2. PGDL online
         self._stats["pgdl_lookups"] += 1
         result = self._verificar_pgdl(citacao)
 
-        # 3. Guardar no cache
-        self._guardar_cache(citacao, result)
+        # 3. Guardar no cache (só resultados não-temporais)
+        if self._data_factos is None:
+            self._guardar_cache(citacao, result)
         return result
 
     def _verificar_cache(self, citacao: CitacaoLegal) -> Optional[VerificacaoLegal]:
@@ -717,15 +1002,27 @@ class LegalVerifier:
                 )
         return None
 
-    def _load_pgdl_articles(self, nid: int) -> set:
-        """Carrega todos os artigos de um diploma do PGDL."""
-        if nid in self._pgdl_articles_cache:
-            return self._pgdl_articles_cache[nid]
+    def _load_pgdl_articles(self, nid: int, nversao: Optional[int] = None) -> set:
+        """
+        Carrega todos os artigos de um diploma do PGDL.
+
+        Args:
+            nid: ID do diploma no PGDL
+            nversao: Número da versão histórica (None = versão actual)
+        """
+        cache_key = (nid, nversao)
+        if cache_key in self._pgdl_articles_cache:
+            return self._pgdl_articles_cache[cache_key]
 
         try:
+            if nversao is not None:
+                params = {"nid": nid, "tabela": "lei_velhas", "nversao": nversao}
+            else:
+                params = {"nid": nid, "tabela": "leis"}
+
             response = self._http_client.get(
                 self.PGDL_ARTICULADO,
-                params={"nid": nid, "tabela": "leis"},
+                params=params,
                 headers={"User-Agent": "Mozilla/5.0 LexForum/2.0"},
                 follow_redirects=True,
                 timeout=15,
@@ -734,8 +1031,9 @@ class LegalVerifier:
                 text = response.content.decode("iso-8859-1", errors="replace")
                 arts = re.findall(r"Artigo\s+(\d+)", text)
                 article_set = set(arts)
-                self._pgdl_articles_cache[nid] = article_set
-                logger.info(f"[LEGAL] PGDL nid={nid}: {len(article_set)} artigos")
+                self._pgdl_articles_cache[cache_key] = article_set
+                ver_label = f"v{nversao}" if nversao else "actual"
+                logger.info(f"[LEGAL] PGDL nid={nid} ({ver_label}): {len(article_set)} artigos")
                 return article_set
             else:
                 logger.warning(f"[LEGAL] PGDL nid={nid}: HTTP {response.status_code}")
@@ -744,7 +1042,7 @@ class LegalVerifier:
         return set()
 
     def _verificar_pgdl(self, citacao: CitacaoLegal) -> VerificacaoLegal:
-        """Verifica a citação no PGDL."""
+        """Verifica a citação no PGDL, com verificação temporal dual quando disponível."""
         try:
             # Garantir auto-descoberta na primeira utilização
             if not self._last_discovery:
@@ -775,7 +1073,16 @@ class LegalVerifier:
                     mensagem=f"Diploma '{citacao.diploma}' não encontrado no PGDL",
                 )
 
-            # Carregar artigos
+            # Extrair número do artigo
+            art_num = citacao.artigo.replace("º", "").strip()
+            art_match = re.match(r"(\d+)", art_num)
+            art_num = art_match.group(1) if art_match else ""
+
+            # --- Verificação temporal dual ---
+            if self._data_factos is not None:
+                return self._verificar_pgdl_temporal(citacao, nid, art_num)
+
+            # --- Verificação simples (comportamento original) ---
             articles = self._load_pgdl_articles(nid)
 
             if not articles:
@@ -787,11 +1094,6 @@ class LegalVerifier:
                     simbolo=SIMBOLOS_VERIFICACAO["atencao"],
                     mensagem="Não foi possível carregar artigos do PGDL",
                 )
-
-            # Extrair número do artigo
-            art_num = citacao.artigo.replace("º", "").strip()
-            art_match = re.match(r"(\d+)", art_num)
-            art_num = art_match.group(1) if art_match else ""
 
             if art_num in articles:
                 self._stats["encontrados"] += 1
@@ -843,6 +1145,90 @@ class LegalVerifier:
                 simbolo=SIMBOLOS_VERIFICACAO["atencao"],
                 mensagem=f"Erro: {str(e)}",
             )
+
+    def _verificar_pgdl_temporal(
+        self, citacao: CitacaoLegal, nid: int, art_num: str
+    ) -> VerificacaoLegal:
+        """
+        Verificação dual: lei à data dos factos vs lei actual.
+        Chamado quando self._data_factos está definida.
+        """
+        # 1. Resolver versão em vigor na data dos factos
+        versao_factos = self._version_at_date(nid, self._data_factos)
+        versao_actual_num = self._get_current_version(nid)
+
+        # 2. Carregar artigos de ambas as versões
+        artigos_factos = self._load_pgdl_articles(nid, versao_factos) if versao_factos else set()
+        artigos_actual = self._load_pgdl_articles(nid, None)  # versão actual
+
+        # 3. Verificar existência em ambas
+        existe_factos = art_num in artigos_factos if artigos_factos else None
+        existe_actual = art_num in artigos_actual if artigos_actual else None
+
+        # 4. Verificar se o diploma foi alterado entre as duas datas
+        alterado = (
+            versao_factos is not None
+            and versao_actual_num is not None
+            and versao_factos != versao_actual_num
+        )
+
+        # 5. Formatar labels das versões
+        label_factos = self._format_version_label(nid, versao_factos)
+        label_actual = self._format_version_label(nid, versao_actual_num)
+
+        # 6. Determinar status global
+        #    - Se existe em ambas: aprovado
+        #    - Se existe só numa: atenção
+        #    - Se não existe em nenhuma: rejeitado
+        existe_global = bool(existe_factos or existe_actual)
+
+        if existe_factos and existe_actual:
+            status = "aprovado"
+            simbolo = SIMBOLOS_VERIFICACAO["aprovado"]
+            self._stats["encontrados"] += 1
+        elif existe_factos or existe_actual:
+            status = "atencao"
+            simbolo = SIMBOLOS_VERIFICACAO["atencao"]
+            self._stats["encontrados"] += 1
+        else:
+            status = "rejeitado"
+            simbolo = SIMBOLOS_VERIFICACAO["rejeitado"]
+            self._stats["nao_encontrados"] += 1
+
+        # 7. Construir mensagem
+        partes_msg = [f"Verificação temporal (nid={nid})"]
+        if existe_factos is not None:
+            estado_f = "EXISTE" if existe_factos else "NÃO ENCONTRADO"
+            partes_msg.append(
+                f"Data factos ({self._data_factos.strftime('%d/%m/%Y')}): "
+                f"{label_factos or 'sem versão'} — {estado_f}"
+            )
+        if existe_actual is not None:
+            estado_a = "EXISTE" if existe_actual else "NÃO ENCONTRADO"
+            partes_msg.append(f"Actual: {label_actual or 'versão actual'} — {estado_a}")
+        if alterado and versao_factos and versao_actual_num:
+            diff = abs(versao_actual_num - versao_factos)
+            partes_msg.append(f"DIPLOMA ALTERADO ({diff} versões de diferença)")
+
+        hash_texto = hashlib.md5(
+            f"{citacao.diploma}:{art_num}:temporal".encode()
+        ).hexdigest()
+
+        return VerificacaoLegal(
+            citacao=citacao,
+            existe=existe_global,
+            texto_encontrado=f"Artigo {citacao.artigo} do {citacao.diploma}",
+            fonte="pgdl_online_temporal",
+            status=status,
+            simbolo=simbolo,
+            hash_texto=hash_texto,
+            mensagem=" | ".join(partes_msg),
+            versao_data_factos=label_factos,
+            versao_actual=label_actual,
+            existe_data_factos=existe_factos,
+            existe_actual=existe_actual,
+            artigo_alterado=alterado,
+        )
 
     def _guardar_cache(self, citacao: CitacaoLegal, resultado: VerificacaoLegal):
         conn = sqlite3.connect(str(self.db_path))
@@ -905,7 +1291,22 @@ class LegalVerifier:
                 f"   Aplicabilidade: {v.aplicabilidade}",
                 f"   {v.mensagem}",
             ])
-            if v.texto_encontrado:
+            # Informação temporal (verificação dual)
+            if v.versao_data_factos is not None or v.versao_actual is not None:
+                if v.existe_data_factos is not None and v.versao_data_factos:
+                    estado_f = "EXISTE" if v.existe_data_factos else "NÃO ENCONTRADO"
+                    # Extrair data dos factos da mensagem da verificação (não de self._data_factos)
+                    data_match = re.search(r"Data factos \((\d{2}/\d{2}/\d{4})\)", v.mensagem)
+                    data_str = data_match.group(1) if data_match else "?"
+                    linhas.append(f"   À data dos factos ({data_str}): {v.versao_data_factos} — {estado_f}")
+                if v.existe_actual is not None and v.versao_actual:
+                    estado_a = "EXISTE" if v.existe_actual else "NÃO ENCONTRADO"
+                    linhas.append(f"   Versão actual ({datetime.now().strftime('%d/%m/%Y')}): {v.versao_actual} — {estado_a}")
+                if v.artigo_alterado:
+                    linhas.append(f"   ⚠ DIPLOMA ALTERADO entre as duas datas")
+                    if not v.existe_actual and v.existe_data_factos:
+                        linhas.append(f"   ⚠ ARTIGO POSSIVELMENTE REVOGADO ou renumerado")
+            elif v.texto_encontrado:
                 linhas.append(f"   Texto: {v.texto_encontrado[:200]}...")
         linhas.extend([
             "",

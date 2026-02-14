@@ -19,6 +19,7 @@ if str(_ROOT) not in sys.path:
 import json
 import logging
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -3149,6 +3150,126 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
 
         return "\n".join(linhas)
 
+    # Meses em português → número (para extracção de data dos factos)
+    _MESES_PT = {
+        "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3,
+        "abril": 4, "maio": 5, "junho": 6, "julho": 7,
+        "agosto": 8, "setembro": 9, "outubro": 10,
+        "novembro": 11, "dezembro": 12,
+        # Abreviaturas comuns em documentos legais
+        "jan": 1, "fev": 2, "mar": 3, "abr": 4,
+        "mai": 5, "jun": 6, "jul": 7, "ago": 8,
+        "set": 9, "out": 10, "nov": 11, "dez": 12,
+    }
+
+    # Palavras-chave que indicam uma data dos factos (vs data de legislação)
+    _CONTEXTO_DATA_FACTOS = re.compile(
+        r"(?:data\s+dos\s+factos|datado\s+de|celebrado\s+em|"
+        r"ocorrido\s+em|no\s+dia|em\s+data\s+de|"
+        r"outorgado\s+em|assinado\s+em|praticado\s+em|"
+        r"aconteceu\s+em|sucedeu\s+em|verificou.se\s+em)",
+        re.IGNORECASE,
+    )
+
+    def _extrair_data_factos(self, texto: str) -> Optional[datetime]:
+        """
+        Extrai automaticamente a data dos factos de um documento legal português.
+
+        Estratégia em duas fases:
+        1. Procura datas com contexto explícito ("celebrado em", "data dos factos", etc.)
+        2. Se não encontrar, usa todas as datas do documento mas filtra datas de legislação
+
+        Se nenhuma data: retorna None (verificar só versão actual).
+        """
+        current_year = datetime.now().year
+
+        def _parse_date_ddmmyyyy(match) -> Optional[datetime]:
+            day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            if 1980 <= year <= current_year:
+                try:
+                    return datetime(year, month, day)
+                except ValueError:
+                    pass
+            return None
+
+        def _parse_date_nome_mes(match) -> Optional[datetime]:
+            day = int(match.group(1))
+            month_name = match.group(2).lower().rstrip(".")
+            year = int(match.group(3))
+            month = self._MESES_PT.get(month_name)
+            if month and 1980 <= year <= current_year:
+                try:
+                    return datetime(year, month, day)
+                except ValueError:
+                    pass
+            return None
+
+        # --- Fase 1: Datas com contexto explícito ---
+        datas_contextuais: List[datetime] = []
+        for ctx_match in self._CONTEXTO_DATA_FACTOS.finditer(texto):
+            # Procurar data nos 80 caracteres após a palavra-chave
+            pos = ctx_match.end()
+            trecho = texto[pos:pos + 80]
+
+            # DD/MM/YYYY ou DD-MM-YYYY
+            m = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})', trecho)
+            if m:
+                dt = _parse_date_ddmmyyyy(m)
+                if dt:
+                    datas_contextuais.append(dt)
+                    continue
+
+            # DD de Mês de YYYY
+            m = re.search(r'(\d{1,2})\s+de\s+(\w+?)\.?\s+de\s+(\d{4})', trecho, re.IGNORECASE)
+            if m:
+                dt = _parse_date_nome_mes(m)
+                if dt:
+                    datas_contextuais.append(dt)
+
+        if datas_contextuais:
+            # Preferir datas com contexto explícito (mais fiável)
+            data_factos = min(datas_contextuais)
+            logger.info(
+                f"[LEGAL] Data dos factos extraída (contexto): {data_factos.strftime('%d/%m/%Y')} "
+                f"(de {len(datas_contextuais)} datas contextuais)"
+            )
+            return data_factos
+
+        # --- Fase 2: Todas as datas, filtradas ---
+        datas_encontradas: List[datetime] = []
+
+        # Padrão 1: DD/MM/YYYY ou DD-MM-YYYY
+        for m in re.finditer(r'\b(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})\b', texto):
+            dt = _parse_date_ddmmyyyy(m)
+            if dt:
+                datas_encontradas.append(dt)
+
+        # Padrão 2: DD de Mês de YYYY
+        for m in re.finditer(
+            r'\b(\d{1,2})\s+de\s+(\w+?)\.?\s+de\s+(\d{4})\b',
+            texto, re.IGNORECASE,
+        ):
+            dt = _parse_date_nome_mes(m)
+            if dt:
+                datas_encontradas.append(dt)
+
+        if not datas_encontradas:
+            logger.info("[LEGAL] Data dos factos não detectada no documento")
+            return None
+
+        # Filtrar datas que parecem ser de legislação (antes de 2000 são suspeitas)
+        datas_recentes = [d for d in datas_encontradas if d.year >= 2000]
+        if datas_recentes:
+            datas_encontradas = datas_recentes
+
+        # Heurística: a data mais antiga entre as filtradas
+        data_factos = min(datas_encontradas)
+        logger.info(
+            f"[LEGAL] Data dos factos extraída: {data_factos.strftime('%d/%m/%Y')} "
+            f"(de {len(datas_encontradas)} datas encontradas)"
+        )
+        return data_factos
+
     def _verificar_legislacao(self, texto: str) -> List[VerificacaoLegal]:
         """Verifica todas as citações legais no texto."""
         self._reportar_progresso("verificacao", 90, "Verificando citacoes legais...")
@@ -3435,9 +3556,17 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.fase3_presidente = presidente
             result.respostas_finais_qa = presidente if perguntas else ""
 
-            # Verificação Legal
-            verificacoes = self._verificar_legislacao(presidente)
-            result.verificacoes_legais = verificacoes
+            # Verificação Legal (com detecção temporal automática)
+            data_factos = self._extrair_data_factos(self._document_text or "")
+            try:
+                if data_factos:
+                    self.legal_verifier.set_data_factos(data_factos)
+                    logger.info(f"[LEGAL] Data dos factos: {data_factos.strftime('%d/%m/%Y')}")
+                verificacoes = self._verificar_legislacao(presidente)
+                result.verificacoes_legais = verificacoes
+            finally:
+                # Limpar SEMPRE (mesmo em excepção) para não contaminar próximas runs
+                self.legal_verifier.set_data_factos(None)
 
             # Determinar parecer — preferir decision_type do JSON (mais fiável)
             if final_decision and hasattr(final_decision, 'decision_type'):
