@@ -382,6 +382,8 @@ async def analyze(
                 detail=f"Tipo de ficheiro não suportado. Aceites: {', '.join(ALLOWED_EXTENSIONS)}",
             )
 
+        logger.info(f"[TIER-DEBUG] Tier recebido do frontend: '{tier}'")
+
         if tier not in ("bronze", "silver", "gold"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
