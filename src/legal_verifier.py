@@ -872,7 +872,9 @@ class LegalVerifier:
             match = re.search(pattern, texto_lower)
             if match:
                 if r"\1" in replacement:
-                    diploma = re.sub(pattern, replacement, texto_lower, flags=re.IGNORECASE)
+                    # FIX 2026-02-14: Usar match.expand() em vez de re.sub() no texto inteiro
+                    # re.sub retornava o texto completo com a substituição embutida
+                    diploma = match.expand(replacement)
                     diploma = diploma.strip()
                 else:
                     diploma = replacement

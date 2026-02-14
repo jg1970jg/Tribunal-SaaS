@@ -145,6 +145,7 @@ class WalletManager:
     ) -> Dict[str, any]:
         """
         Bloqueia créditos ANTES de processar análise.
+        Tenta usar RPC atómico; fallback para operação multi-step.
 
         Args:
             user_id: UUID do utilizador
@@ -162,11 +163,47 @@ class WalletManager:
         Raises:
             InsufficientCreditsError: Se saldo insuficiente
         """
-        try:
-            # Calcular bloqueio com margem de segurança
-            blocked_usd = estimated_cost_usd * SAFETY_MARGIN
+        blocked_usd = estimated_cost_usd * SAFETY_MARGIN
 
-            # Verificar saldo disponível
+        # --- Tentar RPC atómico (sem race condition) ---
+        try:
+            rpc_result = self.sb.rpc("block_credits_atomic", {
+                "p_user_id": user_id,
+                "p_analysis_id": analysis_id,
+                "p_amount": blocked_usd,
+            }).execute()
+
+            if rpc_result.data:
+                data = rpc_result.data
+                if isinstance(data, str):
+                    import json
+                    data = json.loads(data)
+                if data.get("success"):
+                    logger.info(
+                        f"[WALLET-RPC] Créditos bloqueados: user={user_id}, "
+                        f"analysis={analysis_id}, blocked=${blocked_usd:.4f}"
+                    )
+                    return {
+                        "transaction_id": analysis_id,
+                        "blocked_usd": blocked_usd,
+                        "balance_after": float(data.get("balance_after", 0)),
+                    }
+                elif data.get("error") == "insufficient_credits":
+                    raise InsufficientCreditsError(
+                        required=blocked_usd,
+                        available=float(data.get("available", 0))
+                    )
+                elif data.get("error") == "user_not_found":
+                    raise WalletError(f"Utilizador {user_id} não encontrado")
+        except InsufficientCreditsError:
+            raise
+        except WalletError:
+            raise
+        except Exception as e:
+            logger.warning(f"[WALLET] RPC block_credits_atomic indisponível ({e}), usando fallback")
+
+        # --- Fallback: operação multi-step (race condition possível) ---
+        try:
             balance = self.get_balance(user_id)
 
             if balance["available"] < blocked_usd:
@@ -175,14 +212,11 @@ class WalletManager:
                     available=balance["available"]
                 )
 
-            # Bloquear directamente via tabelas (sem SQL function)
-            # 1. Atualizar credits_blocked no profile
             new_blocked = balance["blocked"] + blocked_usd
             self.sb.table("profiles").update({
                 "credits_blocked": new_blocked,
             }).eq("id", user_id).execute()
 
-            # 2. Registar na tabela blocked_credits (NÃO em wallet_transactions)
             self.sb.table("blocked_credits").insert({
                 "user_id": user_id,
                 "analysis_id": analysis_id,
@@ -191,7 +225,7 @@ class WalletManager:
             }).execute()
 
             logger.info(
-                f"Créditos bloqueados: user={user_id}, "
+                f"[WALLET-FALLBACK] Créditos bloqueados: user={user_id}, "
                 f"analysis={analysis_id}, blocked=${blocked_usd:.4f}"
             )
 
@@ -214,26 +248,49 @@ class WalletManager:
     ) -> Dict[str, any]:
         """
         Liquida créditos APÓS processamento.
+        Tenta usar RPC atómico; fallback para operação multi-step.
 
         1. Débita o custo real
         2. Devolve a diferença (se houver)
         3. Marca bloqueio como liquidado
-
-        Args:
-            analysis_id: UUID da análise
-            real_cost_usd: Custo real em USD
-
-        Returns:
-            Dict com {
-                'status': 'success' ou 'margin_breach',
-                'blocked': valor bloqueado,
-                'real_cost': custo real,
-                'refunded': valor devolvido (ou 0 se breach),
-                'extra_charged': valor extra cobrado (se breach)
-            }
         """
+        markup = self.get_markup_multiplier()
+
+        # --- Tentar RPC atómico ---
         try:
-            # 1. Obter bloqueio original
+            rpc_result = self.sb.rpc("settle_credits_atomic", {
+                "p_analysis_id": analysis_id,
+                "p_real_cost_usd": real_cost_usd,
+                "p_markup": markup,
+            }).execute()
+
+            if rpc_result.data:
+                data = rpc_result.data
+                if isinstance(data, str):
+                    import json
+                    data = json.loads(data)
+                if data.get("success"):
+                    logger.info(
+                        f"[WALLET-RPC] Créditos liquidados: analysis={analysis_id}, "
+                        f"blocked=${data.get('blocked', 0):.4f}, "
+                        f"real=${real_cost_usd:.4f}, "
+                        f"refunded=${data.get('refunded', 0):.4f}"
+                    )
+                    return {
+                        "status": "success",
+                        "blocked": float(data.get("blocked", 0)),
+                        "real_cost": real_cost_usd,
+                        "custo_cliente": float(data.get("custo_cliente", 0)),
+                        "refunded": float(data.get("refunded", 0)),
+                    }
+                elif data.get("error") == "no_block_found":
+                    logger.warning(f"Nenhum bloqueio encontrado para analysis={analysis_id}")
+                    return {"status": "no_block", "real_cost": real_cost_usd}
+        except Exception as e:
+            logger.warning(f"[WALLET] RPC settle_credits_atomic indisponível ({e}), usando fallback")
+
+        # --- Fallback: operação multi-step ---
+        try:
             block_resp = self.sb.table("blocked_credits").select(
                 "id, user_id, amount"
             ).eq("analysis_id", analysis_id).eq("status", "blocked").execute()
@@ -245,11 +302,9 @@ class WalletManager:
             block = block_resp.data[0]
             user_id = block["user_id"]
             blocked_amount = float(block["amount"])
-            markup = self.get_markup_multiplier()
             custo_cliente = real_cost_usd * markup
             refunded = max(0, blocked_amount - custo_cliente)
 
-            # 2. Debitar custo real do saldo
             balance = self.get_balance(user_id)
             new_balance = max(0, balance["total"] - custo_cliente)
             new_blocked = max(0, balance["blocked"] - blocked_amount)
@@ -259,13 +314,11 @@ class WalletManager:
                 "credits_blocked": new_blocked,
             }).eq("id", user_id).execute()
 
-            # 3. Marcar bloqueio como settled
             self.sb.table("blocked_credits").update({
                 "status": "settled",
                 "settled_at": datetime.now().isoformat(),
             }).eq("id", block["id"]).execute()
 
-            # 4. Registar transação de debit
             self.sb.table("wallet_transactions").insert({
                 "user_id": user_id,
                 "type": "debit",
@@ -277,22 +330,19 @@ class WalletManager:
                 "description": f"Liquidação relatoria {analysis_id}",
             }).execute()
 
-            settlement = {
+            logger.info(
+                f"[WALLET-FALLBACK] Créditos liquidados: analysis={analysis_id}, "
+                f"blocked=${blocked_amount:.4f}, real=${real_cost_usd:.4f}, "
+                f"refunded=${refunded:.4f}"
+            )
+
+            return {
                 "status": "success",
                 "blocked": blocked_amount,
                 "real_cost": real_cost_usd,
                 "custo_cliente": custo_cliente,
                 "refunded": refunded,
             }
-
-            logger.info(
-                f"Créditos liquidados: analysis={analysis_id}, "
-                f"blocked=${blocked_amount:.4f}, "
-                f"real=${real_cost_usd:.4f}, "
-                f"refunded=${refunded:.4f}"
-            )
-
-            return settlement
 
         except Exception as e:
             logger.error(f"Erro ao liquidar créditos: {e}")
@@ -301,32 +351,45 @@ class WalletManager:
     def cancel_block(self, analysis_id: str) -> None:
         """
         Cancela bloqueio se análise falhar.
-
-        Args:
-            analysis_id: UUID da análise
+        Tenta usar RPC atómico; fallback para operação multi-step.
         """
+        # --- Tentar RPC atómico ---
         try:
-            # Obter bloqueio
+            rpc_result = self.sb.rpc("cancel_block_atomic", {
+                "p_analysis_id": analysis_id,
+            }).execute()
+
+            if rpc_result.data:
+                data = rpc_result.data
+                if isinstance(data, str):
+                    import json
+                    data = json.loads(data)
+                if data.get("success"):
+                    logger.info(f"[WALLET-RPC] Bloqueio cancelado: analysis={analysis_id}")
+                    return
+        except Exception as e:
+            logger.warning(f"[WALLET] RPC cancel_block_atomic indisponível ({e}), usando fallback")
+
+        # --- Fallback: operação multi-step ---
+        try:
             block_resp = self.sb.table("blocked_credits").select(
                 "id, user_id, amount"
             ).eq("analysis_id", analysis_id).eq("status", "blocked").execute()
 
             if block_resp.data:
                 block = block_resp.data[0]
-                # Devolver créditos bloqueados
                 balance = self.get_balance(block["user_id"])
                 new_blocked = max(0, balance["blocked"] - float(block["amount"]))
                 self.sb.table("profiles").update({
                     "credits_blocked": new_blocked,
                 }).eq("id", block["user_id"]).execute()
 
-                # Marcar como cancelado
                 self.sb.table("blocked_credits").update({
                     "status": "cancelled",
                     "settled_at": datetime.now().isoformat(),
                 }).eq("id", block["id"]).execute()
 
-            logger.info(f"Bloqueio cancelado: analysis={analysis_id}")
+            logger.info(f"[WALLET-FALLBACK] Bloqueio cancelado: analysis={analysis_id}")
         except Exception as e:
             logger.error(f"Erro ao cancelar bloqueio: {e}")
             # Não propagar erro (melhor ter bloqueio ativo que perder dinheiro)

@@ -1005,6 +1005,10 @@ REVISTO:"""
             max_tokens=max_tokens,
         )
 
+        # FIX 2026-02-14: Acumular tokens de TODAS as chamadas (incluindo retries)
+        _accumulated_prompt_tokens = response.prompt_tokens or 0
+        _accumulated_completion_tokens = response.completion_tokens or 0
+
         # === QUALITY GATE + RETRIES (max 2) ===
         MAX_RETRIES = 2
         for retry_num in range(1, MAX_RETRIES + 1):
@@ -1042,6 +1046,22 @@ REVISTO:"""
                     adaptive_hints_used=adaptive_hints_used,
                 )
 
+            # Registar custo do retry falhado no CostController
+            if hasattr(self, '_cost_controller') and self._cost_controller:
+                retry_pt = response.prompt_tokens or 0
+                retry_ct = response.completion_tokens or 0
+                if retry_pt or retry_ct:
+                    try:
+                        self._cost_controller.register_usage(
+                            phase=f"{role_name}_retry{retry_num}",
+                            model=modelo_final,
+                            prompt_tokens=retry_pt,
+                            completion_tokens=retry_ct,
+                            raise_on_exceed=False,
+                        )
+                    except Exception:
+                        pass
+
             # Construir prompt melhorado para retry
             retry_system, retry_temp = build_retry_prompt(
                 system_prompt, quality_issue, retry_num, adaptive_hint_text
@@ -1060,7 +1080,11 @@ REVISTO:"""
                 f"(success={response.success}, len={len(response.content or '')})"
             )
 
-        # === TOKENS ===
+            # Acumular tokens do retry
+            _accumulated_prompt_tokens += response.prompt_tokens or 0
+            _accumulated_completion_tokens += response.completion_tokens or 0
+
+        # === TOKENS (usar acumulados para custo total real) ===
         prompt_tokens = response.prompt_tokens
         completion_tokens = response.completion_tokens
         total_tokens = response.total_tokens

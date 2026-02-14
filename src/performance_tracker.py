@@ -225,11 +225,12 @@ class PerformanceTracker:
             if penalty_total is not None:
                 update_data["penalty_total"] = float(penalty_total)
 
+            # FIX 2026-02-14: Limitar a 1 row para evitar update múltiplo
             self.sb.table("model_performance").update(
                 update_data
             ).eq("run_id", run_id).eq("role", role).eq(
                 "was_retry", False
-            ).execute()
+            ).limit(1).execute()
             logger.debug(f"[PERF] Integrity attributed: {role}")
         except Exception as e:
             logger.warning(f"[PERF] Failed to update integrity for {role}: {e}")
@@ -554,6 +555,6 @@ def classify_error(error_message: str) -> str:
         return "BUDGET_EXCEEDED"
     if "500" in msg or "502" in msg or "503" in msg:
         return "SERVER_ERROR"
-    if "401" in msg or "403" in msg or "key" in msg:
+    if "401" in msg or "403" in msg or "api_key" in msg or "api key" in msg or "invalid key" in msg:
         return "AUTH_ERROR"
     return "OTHER"

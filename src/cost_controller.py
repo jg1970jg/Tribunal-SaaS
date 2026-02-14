@@ -478,8 +478,25 @@ class CostController:
             # Verificar limites
             if raise_on_exceed:
                 self._check_limits()
+            else:
+                self._warn_limits()
 
         return phase_usage
+
+    def _warn_limits(self):
+        """Loga WARNING se limites foram excedidos (sem bloquear)."""
+        if self.usage.total_cost_usd > self.budget_limit and not self.usage.blocked:
+            logger.warning(
+                f"[CUSTO-ALERTA] Budget excedido: "
+                f"${self.usage.total_cost_usd:.4f} > ${self.budget_limit:.2f} "
+                f"(run={self.run_id}) — continuando sem bloquear"
+            )
+        if self.usage.total_tokens > self.token_limit and not self.usage.blocked:
+            logger.warning(
+                f"[CUSTO-ALERTA] Tokens excedidos: "
+                f"{self.usage.total_tokens:,} > {self.token_limit:,} "
+                f"(run={self.run_id}) — continuando sem bloquear"
+            )
 
     def _check_limits(self):
         """Verifica se limites foram excedidos."""
