@@ -406,6 +406,13 @@ async def analyze(
         try:
             sb_admin = get_supabase_admin()
             custos = result_dict.get("custos") or {}
+            custo_real = custos.get("custo_total_usd", 0)
+            custo_cobrado = custos.get("custo_cliente_usd", 0)
+            print(
+                f"[DOCS-DEBUG] custos keys={list(custos.keys()) if custos else 'EMPTY'}, "
+                f"custo_real={custo_real}, custo_cobrado={custo_cobrado}, "
+                f"type_real={type(custo_real).__name__}, type_cobrado={type(custo_cobrado).__name__}"
+            )
             doc_record = {
                 "user_id": user["id"],
                 "title": titulo or result_dict.get("documento_filename", ""),
@@ -417,8 +424,8 @@ async def analyze(
                 "filename": file.filename,
                 "file_size_bytes": len(file_bytes),
                 "total_tokens": result_dict.get("total_tokens", 0),
-                "custo_real_usd": custos.get("custo_total_usd", 0),
-                "custo_cobrado_usd": custos.get("custo_cliente_usd", 0),
+                "custo_real_usd": float(custo_real) if custo_real else 0.0,
+                "custo_cobrado_usd": float(custo_cobrado) if custo_cobrado else 0.0,
                 "duracao_segundos": result_dict.get("duracao_total_s", 0),
             }
             insert_resp = sb_admin.table("documents").insert(doc_record).execute()
