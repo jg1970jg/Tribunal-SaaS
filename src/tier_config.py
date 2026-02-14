@@ -110,7 +110,7 @@ TIER_CONFIG = {
                 "Análise com múltiplas IAs",
             ]
         },
-        "time_estimate": "2-3 min",
+        "time_estimate": "15-20 min",
         "included": True,
     },
 
@@ -158,7 +158,7 @@ TIER_CONFIG = {
                 "Quando quer certeza na análise",
             ]
         },
-        "time_estimate": "3-4 min",
+        "time_estimate": "15-20 min",
         "included": False,
     },
 
@@ -206,7 +206,7 @@ TIER_CONFIG = {
                 "Quando quer a máxima confiança",
             ]
         },
-        "time_estimate": "4-5 min",
+        "time_estimate": "20-25 min",
         "included": False,
     },
 }
