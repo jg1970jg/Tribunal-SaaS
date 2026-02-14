@@ -325,9 +325,9 @@ def calculate_custom_selection_cost(
 
 OPENROUTER_MODEL_MAPPING = {
     # Extratores
-    "sonnet-4.5": "anthropic/claude-sonnet-4-5",
+    "sonnet-4.5": "anthropic/claude-sonnet-4.5",
     "sonnet-3.5": "anthropic/claude-3.5-sonnet",
-    "claude-opus-4": "anthropic/claude-opus-4-6",
+    "claude-opus-4": "anthropic/claude-opus-4.6",
     "gemini-3-flash-preview": "google/gemini-3-flash-preview",
     "gpt-4o": "openai/gpt-4o",
     "deepseek": "deepseek/deepseek-chat",
@@ -335,9 +335,9 @@ OPENROUTER_MODEL_MAPPING = {
     # Auditores e Relatores
     "gpt-5.2": "openai/gpt-5.2",
     "gpt-5.2-pro": "openai/gpt-5.2-pro",
-    "claude-sonnet-4.5": "anthropic/claude-sonnet-4-5-20250929",
-    "claude-opus-4-audit": "anthropic/claude-opus-4-6",
-    "claude-opus-4-judge": "anthropic/claude-opus-4-6",
+    "claude-sonnet-4.5": "anthropic/claude-sonnet-4.5",
+    "claude-opus-4-audit": "anthropic/claude-opus-4.6",
+    "claude-opus-4-judge": "anthropic/claude-opus-4.6",
     "gemini-3-pro-preview": "google/gemini-3-pro-preview",
     "grok-4.1": "x-ai/grok-4.1",
 

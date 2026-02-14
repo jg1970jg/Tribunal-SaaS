@@ -30,7 +30,7 @@ HARDCODED_PRICING = {
     "openai/gpt-5.2-pro": {"input": 21.00, "output": 168.00},
     "anthropic/claude-opus-4.6": {"input": 5.00, "output": 25.00},  # NOVO: actualizado de 4.5
     "anthropic/claude-opus-4.5": {"input": 5.00, "output": 25.00},  # Mantido para historico
-    "anthropic/claude-sonnet-4-5": {"input": 3.00, "output": 15.00},  # NOVO: substitui Opus em E1/A2/J2
+    "anthropic/claude-sonnet-4.5": {"input": 3.00, "output": 15.00},  # NOVO: substitui Opus em E1/A2/J2
     "anthropic/claude-3-5-sonnet": {"input": 6.00, "output": 30.00},
     "anthropic/claude-3.5-haiku": {"input": 0.25, "output": 1.25},
     "google/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},

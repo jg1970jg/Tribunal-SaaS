@@ -111,14 +111,14 @@ PRESIDENTE_MODEL_OPTIONS = CONSELHEIRO_MODEL_OPTIONS
 # Opções para Auditor Claude (A2)
 AUDITOR_CLAUDE_OPTIONS = {
     "sonnet-4.5": {
-        "model": "anthropic/claude-sonnet-4-5",
+        "model": "anthropic/claude-sonnet-4.5",
         "display_name": "Sonnet 4.5 (económico) — Recomendado",
         "cost_per_analysis": 0.14,
         "description": "Bom equilíbrio custo/qualidade",
         "recommended": True,
     },
     "claude-opus-4": {
-        "model": "anthropic/claude-opus-4-6",
+        "model": "anthropic/claude-opus-4.6",
         "display_name": "Opus 4.6 (premium)",
         "cost_per_analysis": 0.50,
         "description": "Máxima profundidade de análise, custo elevado",
@@ -129,14 +129,14 @@ AUDITOR_CLAUDE_OPTIONS = {
 # Opções para Relator Claude (J2)
 RELATOR_CLAUDE_OPTIONS = {
     "sonnet-4.5": {
-        "model": "anthropic/claude-sonnet-4-5",
+        "model": "anthropic/claude-sonnet-4.5",
         "display_name": "Sonnet 4.5 (económico) — Recomendado",
         "cost_per_analysis": 0.14,
         "description": "Bom equilíbrio custo/qualidade",
         "recommended": True,
     },
     "claude-opus-4": {
-        "model": "anthropic/claude-opus-4-6",
+        "model": "anthropic/claude-opus-4.6",
         "display_name": "Opus 4.6 (premium)",
         "cost_per_analysis": 0.50,
         "description": "Máxima profundidade de análise, custo elevado",
@@ -258,7 +258,7 @@ LLM_CONFIGS = [
     {
         "id": "E1",
         "role": "Extrator Completo",
-        "model": "anthropic/claude-sonnet-4-5",     # MUDANÇA: era claude-opus-4.6
+        "model": "anthropic/claude-sonnet-4.5",     # MUDANÇA: era claude-opus-4.6
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
@@ -302,7 +302,7 @@ EXTRATOR_MODELS_NEW = EXTRATOR_MODELS
 
 AUDITOR_MODELS = [
     "openai/gpt-5.2",                  # A1: GPT-5.2 (titular, failover → gpt-4.1)
-    "anthropic/claude-sonnet-4-5",      # A2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
+    "anthropic/claude-sonnet-4.5",      # A2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
     "google/gemini-3-pro-preview",      # A3: Gemini 3 Pro (ctx 1.049K, out 66K)
     "x-ai/grok-4.1-fast",              # A4: xAI Grok 4.1 Fast (ctx 2.000K, out 30K)
 ]
@@ -321,7 +321,7 @@ AUDITORES = [
 
 RELATOR_MODELS = [
     "openai/gpt-5.2",                  # J1: GPT-5.2 (titular, failover → gpt-4.1)
-    "anthropic/claude-sonnet-4-5",      # J2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
+    "anthropic/claude-sonnet-4.5",      # J2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
     "google/gemini-3-pro-preview"       # J3: Gemini 3 Pro (ctx 1.049K, out 66K)
 ]
 
@@ -345,8 +345,8 @@ MODEL_CONTEXT_LIMITS = {
     "openai/gpt-5.2":                  400_000,
     "openai/gpt-5.2-pro":              400_000,
     "openai/gpt-4.1":                  1_048_000,
-    "anthropic/claude-opus-4-6":        1_000_000,
-    "anthropic/claude-sonnet-4-5":      200_000,
+    "anthropic/claude-opus-4.6":        1_000_000,
+    "anthropic/claude-sonnet-4.5":      200_000,
     "google/gemini-3-pro-preview":      1_049_000,
     "x-ai/grok-4.1-fast":              2_000_000,
     # Extratores
@@ -360,8 +360,8 @@ MODEL_MAX_OUTPUT = {
     "openai/gpt-5.2":                  128_000,
     "openai/gpt-5.2-pro":              128_000,
     "openai/gpt-4.1":                  32_768,
-    "anthropic/claude-opus-4-6":        128_000,
-    "anthropic/claude-sonnet-4-5":      8_192,
+    "anthropic/claude-opus-4.6":        128_000,
+    "anthropic/claude-sonnet-4.5":      8_192,
     "google/gemini-3-pro-preview":      66_000,
     "x-ai/grok-4.1-fast":              30_000,
     # Extratores
@@ -415,7 +415,7 @@ VISION_OCR_TEMPERATURE = 0.0
 
 # Modelos com capacidade de visão (podem receber imagens)
 VISION_CAPABLE_MODELS = {
-    "anthropic/claude-sonnet-4-5",      # MUDANÇA: era opus-4.6
+    "anthropic/claude-sonnet-4.5",      # MUDANÇA: era opus-4.6
     "google/gemini-3-flash-preview",
     "openai/gpt-4o",
     "anthropic/claude-3-5-sonnet",

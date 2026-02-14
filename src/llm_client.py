@@ -127,10 +127,10 @@ logger = logging.getLogger(__name__)
 
 # Modelos com cache MANUAL (Anthropic - precisa cache_control)
 MODELS_MANUAL_CACHE = {
-    "anthropic/claude-sonnet-4-5",
+    "anthropic/claude-sonnet-4.5",
     "anthropic/claude-3-5-sonnet",
     "anthropic/claude-opus-4.6",
-    "anthropic/claude-opus-4-5",
+    "anthropic/claude-opus-4.5",
 }
 
 # Modelos com cache AUTOMÁTICO (OpenAI, Gemini, Grok)
