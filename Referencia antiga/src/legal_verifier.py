@@ -480,7 +480,8 @@ class LegalVerifier:
         1. Lookup directo no mapa
         2. Lookup por alias
         3. Fuzzy matching (>80% similaridade)
-        4. Se falhar tudo, tenta auto-descoberta forçada
+        4. Auto-descoberta forçada (área 32)
+        5. Pesquisa dinâmica no PGDL por nome
         """
         # 1. Directo
         if diploma in self._nid_map:
@@ -522,6 +523,58 @@ class LegalVerifier:
                 score = SequenceMatcher(None, diploma_lower, known_name.lower()).ratio()
                 if score >= 0.80:
                     return self._nid_map[known_name]
+
+        # 5. Pesquisa dinâmica no PGDL por nome exacto
+        nid = self._search_pgdl_by_name(diploma)
+        if nid:
+            self._nid_map[diploma] = nid
+            self._save_discovered_nid(diploma, nid, "search")
+            return nid
+
+        return None
+
+    def _search_pgdl_by_name(self, diploma_name: str) -> Optional[int]:
+        """
+        Pesquisa o PGDL por nome de diploma para descobrir o NID.
+        Usa lei_busca.php?busca=codigo&buscacodigo=NOME (ISO-8859-1).
+        """
+        try:
+            encoded = diploma_name.encode("iso-8859-1", errors="replace")
+            response = self._http_client.get(
+                f"{self.PGDL_BASE}/lei_busca.php",
+                params={
+                    "busca": "codigo",
+                    "buscacodigo": encoded.decode("iso-8859-1"),
+                    "pagina": "1",
+                    "ficha": "1",
+                    "so_miolo": "",
+                },
+                headers={"User-Agent": "Mozilla/5.0 LexForum/2.0"},
+                follow_redirects=True,
+                timeout=10,
+            )
+            if response.status_code != 200:
+                return None
+
+            text = response.content.decode("iso-8859-1", errors="replace")
+
+            # Extrair nid da página de resultados
+            # Método 1: JavaScript variable nidlei = 'NNN'
+            js_match = re.search(r"nidlei\s*=\s*['\"](\d+)['\"]", text)
+            if js_match:
+                nid = int(js_match.group(1))
+                logger.info(f"[LEGAL] Pesquisa PGDL: '{diploma_name}' → nid={nid} (js)")
+                return nid
+
+            # Método 2: Link lei_mostra_articulado.php?nid=NNN
+            link_match = re.search(r"lei_mostra_articulado\.php\?nid=(\d+)", text)
+            if link_match:
+                nid = int(link_match.group(1))
+                logger.info(f"[LEGAL] Pesquisa PGDL: '{diploma_name}' → nid={nid} (link)")
+                return nid
+
+        except Exception as e:
+            logger.warning(f"[LEGAL] Erro na pesquisa PGDL por nome: {e}")
 
         return None
 
