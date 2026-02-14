@@ -863,6 +863,18 @@ REVISTO:"""
             )
             tokens_depois = len(resultado.content) // 4 if resultado else tokens
             logger.info(f"[RLM] {tokens:,} → {tokens_depois:,}")
+            # FIX 2026-02-14: Registar custo do RLM (antes era invisível)
+            if hasattr(self, '_cost_controller') and self._cost_controller and resultado:
+                try:
+                    self._cost_controller.register_usage(
+                        phase=f"rlm_{tipo_fase}",
+                        model="openai/gpt-4.1",
+                        prompt_tokens=resultado.prompt_tokens or (tokens),
+                        completion_tokens=resultado.completion_tokens or (tokens_depois),
+                        raise_on_exceed=False,
+                    )
+                except Exception:
+                    pass
             if self._output_dir:
                 self._log_to_file(f"rlm_{tipo_fase}.md", resultado.content if resultado else "ERRO")
             return resultado.content if resultado else texto
@@ -880,13 +892,17 @@ REVISTO:"""
         chefe_model: str = None,
         callback_progresso: Optional[Callable] = None,
     ):
-        self.extrator_models = extrator_models or EXTRATOR_MODELS
-        self.auditor_models = auditor_models or AUDITOR_MODELS
-        self.relator_models = relator_models or JUIZ_MODELS
+        self.extrator_models = list(extrator_models or EXTRATOR_MODELS)
+        self.auditor_models = list(auditor_models or AUDITOR_MODELS)
+        self.relator_models = list(relator_models or JUIZ_MODELS)
         self.presidente_model = presidente_model or PRESIDENTE_MODEL
         self.agregador_model = agregador_model or AGREGADOR_MODEL
         self.chefe_model = chefe_model or CHEFE_MODEL
         self.callback_progresso = callback_progresso
+
+        # FIX 2026-02-14: Cópia local de LLM_CONFIGS para thread-safety
+        import copy
+        self._llm_configs = copy.deepcopy(LLM_CONFIGS)
 
         self.llm_client = get_llm_client()
         self.legal_verifier = get_legal_verifier()
@@ -1062,9 +1078,10 @@ REVISTO:"""
         # Registar no CostController (se disponível)
         if hasattr(self, '_cost_controller') and self._cost_controller:
             try:
+                # FIX 2026-02-14: Usar modelo_final (após failover), não model original
                 self._cost_controller.register_usage(
                     phase=role_name,
-                    model=model,
+                    model=modelo_final,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     raise_on_exceed=False,
@@ -1386,7 +1403,7 @@ REVISTO:"""
             )
 
         # 3. Configurar extratores
-        extractor_configs = [cfg for cfg in LLM_CONFIGS if cfg["id"] in ["E1", "E2", "E3", "E4", "E5"]]
+        extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"] in ["E1", "E2", "E3", "E4", "E5"]]
         logger.info(f"=== {num_chunks} chunk(s) × {len(extractor_configs)} extratores = {num_chunks * len(extractor_configs)} chamadas LLM ===")
 
         # 4. Estruturas para armazenar resultados
@@ -1828,7 +1845,7 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
         
         logger.info(f"=== FASE 1: {num_chunks} chunk(s) × 5 extratores = {num_chunks * 5} chamadas LLM ===")
         
-        extractor_configs = [cfg for cfg in LLM_CONFIGS if cfg["id"] in ["E1", "E2", "E3", "E4", "E5"]]
+        extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"] in ["E1", "E2", "E3", "E4", "E5"]]
         
         resultados = []
         for i, cfg in enumerate(extractor_configs):
@@ -2067,7 +2084,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
 
         # Processar cada extrator em todos os batches
         # USAR 5 EXTRATORES COM PROMPTS ESPECIALIZADOS
-        extractor_configs = [cfg for cfg in LLM_CONFIGS if cfg["id"] in ["E1", "E2", "E3", "E4", "E5"]]
+        extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"] in ["E1", "E2", "E3", "E4", "E5"]]
         logger.info(f"=== FASE 1 BATCH: Usando {len(extractor_configs)} extratores especializados ===")
 
         all_extractor_results = []  # Lista de resultados por extrator
@@ -2940,11 +2957,13 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         # FIX 2026-02-14: Fallback — se presidente falhou (vazio), tentar gpt-5.2
         modelo_usado = self.presidente_model
         if not resultado.conteudo or not resultado.conteudo.strip():
-            fallback_model = "openai/gpt-5.2"
+            # FIX 2026-02-14: Fallback tier-aware (Gold usa gpt-5.2, outros não fazem fallback)
+            tier_name = getattr(self, '_tier', 'bronze')
+            fallback_model = "openai/gpt-5.2" if tier_name == "gold" else "openai/gpt-5.2"
             if self.presidente_model != fallback_model:
                 logger.warning(
                     f"[PRESIDENTE-FALLBACK] {self.presidente_model} retornou vazio! "
-                    f"Tentando fallback: {fallback_model}"
+                    f"Tentando fallback: {fallback_model} (tier={tier_name})"
                 )
                 resultado = self._call_llm(
                     model=fallback_model,
@@ -3127,11 +3146,13 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         # FIX 2026-02-14: Fallback — se presidente falhou (vazio), tentar gpt-5.2
         modelo_usado = self.presidente_model
         if not presidente_result.conteudo or not presidente_result.conteudo.strip():
-            fallback_model = "openai/gpt-5.2"
+            # FIX 2026-02-14: Fallback tier-aware
+            tier_name = getattr(self, '_tier', 'bronze')
+            fallback_model = "openai/gpt-5.2" if tier_name == "gold" else "openai/gpt-5.2"
             if self.presidente_model != fallback_model:
                 logger.warning(
                     f"[PRESIDENTE-FALLBACK] {self.presidente_model} retornou vazio! "
-                    f"Tentando fallback: {fallback_model}"
+                    f"Tentando fallback: {fallback_model} (tier={tier_name})"
                 )
                 presidente_result = self._call_llm(
                     model=fallback_model,

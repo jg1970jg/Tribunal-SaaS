@@ -11,6 +11,7 @@ Servidor principal com:
 ============================================================
 """
 
+import asyncio
 import io
 import os
 import logging
@@ -40,11 +41,11 @@ from src.engine import (
 
 logger = logging.getLogger(__name__)
 
+# FIX 2026-02-14: Carregar .env ANTES de ler ADMIN_EMAILS
+load_dotenv()
+
 # Lista de emails de admin (para endpoints de admin)
 ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
-
-# Carregar variáveis de ambiente (.env)
-load_dotenv()
 
 
 # ============================================================
@@ -59,7 +60,7 @@ def _get_user_or_ip(request: Request) -> str:
             import jwt as pyjwt
             payload = pyjwt.decode(
                 auth[7:],
-                options={"verify_signature": False, "verify_exp": False},
+                options={"verify_signature": False, "verify_exp": True},
             )
             user_id = payload.get("sub", "")
             if user_id:
@@ -99,7 +100,7 @@ def _extract_user_info(request: Request) -> dict:
             import jwt as pyjwt
             payload = pyjwt.decode(
                 auth[7:],
-                options={"verify_signature": False, "verify_exp": False},
+                options={"verify_signature": False, "verify_exp": True},
             )
             info["user_id"] = payload.get("sub", "")
             info["email"] = payload.get("email", "")
@@ -208,7 +209,7 @@ def _check_blacklist(request: Request, user: dict = None):
                 import jwt as pyjwt
                 payload = pyjwt.decode(
                     auth[7:],
-                    options={"verify_signature": False, "verify_exp": False},
+                    options={"verify_signature": False, "verify_exp": True},
                 )
                 email = (payload.get("email") or "").lower().strip()
             except Exception:
@@ -281,7 +282,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -390,7 +391,9 @@ async def analyze(
                 detail="Tier inválido. Opções: bronze, silver, gold.",
             )
 
-        resultado = executar_analise_documento(
+        # FIX 2026-02-14: Executar em thread separada para não bloquear event loop
+        resultado = await asyncio.to_thread(
+            executar_analise_documento,
             user_id=user["id"],
             file_bytes=file_bytes,
             filename=file.filename,
@@ -679,7 +682,7 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
 
 @app.post("/export/pdf")
 @limiter.limit("30/minute")
-async def export_pdf(request: Request, req: ExportRequest):
+async def export_pdf(request: Request, req: ExportRequest, user: dict = Depends(get_current_user)):
     """Exporta o resultado da análise como PDF."""
     try:
         pdf_bytes = _build_pdf(req.analysis_result)
@@ -697,7 +700,7 @@ async def export_pdf(request: Request, req: ExportRequest):
 
 @app.post("/export/docx")
 @limiter.limit("30/minute")
-async def export_docx(request: Request, req: ExportRequest):
+async def export_docx(request: Request, req: ExportRequest, user: dict = Depends(get_current_user)):
     """Exporta o resultado da análise como DOCX."""
     try:
         docx_bytes = _build_docx(req.analysis_result)
@@ -789,7 +792,7 @@ def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] =
 @app.post("/ask")
 @limiter.limit("20/minute")
 @limiter.limit("100/hour")
-async def ask_question(request: Request, req: AskRequest):
+async def ask_question(request: Request, req: AskRequest, user: dict = Depends(get_current_user)):
     """
     Pergunta pós-análise: envia a pergunta a 3 LLMs com contexto da análise
     anterior + histórico de Q&A e consolida as respostas.

@@ -569,7 +569,11 @@ def executar_analise(
     print(f"[ENGINE] Documento: {documento.filename} ({documento.num_chars:,} chars)")
 
     try:
+        # FIX 2026-02-14: Passar CÓPIAS das listas de modelos (thread-safety)
         processor = LexForumProcessor(
+            extrator_models=list(config_module.EXTRATOR_MODELS),
+            auditor_models=list(config_module.AUDITOR_MODELS),
+            relator_models=list(config_module.JUIZ_MODELS),
             chefe_model=config_module.CHEFE_MODEL,
             presidente_model=config_module.PRESIDENTE_MODEL,
             callback_progresso=callback,

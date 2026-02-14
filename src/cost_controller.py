@@ -80,9 +80,9 @@ class DynamicPricing:
         """
         try:
             logger.info("[PRECO] Buscando preços da OpenRouter API...")
-            client = httpx.Client(timeout=cls.FETCH_TIMEOUT)
-            response = client.get(cls.OPENROUTER_URL)
-            client.close()
+            # FIX 2026-02-14: context manager para fechar client mesmo com excepção
+            with httpx.Client(timeout=cls.FETCH_TIMEOUT) as client:
+                response = client.get(cls.OPENROUTER_URL)
 
             if response.status_code != 200:
                 logger.warning(f"[PRECO] OpenRouter API retornou status {response.status_code}")
@@ -398,6 +398,9 @@ class CostController:
 
         # Thread safety
         self._lock = Lock()
+
+        # FIX 2026-02-14: Limpar _models_used entre runs (evita leak/contaminação)
+        DynamicPricing._models_used = {}
 
         # Pre-fetch preços (usa cache se válido, fetch se expirado)
         DynamicPricing.prefetch()

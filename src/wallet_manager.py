@@ -95,7 +95,8 @@ class WalletManager:
                     wb = self.sb.table("wallet_balances").select(
                         "balance_usd"
                     ).eq("user_id", user_id).limit(1).execute()
-                    initial_balance = float(wb.data[0]["balance_usd"]) if wb.data else 10000.0
+                    # FIX 2026-02-14: Default $0 (era $10,000 - perigosamente generoso)
+                    initial_balance = float(wb.data[0]["balance_usd"]) if wb.data else 0.0
 
                     self.sb.table("profiles").insert({
                         "id": user_id,
@@ -503,7 +504,7 @@ class WalletManager:
             return {
                 "period_days": days,
                 "total_analyses": len(transactions),
-                "total_revenue": total_real_cost,
+                "total_revenue": total_charged,  # FIX 2026-02-14: receita = cobrado ao cliente, não custo real
                 "total_charged": total_charged,
                 "total_profit": total_profit,
                 "profit_margin": profit_margin,
