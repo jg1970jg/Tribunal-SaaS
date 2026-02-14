@@ -44,17 +44,30 @@ def _is_retryable_http_error(exception: BaseException) -> bool:
     Verifica se um erro HTTP deve ser tentado novamente.
 
     NÃO faz retry em erros de cliente (400, 401, 403, 404) pois nunca vão funcionar.
-    Faz retry em erros de servidor (429, 500, 502, 503, 504) e timeouts.
+    NÃO faz retry em 429 insufficient_quota (saldo esgotado - nunca vai funcionar).
+    Faz retry em rate_limit (429 normal), erros de servidor (5xx) e timeouts.
 
     FIX 2026-02-10: Também faz retry em ValueError/JSONDecodeError
-    (respostas corrompidas que vieram com HTTP 200 mas body inválido).
+    FIX 2026-02-14: NÃO retry em insufficient_quota (evita 5×retry inútil)
     """
     if isinstance(exception, httpx.TimeoutException):
         return True
     if isinstance(exception, httpx.HTTPStatusError):
         status = exception.response.status_code
-        # Retry apenas em rate limit (429) e erros de servidor (5xx)
-        return status == 429 or status >= 500
+        # FIX 2026-02-14: 429 insufficient_quota = saldo esgotado, NUNCA vai funcionar
+        if status == 429:
+            try:
+                body = exception.response.text
+                if "insufficient_quota" in body or "exceeded your current quota" in body:
+                    logging.getLogger(__name__).warning(
+                        "[QUOTA] 429 insufficient_quota detectado — NÃO faz retry (saldo esgotado)"
+                    )
+                    return False
+            except Exception:
+                pass
+            return True  # 429 rate_limit normal → retry
+        # Retry em erros de servidor (5xx)
+        return status >= 500
     # FIX 2026-02-10: Retry em JSON corrompido (HTTP 200 mas body inválido)
     if isinstance(exception, (ValueError, json.JSONDecodeError)):
         return True
@@ -247,6 +260,7 @@ class LLMResponse:
     role: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    reasoning_tokens: int = 0  # FIX 2026-02-14: tokens de raciocínio (gpt-5.2-pro, o3, etc.)
     total_tokens: int = 0
     cached_tokens: int = 0  # NOVO: tokens que vieram do cache
     latency_ms: float = 0.0
@@ -756,10 +770,20 @@ class OpenAIClient:
             logger.info(f"[RESPONSES-API] Final output_text: {len(output_text)} chars, first 200: {output_text[:200]!r}")
 
             usage = raw_response.get("usage", {})
-            
+
+            # Log raw usage for debugging
+            logger.info(f"[USAGE-RAW] {model}: {usage}")
+
             # NOVO: Extrair cached_tokens
             cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-            
+
+            # FIX 2026-02-14: Extrair reasoning tokens (gpt-5.2-pro, o3, etc.)
+            reasoning_tokens = (
+                usage.get("output_tokens_details", {}).get("reasoning_tokens", 0)
+                or usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+                or 0
+            )
+
             if cached_tokens > 0:
                 prompt_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                 cache_pct = 100 * cached_tokens / prompt_tokens if prompt_tokens > 0 else 0
@@ -772,15 +796,31 @@ class OpenAIClient:
 
             # Responses API usa input_tokens/output_tokens (não prompt_tokens/completion_tokens)
             prompt_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
-            completion_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
-            total_tokens = usage.get("total_tokens", 0) or (prompt_tokens + completion_tokens)
+            reported_completion = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+
+            # FIX 2026-02-14: Corrigir completion_tokens para incluir reasoning
+            actual_completion = reported_completion
+            if reasoning_tokens > 0 and reasoning_tokens > reported_completion:
+                actual_completion = reasoning_tokens + reported_completion
+                logger.warning(
+                    f"[REASONING] {model}: reasoning_tokens={reasoning_tokens:,} > "
+                    f"output_tokens={reported_completion:,} → ajustado para {actual_completion:,}"
+                )
+            elif reasoning_tokens > 0:
+                logger.info(
+                    f"[REASONING] {model}: reasoning={reasoning_tokens:,} "
+                    f"(incluído em output={reported_completion:,})"
+                )
+
+            total_tokens = usage.get("total_tokens", 0) or (prompt_tokens + actual_completion)
 
             response = LLMResponse(
                 content=output_text,
                 model=raw_response.get("model", model),
                 role="assistant",
                 prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
+                completion_tokens=actual_completion,
+                reasoning_tokens=reasoning_tokens,
                 total_tokens=total_tokens,
                 cached_tokens=cached_tokens,
                 latency_ms=latency_ms,
@@ -795,7 +835,8 @@ class OpenAIClient:
 
             logger.info(
                 f"✅ OpenAI Responses resposta: {response.total_tokens} tokens "
-                f"(cache: {response.cache_hit_rate:.1f}%), {latency_ms:.0f}ms"
+                f"(completion={actual_completion:,}, reasoning={reasoning_tokens:,}, "
+                f"cache: {response.cache_hit_rate:.1f}%), {latency_ms:.0f}ms"
             )
 
             return response
@@ -962,7 +1003,29 @@ class OpenRouterClient:
 
             # NOVO: Extrair cached_tokens (Anthropic + outros)
             cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-            
+
+            # FIX 2026-02-14: Extrair reasoning tokens (gpt-5.2-pro, o3, etc.)
+            reasoning_tokens = (
+                usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+                or usage.get("reasoning_tokens", 0)
+            )
+
+            # FIX 2026-02-14: Corrigir completion_tokens para incluir reasoning
+            # Modelos reasoning cobram por reasoning tokens MAS podem não incluir no completion_tokens
+            reported_completion = usage.get("completion_tokens", 0)
+            actual_completion = reported_completion
+            if reasoning_tokens > 0 and reasoning_tokens > reported_completion:
+                actual_completion = reasoning_tokens + reported_completion
+                logger.warning(
+                    f"[REASONING] {model}: reasoning_tokens={reasoning_tokens:,} > "
+                    f"completion_tokens={reported_completion:,} → ajustado para {actual_completion:,}"
+                )
+            elif reasoning_tokens > 0:
+                logger.info(
+                    f"[REASONING] {model}: reasoning={reasoning_tokens:,} "
+                    f"(incluído em completion={reported_completion:,})"
+                )
+
             if cached_tokens > 0:
                 cache_pct = 100 * cached_tokens / usage.get("prompt_tokens", 1)
                 logger.info(f"💚 CACHE HIT: {cached_tokens:,} tokens ({cache_pct:.1f}% do input)")
@@ -972,8 +1035,10 @@ class OpenRouterClient:
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
+            # Log raw usage for debugging
+            logger.info(f"[USAGE-RAW] {model}: {usage}")
+
             # FIX 2026-02-10: Detectar conteúdo vazio como falha
-            # Isto permite que _call_with_retry no processor.py faça retry
             if not content or not content.strip():
                 finish_reason = choice.get("finish_reason", "N/A")
                 logger.warning(
@@ -987,7 +1052,8 @@ class OpenRouterClient:
                     model=raw_response.get("model", model),
                     role="assistant",
                     prompt_tokens=usage.get("prompt_tokens", 0),
-                    completion_tokens=usage.get("completion_tokens", 0),
+                    completion_tokens=actual_completion,
+                    reasoning_tokens=reasoning_tokens,
                     total_tokens=usage.get("total_tokens", 0),
                     cached_tokens=cached_tokens,
                     latency_ms=latency_ms,
@@ -1002,7 +1068,8 @@ class OpenRouterClient:
                 model=raw_response.get("model", model),
                 role=message.get("role", "assistant"),
                 prompt_tokens=usage.get("prompt_tokens", 0),
-                completion_tokens=usage.get("completion_tokens", 0),
+                completion_tokens=actual_completion,
+                reasoning_tokens=reasoning_tokens,
                 total_tokens=usage.get("total_tokens", 0),
                 cached_tokens=cached_tokens,
                 latency_ms=latency_ms,
@@ -1017,7 +1084,8 @@ class OpenRouterClient:
 
             logger.info(
                 f"✅ OpenRouter resposta: {response.total_tokens} tokens "
-                f"(cache: {response.cache_hit_rate:.1f}%), {latency_ms:.0f}ms"
+                f"(completion={actual_completion:,}, reasoning={reasoning_tokens:,}, "
+                f"cache: {response.cache_hit_rate:.1f}%), {latency_ms:.0f}ms"
             )
 
             return response
@@ -1103,21 +1171,25 @@ class UnifiedLLMClient:
             enable_fallback: Se True, usa fallback OpenRouter quando OpenAI falhar
         """
         self.enable_fallback = enable_fallback
-        
+
+        # FIX 2026-02-14: Circuit breaker — após insufficient_quota, skip OpenAI
+        self._openai_circuit_open = False
+        self._openai_circuit_reason = ""
+
         # Clientes
         self.openai_client = OpenAIClient(
             api_key=openai_api_key,
             timeout=timeout,
             max_retries=max_retries,
         )
-        
+
         self.openrouter_client = OpenRouterClient(
             api_key=openrouter_api_key,
             timeout=timeout,
             max_retries=max_retries,
         )
-        
-        logger.info("✅ UnifiedLLMClient inicializado (Dual API + Fallback + Cache)")
+
+        logger.info("✅ UnifiedLLMClient inicializado (Dual API + Fallback + Cache + Circuit Breaker)")
 
     def chat_simple(
         self,
@@ -1225,14 +1297,32 @@ class UnifiedLLMClient:
         """
         # Detectar se deve usar OpenAI directa
         use_openai_direct = should_use_openai_direct(model)
-        
+
         if use_openai_direct:
+            # FIX 2026-02-14: Circuit breaker — skip OpenAI se saldo esgotado
+            if self._openai_circuit_open:
+                logger.info(
+                    f"⚡ CIRCUIT BREAKER: Skip OpenAI → directo OpenRouter "
+                    f"({self._openai_circuit_reason}) | modelo={model}"
+                )
+                response_fallback = self.openrouter_client.chat(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system_prompt=system_prompt,
+                    enable_cache=enable_cache,
+                )
+                if response_fallback.success:
+                    response_fallback.api_used = "openrouter (circuit-breaker)"
+                return response_fallback
+
             # Detectar qual API OpenAI usar
             use_responses = uses_responses_api(model)
-            
+
             if use_responses:
                 logger.info(f"🎯 Modelo OpenAI detectado: {model} (via Responses API)")
-                
+
                 # Tentar Responses API
                 response = self.openai_client.chat_responses(
                     model=model,
@@ -1244,7 +1334,7 @@ class UnifiedLLMClient:
                 )
             else:
                 logger.info(f"🎯 Modelo OpenAI detectado: {model} (via Chat API)")
-                
+
                 # Tentar Chat API normal
                 response = self.openai_client.chat(
                     model=model,
@@ -1254,16 +1344,26 @@ class UnifiedLLMClient:
                     system_prompt=system_prompt,
                     enable_cache=enable_cache,
                 )
-            
+
             # Se sucesso, retornar
             if response.success:
                 return response
-            
+
+            # FIX 2026-02-14: Detectar insufficient_quota → activar circuit breaker
+            error_str = str(response.error or "").lower()
+            if "insufficient_quota" in error_str or "exceeded your current quota" in error_str:
+                self._openai_circuit_open = True
+                self._openai_circuit_reason = "insufficient_quota"
+                logger.warning(
+                    "🔴 CIRCUIT BREAKER ACTIVADO: OpenAI saldo esgotado! "
+                    "Todas as chamadas seguintes vão directo para OpenRouter."
+                )
+
             # Se falhou E fallback habilitado
             if self.enable_fallback:
                 logger.warning(f"⚠️ OpenAI API falhou: {response.error}")
                 logger.info(f"🔄 Usando fallback OpenRouter...")
-                
+
                 # Tentar OpenRouter como backup
                 response_fallback = self.openrouter_client.chat(
                     model=model,
@@ -1273,12 +1373,12 @@ class UnifiedLLMClient:
                     system_prompt=system_prompt,
                     enable_cache=enable_cache,
                 )
-                
+
                 # Marcar que usou fallback
                 if response_fallback.success:
                     logger.info("✅ Fallback OpenRouter bem-sucedido!")
                     response_fallback.api_used = "openrouter (fallback)"
-                
+
                 return response_fallback
             else:
                 # Fallback desabilitado, retornar erro

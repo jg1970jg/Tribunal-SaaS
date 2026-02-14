@@ -1444,10 +1444,17 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                         else:
                             chunk_scanned_images.append((pg_num, b64_img))
 
+                # FIX 2026-02-14: Calcular max_tokens adequado ao modelo
+                # Extractores produzem JSON extenso — modelos premium precisam de mais espaço
+                from src.config import MODEL_MAX_OUTPUT
+                extractor_max_tokens = min(32_768, MODEL_MAX_OUTPUT.get(model, 16_384))
+                logger.info(f"[MAX_TOKENS] {extractor_id}: modelo={model} → max_tokens={extractor_max_tokens:,}")
+
                 # Chamar LLM com retry (com ou sem imagens)
                 def _do_llm_call(
                     _model=model, _prompt=prompt, _sys=sys_prompt, _temp=temperature,
-                    _images=chunk_scanned_images, _eid=extractor_id
+                    _images=chunk_scanned_images, _eid=extractor_id,
+                    _max_tokens=extractor_max_tokens,
                 ):
                     if _images:
                         pages_info = ", ".join(str(pg) for pg, _ in _images)
@@ -1471,11 +1478,13 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                         return self.llm_client.chat(
                             model=_model, messages=messages,
                             system_prompt=_sys, temperature=_temp,
+                            max_tokens=_max_tokens,
                         )
                     else:
                         return self.llm_client.chat_simple(
                             model=_model, prompt=_prompt,
                             system_prompt=_sys, temperature=_temp,
+                            max_tokens=_max_tokens,
                         )
 
                 response = _call_with_retry(
@@ -2928,10 +2937,31 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
             role_name="presidente_json",
         )
 
+        # FIX 2026-02-14: Fallback — se presidente falhou (vazio), tentar gpt-5.2
+        modelo_usado = self.presidente_model
+        if not resultado.conteudo or not resultado.conteudo.strip():
+            fallback_model = "openai/gpt-5.2"
+            if self.presidente_model != fallback_model:
+                logger.warning(
+                    f"[PRESIDENTE-FALLBACK] {self.presidente_model} retornou vazio! "
+                    f"Tentando fallback: {fallback_model}"
+                )
+                resultado = self._call_llm(
+                    model=fallback_model,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    role_name="presidente_json_fallback",
+                )
+                modelo_usado = fallback_model
+                if resultado.conteudo and resultado.conteudo.strip():
+                    logger.info(f"[PRESIDENTE-FALLBACK] {fallback_model} respondeu OK!")
+                else:
+                    logger.error(f"[PRESIDENTE-FALLBACK] {fallback_model} TAMBÉM falhou!")
+
         # Parsear JSON
         decision = parse_final_decision(
             output=resultado.conteudo,
-            model_name=self.presidente_model,
+            model_name=modelo_usado,
             run_id=run_id,
         )
 
@@ -3094,7 +3124,28 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             role_name="presidente",
         )
 
-        self._log_to_file("fase4_conselheiro.md", f"# CONSELHEIRO-MOR: {self.presidente_model}\n\n{presidente_result.conteudo}")
+        # FIX 2026-02-14: Fallback — se presidente falhou (vazio), tentar gpt-5.2
+        modelo_usado = self.presidente_model
+        if not presidente_result.conteudo or not presidente_result.conteudo.strip():
+            fallback_model = "openai/gpt-5.2"
+            if self.presidente_model != fallback_model:
+                logger.warning(
+                    f"[PRESIDENTE-FALLBACK] {self.presidente_model} retornou vazio! "
+                    f"Tentando fallback: {fallback_model}"
+                )
+                presidente_result = self._call_llm(
+                    model=fallback_model,
+                    prompt=prompt_presidente,
+                    system_prompt=system_prompt,
+                    role_name="presidente_fallback",
+                )
+                modelo_usado = fallback_model
+                if presidente_result.conteudo and presidente_result.conteudo.strip():
+                    logger.info(f"[PRESIDENTE-FALLBACK] {fallback_model} respondeu OK!")
+                else:
+                    logger.error(f"[PRESIDENTE-FALLBACK] {fallback_model} TAMBÉM falhou!")
+
+        self._log_to_file("fase4_conselheiro.md", f"# CONSELHEIRO-MOR: {modelo_usado}\n\n{presidente_result.conteudo}")
 
         # Guardar ficheiro Q&A final (se houver perguntas)
         if perguntas:
@@ -3352,11 +3403,19 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         )
 
         # Inicializar CostController para rastrear custos REAIS
+        # FIX 2026-02-14: Budget maior para Elite (gpt-5.2-pro com reasoning tokens é caro)
+        tier_name = getattr(self, '_tier', 'bronze')
+        default_budget = 10.0
+        if tier_name == 'gold':
+            default_budget = 25.0  # gpt-5.2-pro reasoning tokens podem custar $3-7/call
+        elif tier_name == 'silver':
+            default_budget = 15.0
+        budget = float(os.getenv("MAX_BUDGET_USD", str(default_budget)))
         self._cost_controller = CostController(
             run_id=run_id,
-            budget_limit_usd=float(os.getenv("MAX_BUDGET_USD", "10.0")),
+            budget_limit_usd=budget,
         )
-        logger.info(f"[CUSTO] CostController inicializado para run {run_id}")
+        logger.info(f"[CUSTO] CostController inicializado: run={run_id}, tier={tier_name}, budget=${budget:.2f}")
 
         # Inicializar PerformanceTracker para feedback adaptativo
         self._perf_tracker = None
