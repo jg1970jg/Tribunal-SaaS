@@ -361,14 +361,14 @@ MODEL_MAX_OUTPUT = {
     "openai/gpt-5.2-pro":              128_000,
     "openai/gpt-4.1":                  32_768,
     "anthropic/claude-opus-4.6":        128_000,
-    "anthropic/claude-sonnet-4.5":      8_192,
-    "google/gemini-3-pro-preview":      66_000,
+    "anthropic/claude-sonnet-4.5":      64_000,   # FIX: era 8192, real=64000
+    "google/gemini-3-pro-preview":      65_535,
     "x-ai/grok-4.1-fast":              30_000,
     # Extratores
-    "google/gemini-3-flash-preview":    66_000,
+    "google/gemini-3-flash-preview":    65_535,
     "openai/gpt-4o":                    16_384,
     "anthropic/claude-3-5-sonnet":      8_192,
-    "deepseek/deepseek-chat":           8_192,
+    "deepseek/deepseek-chat":           163_840,  # FIX: era 8192, real=163840
 }
 
 # =============================================================================
