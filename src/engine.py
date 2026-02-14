@@ -569,7 +569,11 @@ def executar_analise(
     print(f"[ENGINE] Documento: {documento.filename} ({documento.num_chars:,} chars)")
 
     try:
-        processor = LexForumProcessor(callback_progresso=callback)
+        processor = LexForumProcessor(
+            chefe_model=config_module.CHEFE_MODEL,
+            presidente_model=config_module.PRESIDENTE_MODEL,
+            callback_progresso=callback,
+        )
         processor._tier = tier  # Passar tier para o performance tracker
         resultado = processor.processar(documento, area_direito, perguntas_raw, titulo)
     except ValueError as e:
