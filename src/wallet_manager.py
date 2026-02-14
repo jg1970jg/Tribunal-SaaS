@@ -86,11 +86,36 @@ class WalletManager:
                 "available": float(total - blocked),
             }
         except Exception as e:
-            if "profiles" in str(e).lower() or "not found" in str(e).lower():
-                logger.error(f"Erro ao consultar saldo (tabela profiles): {e}")
+            err_str = str(e)
+            # Auto-criar perfil se não existir (PGRST116 = 0 rows)
+            if "PGRST116" in err_str or "0 rows" in err_str:
+                logger.warning(f"[WALLET] Perfil não encontrado para {user_id}, criando...")
+                try:
+                    # Tentar obter saldo do wallet_balances
+                    wb = self.sb.table("wallet_balances").select(
+                        "balance_usd"
+                    ).eq("user_id", user_id).limit(1).execute()
+                    initial_balance = float(wb.data[0]["balance_usd"]) if wb.data else 10000.0
+
+                    self.sb.table("profiles").insert({
+                        "id": user_id,
+                        "email": user_email or "",
+                        "credits_balance": initial_balance,
+                        "credits_blocked": 0,
+                        "full_name": "",
+                    }).execute()
+                    logger.info(f"[WALLET] Perfil criado para {user_id} com saldo ${initial_balance:.2f}")
+                    return {
+                        "total": initial_balance,
+                        "blocked": 0.0,
+                        "available": initial_balance,
+                    }
+                except Exception as e2:
+                    logger.error(f"[WALLET] Erro ao auto-criar perfil: {e2}")
+                    raise WalletError(f"Erro ao consultar saldo: {e}")
             else:
                 logger.error(f"Erro ao consultar saldo: {e}")
-            raise WalletError(f"Erro ao consultar saldo: {e}")
+                raise WalletError(f"Erro ao consultar saldo: {e}")
 
     def get_markup_multiplier(self) -> float:
         """Retorna o multiplicador de markup (margem de lucro)."""
