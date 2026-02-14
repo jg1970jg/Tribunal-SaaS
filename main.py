@@ -397,7 +397,36 @@ async def analyze(
             tier=tier,
         )
 
-        return resultado.to_dict()
+        result_dict = resultado.to_dict()
+
+        # Guardar resultado na tabela documents
+        try:
+            sb_admin = get_supabase_admin()
+            custos = result_dict.get("custos") or {}
+            doc_record = {
+                "user_id": user["id"],
+                "title": titulo or result_dict.get("documento_filename", ""),
+                "analysis_result": result_dict,
+                "status": "completed" if resultado.sucesso else "error",
+                "tier": tier,
+                "area_direito": area_direito,
+                "run_id": result_dict.get("run_id", ""),
+                "filename": file.filename,
+                "file_size_bytes": len(file_bytes),
+                "total_tokens": result_dict.get("total_tokens", 0),
+                "custo_real_usd": custos.get("custo_total_usd", 0),
+                "custo_cobrado_usd": custos.get("custo_cliente_usd", 0),
+                "duracao_segundos": result_dict.get("duracao_total_s", 0),
+            }
+            insert_resp = sb_admin.table("documents").insert(doc_record).execute()
+            doc_id = insert_resp.data[0]["id"] if insert_resp.data else None
+            if doc_id:
+                result_dict["document_id"] = doc_id
+                logger.info(f"[DOCS] Resultado guardado: doc_id={doc_id}")
+        except Exception as e:
+            logger.warning(f"[DOCS] Erro ao guardar resultado: {e}")
+
+        return result_dict
 
     except InsufficientBalanceError as e:
         raise HTTPException(
