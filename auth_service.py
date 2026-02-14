@@ -128,7 +128,7 @@ def _decode_and_validate_token(token: str) -> dict | None:
         logger.warning("Token JWT com audience inválida.")
         return None
     except Exception as e:
-        logger.error(f"Erro ao processar token JWT: {type(e).__name__}: {e}")
+        logger.warning(f"Token JWT inválido: {type(e).__name__}: {e}")
         return None
 
 

@@ -316,7 +316,7 @@ async def security_middleware(request: Request, call_next):
 @app.get("/health")
 async def health():
     """Rota de saúde - verifica se o servidor está online."""
-    return {"status": "online", "version": "2026-02-14c"}
+    return {"status": "online", "version": "2026-02-14d"}
 
 
 # ============================================================
@@ -1022,12 +1022,13 @@ async def wallet_balance(request: Request, user: dict = Depends(get_current_user
         wm = get_wallet_manager()
         saldo = wm.get_balance(user["id"], user_email=user.get("email", ""))
         markup = wm.get_markup_multiplier()
-        # get_balance retorna float (saldo total em USD)
-        balance = saldo if isinstance(saldo, (int, float)) else saldo.get("available", 0)
+        total = float(saldo.get("total", 0))
+        blocked = float(saldo.get("blocked", 0))
+        available = float(saldo.get("available", 0))
         return {
-            "balance_usd": balance,
-            "total_usd": balance,
-            "blocked_usd": 0.0,
+            "balance_usd": available,
+            "total_usd": total,
+            "blocked_usd": blocked,
             "moeda": "USD",
             "markup_multiplier": markup,
         }

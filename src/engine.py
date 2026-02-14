@@ -128,15 +128,18 @@ def verificar_saldo_wallet(user_id: str, num_chars: int = 0) -> Dict[str, Any]:
 
     wm = get_wallet_manager()
     try:
-        balance = wm.get_balance(user_id)
+        balance = wm.get_balance(user_id, user_email="")
         return {
             "saldo_atual": balance["available"],
             "custo_estimado": 0.0,
             "suficiente": balance["available"] > 0.50,
         }
-    except Exception as e:
+    except WalletError as e:
         logger.error(f"Erro ao verificar saldo: {e}")
         raise InsufficientBalanceError(saldo_atual=0.0, saldo_necessario=0.50)
+    except Exception as e:
+        logger.error(f"Erro de conexão ao verificar saldo: {e}")
+        raise EngineError(f"Erro ao verificar saldo (serviço indisponível): {e}")
 
 
 def bloquear_creditos(

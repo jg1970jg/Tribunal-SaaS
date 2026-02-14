@@ -456,7 +456,7 @@ class WalletManager:
                 "admin_id": admin_id,
             }).execute()
 
-            transaction_id = tx_result.data[0]["id"]
+            transaction_id = tx_result.data[0]["id"] if tx_result.data else "unknown"
 
             logger.info(
                 f"Crédito admin: user={user_id}, amount=${amount_usd:.2f}, "
@@ -514,23 +514,7 @@ class WalletManager:
             raise WalletError(f"Erro ao gerar relatório: {e}")
 
 
-# ============================================================
-# SINGLETON - Instância global
-# ============================================================
-
-_wallet_manager: Optional[WalletManager] = None
-
-def get_wallet_manager() -> WalletManager:
-    """
-    Retorna instância singleton do WalletManager.
-    Requer: SUPABASE_SERVICE_ROLE_KEY no ambiente
-    """
-    global _wallet_manager
-    if _wallet_manager is None:
-        from auth_service import get_supabase_admin
-        sb = get_supabase_admin()
-        _wallet_manager = WalletManager(sb)
-    return _wallet_manager
+# NOTA: Singleton get_wallet_manager() está em src/engine.py (ponto único)
 
 
 # ============================================================
