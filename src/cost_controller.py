@@ -37,8 +37,10 @@ HARDCODED_PRICING = {
     "google/gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
     "deepseek/deepseek-chat": {"input": 0.28, "output": 0.42},
     "qwen/qwen-235b-instruct": {"input": 0.20, "output": 0.60},
+    "x-ai/grok-4": {"input": 3.00, "output": 15.00},
     "x-ai/grok-4.1-fast": {"input": 0.20, "output": 0.50},
     "x-ai/grok-4.1": {"input": 0.20, "output": 0.50},
+    "anthropic/claude-haiku-4.5": {"input": 1.00, "output": 5.00},
     "default": {"input": 1.00, "output": 4.00},
 }
 

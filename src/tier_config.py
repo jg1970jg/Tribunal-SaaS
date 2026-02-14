@@ -126,6 +126,8 @@ TIER_CONFIG = {
         # Modelos por fase (Opus nas fases críticas)
         "models": {
             "extraction": "claude-opus-4",     # UPGRADE E1
+            "extraction_e3": "gpt-5.2",        # UPGRADE E3 (era gpt-4o)
+            "extraction_e4": "haiku-4.5",      # UPGRADE E4 (era claude-3.5-sonnet)
             "audit_chief": "gpt-5.2",
             "audit_claude": "claude-opus-4",   # UPGRADE A2
             "judgment_claude": "claude-opus-4", # UPGRADE J2
@@ -174,6 +176,8 @@ TIER_CONFIG = {
         # Modelos por fase (Tudo premium)
         "models": {
             "extraction": "claude-opus-4",
+            "extraction_e3": "gpt-5.2",        # UPGRADE E3 (era gpt-4o)
+            "extraction_e4": "haiku-4.5",      # UPGRADE E4 (era claude-3.5-sonnet)
             "audit_chief": "gpt-5.2-pro",     # UPGRADE
             "audit_claude": "claude-opus-4",
             "judgment_claude": "claude-opus-4",
@@ -340,6 +344,7 @@ OPENROUTER_MODEL_MAPPING = {
     "claude-opus-4-judge": "anthropic/claude-opus-4.6",
     "gemini-3-pro-preview": "google/gemini-3-pro-preview",
     "grok-4.1": "x-ai/grok-4.1",
+    "haiku-4.5": "anthropic/claude-haiku-4.5",
 
     # Conselheiro-Mor
     "gpt-5.2-presidente": "openai/gpt-5.2",

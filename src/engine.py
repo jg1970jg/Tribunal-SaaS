@@ -501,9 +501,27 @@ def executar_analise(
         config_module.EXTRATOR_MODELS[0] = extraction_openrouter
         config_module.EXTRATOR_MODELS_NEW[0] = extraction_openrouter
 
+    # Aplicar modelo de extracção E3 do tier (se definido)
+    extraction_e3_key = tier_models.get("extraction_e3")
+    if extraction_e3_key and len(config_module.LLM_CONFIGS) > 2:
+        e3_openrouter = get_openrouter_model(extraction_e3_key)
+        config_module.LLM_CONFIGS[2]["model"] = e3_openrouter
+        config_module.EXTRATOR_MODELS[2] = e3_openrouter
+        config_module.EXTRATOR_MODELS_NEW[2] = e3_openrouter
+
+    # Aplicar modelo de extracção E4 do tier (se definido)
+    extraction_e4_key = tier_models.get("extraction_e4")
+    if extraction_e4_key and len(config_module.LLM_CONFIGS) > 3:
+        e4_openrouter = get_openrouter_model(extraction_e4_key)
+        config_module.LLM_CONFIGS[3]["model"] = e4_openrouter
+        config_module.EXTRATOR_MODELS[3] = e4_openrouter
+        config_module.EXTRATOR_MODELS_NEW[3] = e4_openrouter
+
     print(
         f"[ENGINE] Modelos ({tier_level.value}): "
         f"E1={extraction_openrouter}, "
+        f"E3={config_module.EXTRATOR_MODELS[2]}, "
+        f"E4={config_module.EXTRATOR_MODELS[3]}, "
         f"Consolidador={config_module.CHEFE_MODEL}, Conselheiro={config_module.PRESIDENTE_MODEL}, "
         f"A2={auditor_model}, J2={relator_model}"
     )

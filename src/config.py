@@ -304,7 +304,7 @@ AUDITOR_MODELS = [
     "openai/gpt-5.2",                  # A1: GPT-5.2 (titular, failover → gpt-4.1)
     "anthropic/claude-sonnet-4.5",      # A2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
     "google/gemini-3-pro-preview",      # A3: Gemini 3 Pro (ctx 1.049K, out 66K)
-    "x-ai/grok-4.1-fast",              # A4: xAI Grok 4.1 Fast (ctx 2.000K, out 30K)
+    "x-ai/grok-4",                      # A4: xAI Grok 4 (ctx 256K, reasoning model)
 ]
 
 AUDITORES = [
@@ -348,11 +348,12 @@ MODEL_CONTEXT_LIMITS = {
     "anthropic/claude-opus-4.6":        1_000_000,
     "anthropic/claude-sonnet-4.5":      200_000,
     "google/gemini-3-pro-preview":      1_049_000,
-    "x-ai/grok-4.1-fast":              2_000_000,
+    "x-ai/grok-4":                      256_000,
     # Extratores
     "google/gemini-3-flash-preview":    1_049_000,
     "openai/gpt-4o":                    128_000,
     "anthropic/claude-3-5-sonnet":      200_000,
+    "anthropic/claude-haiku-4.5":       200_000,
     "deepseek/deepseek-chat":           128_000,
 }
 
@@ -363,7 +364,8 @@ MODEL_MAX_OUTPUT = {
     "anthropic/claude-opus-4.6":        128_000,
     "anthropic/claude-sonnet-4.5":      64_000,   # FIX: era 8192, real=64000
     "google/gemini-3-pro-preview":      65_535,
-    "x-ai/grok-4.1-fast":              30_000,
+    "x-ai/grok-4":                      128_000,
+    "anthropic/claude-haiku-4.5":       64_000,
     # Extratores
     "google/gemini-3-flash-preview":    65_535,
     "openai/gpt-4o":                    16_384,
