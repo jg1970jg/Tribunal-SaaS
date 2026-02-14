@@ -35,8 +35,8 @@ LOCAL_URL = "http://localhost:8000"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
-# Ficheiro de teste (PDF pequeno da referência)
-TEST_PDF = Path(__file__).parent / "Referencia antiga" / "tests" / "fixtures" / "pdf_texto_normal.pdf"
+# Ficheiro de teste (PDF pequeno)
+TEST_PDF = Path(__file__).parent / "tests" / "fixtures" / "pdf_texto_normal.pdf"
 
 # ============================================================
 # HELPERS
