@@ -91,11 +91,28 @@ class LegalVerifier:
     Pipeline:
     1. Normaliza a citação (diploma + artigo)
     2. Verifica no cache local SQLite
-    3. Se não encontrar, busca no DRE online
+    3. Se não encontrar, busca no PGDL (pgdlisboa.pt) — HTML real
     4. Guarda resultado no cache com timestamp e hash
-    5. Retorna status: ✓ (existe), ✗ (não existe), ⚠ (incerto)
-    6. Aplicabilidade ao caso é sempre ⚠
+    5. Retorna status: V (existe), X (não existe), ! (incerto)
+    6. Aplicabilidade ao caso é sempre !
     """
+
+    # Mapeamento diploma → NID no PGDL (pgdlisboa.pt)
+    PGDL_NIDS = {
+        "Código Civil": 775,
+        "Código Penal": 109,
+        "Código de Processo Civil": 1959,
+        "Código de Processo Penal": 120,
+        "Código do Trabalho": 199,
+        "Código das Sociedades Comerciais": 524,
+        "Código Comercial": 584,
+        "Constituição da República Portuguesa": 652,
+    }
+
+    PGDL_URL = "https://www.pgdlisboa.pt/leis/lei_mostra_articulado.php"
+
+    # Cache em memória dos artigos já carregados por NID
+    _pgdl_articles_cache: Dict[int, set] = {}
 
     # Padrões de normalização para diplomas portugueses
     DIPLOMA_PATTERNS = {
@@ -342,84 +359,111 @@ class LegalVerifier:
 
         return None
 
-    def _verificar_dre(self, citacao: CitacaoLegal) -> VerificacaoLegal:
-        """Busca a citação no DRE online."""
-        try:
-            # Construir query de busca
-            query = f"{citacao.diploma} artigo {citacao.artigo}"
+    def _load_pgdl_articles(self, nid: int) -> set:
+        """Carrega todos os artigos de um diploma do PGDL para cache em memória."""
+        if nid in self._pgdl_articles_cache:
+            return self._pgdl_articles_cache[nid]
 
-            # Fazer requisição ao DRE
+        try:
             response = self._http_client.get(
-                DRE_SEARCH_URL,
-                params={"q": query, "s": "1"},
+                self.PGDL_URL,
+                params={"nid": nid, "tabela": "leis"},
+                headers={"User-Agent": "Mozilla/5.0 LexForum/2.0"},
                 follow_redirects=True,
             )
-
             if response.status_code == 200:
-                soup = BeautifulSoup(response.text, "lxml")
+                text = response.content.decode("iso-8859-1", errors="replace")
+                # Extrair todos os números de artigo
+                arts = re.findall(r"Artigo\s+(\d+)", text)
+                article_set = set(arts)
+                self._pgdl_articles_cache[nid] = article_set
+                logger.info(f"[LEGAL] PGDL nid={nid}: {len(article_set)} artigos carregados")
+                return article_set
+            else:
+                logger.warning(f"[LEGAL] PGDL nid={nid} retornou HTTP {response.status_code}")
+        except Exception as e:
+            logger.warning(f"[LEGAL] Erro ao carregar PGDL nid={nid}: {e}")
 
-                # Procurar resultados
-                resultados = soup.find_all("div", class_="result-item")
+        return set()
 
-                if resultados:
-                    # Encontrou algo relacionado
-                    primeiro = resultados[0]
-                    titulo = primeiro.find("h3") or primeiro.find("a")
-                    texto_preview = primeiro.get_text(strip=True)[:500]
+    def _verificar_dre(self, citacao: CitacaoLegal) -> VerificacaoLegal:
+        """Verifica a citação no PGDL (pgdlisboa.pt) — HTML real."""
+        try:
+            # Obter NID do diploma
+            nid = self.PGDL_NIDS.get(citacao.diploma)
 
-                    # Verificar se o artigo específico está mencionado
-                    if citacao.artigo.replace("º", "") in texto_preview:
-                        self._stats["encontrados"] += 1
-                        hash_texto = hashlib.md5(texto_preview.encode()).hexdigest()
-
-                        return VerificacaoLegal(
-                            citacao=citacao,
-                            existe=True,
-                            texto_encontrado=texto_preview,
-                            fonte="dre_online",
-                            status="aprovado",
-                            simbolo=SIMBOLOS_VERIFICACAO["aprovado"],
-                            hash_texto=hash_texto,
-                            mensagem=f"Encontrado no DRE: {titulo.get_text(strip=True) if titulo else 'Resultado'}",
-                        )
-
-                # Não encontrou o artigo específico, mas pode existir
-                logger.info(f"Artigo não confirmado no DRE: {citacao.texto_normalizado}")
-
-                self._stats["nao_encontrados"] += 1
+            if not nid:
+                # Diploma desconhecido — não conseguimos verificar
+                logger.info(f"[LEGAL] Diploma sem NID: {citacao.diploma}")
                 return VerificacaoLegal(
                     citacao=citacao,
                     existe=False,
-                    fonte="dre_online",
+                    fonte="diploma_desconhecido",
                     status="atencao",
                     simbolo=SIMBOLOS_VERIFICACAO["atencao"],
-                    mensagem="Diploma pode existir mas artigo não confirmado no DRE",
+                    mensagem=f"Diploma '{citacao.diploma}' não tem mapeamento PGDL",
                 )
 
-            else:
-                logger.warning(f"DRE retornou status {response.status_code}")
+            # Carregar artigos do diploma (com cache)
+            articles = self._load_pgdl_articles(nid)
+
+            if not articles:
                 return VerificacaoLegal(
                     citacao=citacao,
                     existe=False,
-                    fonte="erro_dre",
+                    fonte="pgdl_erro",
                     status="atencao",
                     simbolo=SIMBOLOS_VERIFICACAO["atencao"],
-                    mensagem=f"Erro ao consultar DRE: HTTP {response.status_code}",
+                    mensagem="Não foi possível carregar artigos do PGDL",
+                )
+
+            # Extrair número do artigo (sem º)
+            art_num = citacao.artigo.replace("º", "").replace("-", "").strip()
+            # Suporte para artigos com letra (ex: "405-A" → "405")
+            art_num = re.match(r"(\d+)", art_num)
+            art_num = art_num.group(1) if art_num else ""
+
+            if art_num in articles:
+                self._stats["encontrados"] += 1
+                hash_texto = hashlib.md5(
+                    f"{citacao.diploma}:{art_num}".encode()
+                ).hexdigest()
+
+                return VerificacaoLegal(
+                    citacao=citacao,
+                    existe=True,
+                    texto_encontrado=f"Artigo {citacao.artigo} do {citacao.diploma}",
+                    fonte="pgdl_online",
+                    status="aprovado",
+                    simbolo=SIMBOLOS_VERIFICACAO["aprovado"],
+                    hash_texto=hash_texto,
+                    mensagem=f"Confirmado no PGDL: {citacao.diploma}, Artigo {citacao.artigo}",
+                )
+            else:
+                self._stats["nao_encontrados"] += 1
+                logger.info(f"[LEGAL] Artigo {art_num} não encontrado em {citacao.diploma} (nid={nid}, {len(articles)} artigos)")
+                return VerificacaoLegal(
+                    citacao=citacao,
+                    existe=False,
+                    fonte="pgdl_online",
+                    status="rejeitado",
+                    simbolo=SIMBOLOS_VERIFICACAO["rejeitado"],
+                    mensagem=f"Artigo {citacao.artigo} não encontrado no {citacao.diploma} (PGDL)",
                 )
 
         except httpx.TimeoutException:
-            logger.error("Timeout ao consultar DRE")
+            logger.warning(f"[LEGAL] Timeout ao consultar PGDL")
             return VerificacaoLegal(
                 citacao=citacao,
                 existe=False,
                 fonte="timeout",
                 status="atencao",
                 simbolo=SIMBOLOS_VERIFICACAO["atencao"],
-                mensagem="Timeout ao consultar DRE - não foi possível verificar",
+                mensagem="Timeout ao consultar PGDL",
             )
 
         except Exception as e:
-            logger.error(f"Erro ao verificar no DRE: {e}")
+            logger.warning(f"[LEGAL] Erro ao verificar no PGDL: {e}")
             return VerificacaoLegal(
                 citacao=citacao,
                 existe=False,
