@@ -279,7 +279,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 # CORS - permitir frontend Lovable e localhost para dev
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://.*\.(lovableproject\.com|lovable\.dev)",
+    allow_origin_regex=r"https://(.*\.)?(lovableproject\.com|lovable\.dev)",
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:5173",
