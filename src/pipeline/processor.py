@@ -3651,7 +3651,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                 run_usage = self._cost_controller.finalize()
                 result.total_tokens = run_usage.total_tokens
 
-                MARGEM = 1.40  # 40% margem
+                MARGEM = 2.0  # FIX 2026-02-14: 100% margem (era 1.40/40%, deve ser 2.0/100% como wallet_manager)
                 custo_por_fase = self._cost_controller.get_cost_by_phase()
                 pricing_info = self._cost_controller.get_pricing_info()
                 result.custos = {
@@ -3671,8 +3671,8 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                     "precos_por_modelo": pricing_info["precos_por_modelo"],
                 }
                 logger.info(
-                    f"[CUSTO-FINAL] Total: ${run_usage.total_cost_usd:.4f} | "
-                    f"Cliente: ${run_usage.total_cost_usd * MARGEM:.4f} | "
+                    f"[CUSTO-FINAL] API: ${run_usage.total_cost_usd:.4f} | "
+                    f"Cliente (100% margem): ${run_usage.total_cost_usd * MARGEM:.4f} | "
                     f"Tokens: {run_usage.total_tokens:,} | "
                     f"Chamadas: {len(run_usage.phases)} | "
                     f"Preços: {pricing_info['fonte']}"
