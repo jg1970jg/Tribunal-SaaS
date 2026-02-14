@@ -279,23 +279,24 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 # CORS - permitir frontend Lovable e localhost para dev
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://(.*\.)?(lovableproject\.com|lovable\.dev)",
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:8080",
-    ],
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["*"],
 )
 
 
 # Security headers + blacklist check
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    # Blacklist check (skip para /health e /docs)
+    # Log Origin for CORS debugging
+    origin = request.headers.get("origin", "NO-ORIGIN")
+    method = request.method
     path = request.url.path
+    if method == "OPTIONS":
+        logger.info(f"[CORS-DEBUG] {method} {path} Origin={origin}")
+
+    # Blacklist check (skip para /health e /docs)
     if path not in ("/health", "/docs", "/openapi.json", "/redoc"):
         try:
             _check_blacklist(request)
