@@ -493,10 +493,19 @@ def executar_analise(
         config_module.JUIZ_MODELS[1] = relator_model
         config_module.JUIZES[1]["model"] = relator_model
 
+    # Aplicar modelo de extracção do tier ao E1 (Claude)
+    from src.tier_config import get_openrouter_model
+    extraction_openrouter = get_openrouter_model(extraction_model)
+    if len(config_module.LLM_CONFIGS) > 0:
+        config_module.LLM_CONFIGS[0]["model"] = extraction_openrouter
+        config_module.EXTRATOR_MODELS[0] = extraction_openrouter
+        config_module.EXTRATOR_MODELS_NEW[0] = extraction_openrouter
+
     print(
         f"[ENGINE] Modelos ({tier_level.value}): "
-        f"Consolidador={consolidador_model_key}, Conselheiro={conselheiro_model_key}, "
-        f"Auditor_Claude={auditor_claude_model}, Relator_Claude={relator_claude_model}"
+        f"E1={extraction_openrouter}, "
+        f"Consolidador={config_module.CHEFE_MODEL}, Conselheiro={config_module.PRESIDENTE_MODEL}, "
+        f"A2={auditor_model}, J2={relator_model}"
     )
 
     # ── 6. Carregar documento ou criar a partir de texto ──

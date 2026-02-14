@@ -325,7 +325,7 @@ def calculate_custom_selection_cost(
 
 OPENROUTER_MODEL_MAPPING = {
     # Extratores
-    "sonnet-4.5": "anthropic/claude-sonnet-4-5-20250929",
+    "sonnet-4.5": "anthropic/claude-sonnet-4-5",
     "sonnet-3.5": "anthropic/claude-3.5-sonnet",
     "claude-opus-4": "anthropic/claude-opus-4-6",
     "gemini-3-flash-preview": "google/gemini-3-flash-preview",

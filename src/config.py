@@ -117,8 +117,8 @@ AUDITOR_CLAUDE_OPTIONS = {
         "description": "Bom equilíbrio custo/qualidade",
         "recommended": True,
     },
-    "opus-4.6": {
-        "model": "anthropic/claude-opus-4.6",
+    "claude-opus-4": {
+        "model": "anthropic/claude-opus-4-6",
         "display_name": "Opus 4.6 (premium)",
         "cost_per_analysis": 0.50,
         "description": "Máxima profundidade de análise, custo elevado",
@@ -135,8 +135,8 @@ RELATOR_CLAUDE_OPTIONS = {
         "description": "Bom equilíbrio custo/qualidade",
         "recommended": True,
     },
-    "opus-4.6": {
-        "model": "anthropic/claude-opus-4.6",
+    "claude-opus-4": {
+        "model": "anthropic/claude-opus-4-6",
         "display_name": "Opus 4.6 (premium)",
         "cost_per_analysis": 0.50,
         "description": "Máxima profundidade de análise, custo elevado",
@@ -345,7 +345,7 @@ MODEL_CONTEXT_LIMITS = {
     "openai/gpt-5.2":                  400_000,
     "openai/gpt-5.2-pro":              400_000,
     "openai/gpt-4.1":                  1_048_000,
-    "anthropic/claude-opus-4.6":        1_000_000,
+    "anthropic/claude-opus-4-6":        1_000_000,
     "anthropic/claude-sonnet-4-5":      200_000,
     "google/gemini-3-pro-preview":      1_049_000,
     "x-ai/grok-4.1-fast":              2_000_000,
@@ -360,7 +360,7 @@ MODEL_MAX_OUTPUT = {
     "openai/gpt-5.2":                  128_000,
     "openai/gpt-5.2-pro":              128_000,
     "openai/gpt-4.1":                  32_768,
-    "anthropic/claude-opus-4.6":        128_000,
+    "anthropic/claude-opus-4-6":        128_000,
     "anthropic/claude-sonnet-4-5":      8_192,
     "google/gemini-3-pro-preview":      66_000,
     "x-ai/grok-4.1-fast":              30_000,
