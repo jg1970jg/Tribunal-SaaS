@@ -1652,28 +1652,43 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                 "resultado": resultado,
             }
 
-        # Executar extratores em PARALELO
-        logger.info(f"[PARALELO] Lançando {len(extractor_configs)} extratores em paralelo...")
+        # Executar extratores em PARALELO (timeout para evitar bloqueio por modelos lentos)
+        from src.config import EXTRACTOR_TOTAL_TIMEOUT
+        EXTRACTOR_TIMEOUT_SECONDS = EXTRACTOR_TOTAL_TIMEOUT
+        logger.info(f"[PARALELO] Lançando {len(extractor_configs)} extratores em paralelo (timeout={EXTRACTOR_TIMEOUT_SECONDS}s)...")
         with ThreadPoolExecutor(max_workers=min(10, len(extractor_configs))) as executor:
             futures = {}
             for i, cfg in enumerate(extractor_configs):
                 future = executor.submit(_run_extractor, i, cfg)
                 futures[future] = cfg["id"]
 
-            for future in as_completed(futures):
-                eid = futures[future]
-                try:
-                    result = future.result()
-                    if result is not None:
-                        items_by_extractor[result["extractor_id"]] = result["items"]
-                        all_unreadable.extend(result["unreadable"])
-                        extraction_runs.append(result["run"])
-                        resultados.append(result["resultado"])
-                        logger.info(f"[PARALELO] {eid} concluído: {len(result['items'])} items")
-                    else:
-                        logger.warning(f"[PARALELO] {eid} retornou None - ignorado")
-                except Exception as exc:
-                    logger.error(f"[PARALELO] {eid} excepção: {exc}")
+            try:
+                for future in as_completed(futures, timeout=EXTRACTOR_TIMEOUT_SECONDS):
+                    eid = futures[future]
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            items_by_extractor[result["extractor_id"]] = result["items"]
+                            all_unreadable.extend(result["unreadable"])
+                            extraction_runs.append(result["run"])
+                            resultados.append(result["resultado"])
+                            logger.info(f"[PARALELO] {eid} concluído: {len(result['items'])} items")
+                        else:
+                            logger.warning(f"[PARALELO] {eid} retornou None - ignorado")
+                    except Exception as exc:
+                        logger.error(f"[PARALELO] {eid} excepção: {exc}")
+            except TimeoutError:
+                # Identificar extractores que não acabaram a tempo
+                timed_out = [eid for f, eid in futures.items() if not f.done()]
+                completed = [eid for f, eid in futures.items() if f.done()]
+                logger.warning(
+                    f"[PARALELO-TIMEOUT] {len(timed_out)} extratores excederam {EXTRACTOR_TIMEOUT_SECONDS}s: "
+                    f"{timed_out}. Avançando com {len(completed)} extratores: {completed}"
+                )
+                # Cancelar futures pendentes (best effort)
+                for f in futures:
+                    if not f.done():
+                        f.cancel()
 
         if len(items_by_extractor) < 2:
             raise Exception(
