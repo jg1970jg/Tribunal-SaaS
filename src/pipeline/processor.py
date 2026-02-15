@@ -1652,7 +1652,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                 "resultado": resultado,
             }
 
-        # Executar extratores em PARALELO (timeout dinâmico por nº de chunks)
+        # Executar extratores em PARALELO (timeout de segurança — ABORTA se exceder)
         from src.config import EXTRACTOR_TIMEOUT_PER_CHUNK, EXTRACTOR_TIMEOUT_MIN
         EXTRACTOR_TIMEOUT_SECONDS = max(EXTRACTOR_TIMEOUT_MIN, num_chunks * EXTRACTOR_TIMEOUT_PER_CHUNK)
         logger.info(f"[PARALELO] Lançando {len(extractor_configs)} extratores em paralelo "
@@ -1679,17 +1679,16 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                     except Exception as exc:
                         logger.error(f"[PARALELO] {eid} excepção: {exc}")
             except TimeoutError:
-                # Identificar extractores que não acabaram a tempo
+                # NUNCA avançar sem 100% — abortar análise
                 timed_out = [eid for f, eid in futures.items() if not f.done()]
-                completed = [eid for f, eid in futures.items() if f.done()]
-                logger.warning(
-                    f"[PARALELO-TIMEOUT] {len(timed_out)} extratores excederam {EXTRACTOR_TIMEOUT_SECONDS}s: "
-                    f"{timed_out}. Avançando com {len(completed)} extratores: {completed}"
-                )
-                # Cancelar futures pendentes (best effort)
                 for f in futures:
                     if not f.done():
                         f.cancel()
+                raise Exception(
+                    f"TIMEOUT CRÍTICO: {len(timed_out)} extratores não acabaram em "
+                    f"{EXTRACTOR_TIMEOUT_SECONDS}s: {timed_out}. "
+                    f"Análise ABORTADA — 100% de cobertura é obrigatório."
+                )
 
         if len(items_by_extractor) < 2:
             raise Exception(

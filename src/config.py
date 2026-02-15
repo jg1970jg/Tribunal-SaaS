@@ -322,22 +322,17 @@ LLM_CONFIGS = [
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
+    # E6 (Qwen3 235B) REMOVIDO — demasiado lento no OpenRouter (4-16min/chunk)
+    # bloqueia todo o pipeline indefinidamente. Custo ~$0.001/chunk não compensa.
     {
         "id": "E6",
-        "role": "Extrator Completo",
-        "model": "qwen/qwen3-235b-a22b-2507",
-        "temperature": 0.0,
-        "instructions": PROMPT_EXTRATOR_UNIVERSAL
-    },
-    {
-        "id": "E7",
         "role": "Extrator Completo",
         "model": "meta-llama/llama-4-maverick",
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
     {
-        "id": "E8",
+        "id": "E7",
         "role": "Extrator Completo",
         "model": "mistralai/mistral-medium-3",
         "temperature": 0.0,
