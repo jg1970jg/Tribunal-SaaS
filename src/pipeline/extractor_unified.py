@@ -608,13 +608,8 @@ def items_to_markdown(
                 lines.append(f"  - Original: _{item.raw_text}_")
 
             if include_provenance:
-                # Fontes
-                extractors = list(item.extractor_ids)
-                lines.append(f"  - Fontes: [{', '.join(extractors)}]")
-
-                # Localização
+                # Página (informação relevante para o utilizador)
                 span = item.primary_span
-                lines.append(f"  - Local: chars {span.start_char:,}-{span.end_char:,}")
                 if span.page_num:
                     lines.append(f"  - Página: {span.page_num}")
 
@@ -641,12 +636,11 @@ def render_agregado_markdown_from_json(agregado_json: Dict) -> str:
     coverage = agregado_json.get("coverage_report", {})
 
     lines.extend([
-        "# EXTRAÇÃO CONSOLIDADA (JSON-FIRST)",
-        f"## Documento: {doc_meta.get('filename', 'N/A')}",
-        f"## Total chars: {doc_meta.get('total_chars', 0):,}",
-        f"## Items extraídos: {summary.get('total_items', 0)}",
-        f"## Cobertura: {coverage.get('coverage_percent', 0):.1f}%",
-        f"## Conflitos: {agregado_json.get('conflicts_count', 0)}",
+        "# EXTRAÇÃO CONSOLIDADA (AGREGADOR + PROVENIÊNCIA)",
+        "## Metadados de Cobertura",
+        f"Items: {summary.get('total_items', 0)} | "
+        f"Cobertura: {coverage.get('coverage_percent', 0):.1f}% | "
+        f"Conflitos: {agregado_json.get('conflicts_count', 0)}",
         "",
     ])
 
@@ -679,80 +673,27 @@ def render_agregado_markdown_from_json(agregado_json: Dict) -> str:
                 if raw_text and raw_text != value:
                     lines.append(f"  - Original: _{raw_text}_")
 
-                # Fontes
+                # Página (informação relevante para o utilizador)
                 source_spans = item.get("source_spans", [])
                 if source_spans:
-                    extractors = list(set(s.get("extractor_id", "?") for s in source_spans))
-                    lines.append(f"  - Fontes: [{', '.join(extractors)}]")
-
-                    # Localização do primeiro span
                     span = source_spans[0]
-                    lines.append(f"  - Local: chars {span.get('start_char', 0):,}-{span.get('end_char', 0):,}")
                     if span.get("page_num"):
                         lines.append(f"  - Página: {span.get('page_num')}")
 
                 lines.append("")
 
-    # Cobertura
-    lines.extend([
-        "",
-        "---",
-        "## RELATÓRIO DE COBERTURA",
-        "",
-        f"- **Total chars:** {coverage.get('total_chars', 0):,}",
-        f"- **Chars cobertos:** {coverage.get('covered_chars', 0):,}",
-        f"- **Percentagem:** {coverage.get('coverage_percent', 0):.2f}%",
-        f"- **Completa:** {'SIM' if coverage.get('is_complete', False) else 'NÃO'}",
-        "",
-    ])
-
-    # Gaps
-    gaps = coverage.get("gaps", [])
-    if gaps:
-        lines.append("### Gaps não cobertos:")
-        for gap in gaps:
-            lines.append(f"- [{gap.get('start', 0):,} - {gap.get('end', 0):,}] ({gap.get('length', 0):,} chars)")
-
-    # Conflitos
-    conflicts = agregado_json.get("conflicts", [])
-    if conflicts:
-        lines.extend([
-            "",
-            "---",
-            "## CONFLITOS DETETADOS",
-            "",
-        ])
-        for conflict in conflicts:
-            lines.append(f"### {conflict.get('conflict_id', 'N/A')}")
-            lines.append(f"- Tipo: {conflict.get('item_type', 'N/A')}")
-            lines.append("- Valores divergentes:")
-            for v in conflict.get("values", []):
-                lines.append(f"  - {v.get('extractor_id', '?')}: {v.get('value', 'N/A')}")
-            lines.append("")
-
-    # Partes ilegíveis
+    # Partes ilegíveis (relevante para o utilizador)
     unreadable = agregado_json.get("unreadable_parts", [])
     if unreadable:
         lines.extend([
             "",
             "---",
-            "## PARTES ILEGÍVEIS",
+            "## Secções Ilegíveis",
             "",
         ])
         for part in unreadable:
             page_info = f" (pág. {part.get('page_num')})" if part.get('page_num') else ""
             lines.append(f"- {part.get('doc_id', 'doc')}{page_info}: {part.get('reason', 'ilegível')}")
-
-    # Erros e warnings
-    errors = agregado_json.get("errors", [])
-    if errors:
-        lines.extend([
-            "",
-            "## ERROS",
-            "",
-        ])
-        for err in errors:
-            lines.append(f"- [{err.get('extractor_id', '?')}] {err.get('error', 'N/A')}")
 
     return "\n".join(lines)
 

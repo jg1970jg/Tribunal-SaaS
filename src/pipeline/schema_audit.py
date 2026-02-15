@@ -755,10 +755,10 @@ class FinalDecision:
         lines.extend([
             "---",
             "",
-            "## Fontes Consultadas",
+            "## Painel de Análise",
             "",
             f"- **Auditores:** {', '.join(self.auditors_consulted) or 'N/A'}",
-            f"- **Juízes:** {', '.join(self.judges_consulted) or 'N/A'}",
+            f"- **Relatores:** {', '.join(self.judges_consulted) or 'N/A'}",
             "",
         ])
         self.output_markdown = "\n".join(lines)

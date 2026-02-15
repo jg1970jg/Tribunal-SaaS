@@ -492,6 +492,38 @@ class ExportRequest(BaseModel):
     analysis_result: Dict[str, Any]
 
 
+import re
+
+_INTERNAL_PATTERNS = [
+    re.compile(r"^\s*-?\s*Fontes:\s*\[.*?\]\s*$", re.MULTILINE),
+    re.compile(r"^\s*-?\s*Local:\s*chars\s+[\d,]+-[\d,]+\s*$", re.MULTILINE),
+    re.compile(r"^\s*##?\s*RELATÓRIO DE COBERTURA.*$", re.MULTILINE),
+    re.compile(r"^\s*##?\s*CONFLITOS DETETADOS.*$", re.MULTILINE),
+    re.compile(r"^\s*##?\s*ERROS\s*$", re.MULTILINE),
+    re.compile(r"^\s*-\s*\*\*Total chars:\*\*.*$", re.MULTILINE),
+    re.compile(r"^\s*-\s*\*\*Chars cobertos:\*\*.*$", re.MULTILINE),
+    re.compile(r"^\s*-\s*\*\*Completa:\*\*.*$", re.MULTILINE),
+    re.compile(r"^.*INTEGRITY_WARNING.*$", re.MULTILINE),
+    re.compile(r"^.*EXCERPT_MISMATCH.*$", re.MULTILINE),
+    re.compile(r"^.*RANGE_INVALID.*$", re.MULTILINE),
+    re.compile(r"^.*PAGE_MISMATCH.*$", re.MULTILINE),
+    re.compile(r"^.*ITEM_NOT_FOUND.*$", re.MULTILINE),
+    re.compile(r"^.*MISSING_CITATION.*$", re.MULTILINE),
+    re.compile(r"^.*match_ratio=.*$", re.MULTILINE),
+]
+
+
+def _sanitize_content(text: str) -> str:
+    """Remove metadados técnicos/internos do conteúdo antes de apresentar ao utilizador."""
+    if not text:
+        return text
+    for pattern in _INTERNAL_PATTERNS:
+        text = pattern.sub("", text)
+    # Limpar linhas vazias consecutivas
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _build_pdf(data: Dict[str, Any]) -> bytes:
     """Gera PDF profissional a partir do resultado da análise."""
     from reportlab.lib.pagesizes import A4
@@ -530,14 +562,15 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     elements.append(Paragraph("Relatório de Análise Jurídica — LexForum", styles["LexForumTitle"]))
     elements.append(Spacer(1, 10))
 
-    # Metadados
+    # Metadados (apenas informação relevante para o utilizador)
+    custos = data.get("custos", {})
+    custo_cobrado = custos.get("custo_cliente_usd") or custos.get("custo_cobrado_usd")
     meta = [
-        ["Run ID", data.get("run_id", "N/A")],
         ["Área de Direito", data.get("area_direito", "N/A")],
-        ["Início", data.get("timestamp_inicio", "N/A")],
-        ["Fim", data.get("timestamp_fim", "N/A")],
-        ["Total Tokens", str(data.get("total_tokens", 0))],
+        ["Data da Análise", data.get("timestamp_inicio", "N/A")[:10] if data.get("timestamp_inicio") else "N/A"],
     ]
+    if custo_cobrado is not None:
+        meta.append(["Custo", f"${custo_cobrado:.2f}"])
     t = Table(meta, colWidths=[5 * cm, 12 * cm])
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, -1), HexColor("#e8e8e8")),
@@ -560,7 +593,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
 
     # Fase 1
     elements.append(Paragraph("Fase 1 — Extração", styles["SectionHead"]))
-    f1 = data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", "")
+    f1 = _sanitize_content(data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", ""))
     for line in (f1 or "Sem dados de extração.").split("\n"):
         if line.strip():
             safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -569,7 +602,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
 
     # Fase 2
     elements.append(Paragraph("Fase 2 — Auditoria", styles["SectionHead"]))
-    f2 = data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", "")
+    f2 = _sanitize_content(data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", ""))
     for line in (f2 or "Sem dados de auditoria.").split("\n"):
         if line.strip():
             safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -579,7 +612,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     # Fase 3
     elements.append(Paragraph("Fase 3 — Relatoria", styles["SectionHead"]))
     for p in data.get("fase3_pareceres", []):
-        conteudo = p.get("conteudo", "") if isinstance(p, dict) else ""
+        conteudo = _sanitize_content(p.get("conteudo", "")) if isinstance(p, dict) else ""
         modelo = p.get("modelo", "") if isinstance(p, dict) else ""
         if modelo:
             elements.append(Paragraph(f"<b>{modelo}</b>", styles["BodyText2"]))
@@ -591,7 +624,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
 
     # Fase 4
     elements.append(Paragraph("Fase 4 — Parecer do Conselheiro-Mor", styles["SectionHead"]))
-    f4 = data.get("fase3_presidente", "")
+    f4 = _sanitize_content(data.get("fase3_presidente", ""))
     for line in (f4 or "Sem parecer do Conselheiro-Mor.").split("\n"):
         if line.strip():
             safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -622,15 +655,16 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
     title = doc.add_heading("Relatório de Análise Jurídica — LexForum", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    table = doc.add_table(rows=5, cols=2)
-    table.style = "Light Grid Accent 1"
+    custos_docx = data.get("custos", {})
+    custo_cobrado_docx = custos_docx.get("custo_cliente_usd") or custos_docx.get("custo_cobrado_usd")
     meta_rows = [
-        ("Run ID", data.get("run_id", "N/A")),
         ("Área de Direito", data.get("area_direito", "N/A")),
-        ("Início", data.get("timestamp_inicio", "N/A")),
-        ("Fim", data.get("timestamp_fim", "N/A")),
-        ("Total Tokens", str(data.get("total_tokens", 0))),
+        ("Data da Análise", data.get("timestamp_inicio", "N/A")[:10] if data.get("timestamp_inicio") else "N/A"),
     ]
+    if custo_cobrado_docx is not None:
+        meta_rows.append(("Custo", f"${custo_cobrado_docx:.2f}"))
+    table = doc.add_table(rows=len(meta_rows), cols=2)
+    table.style = "Light Grid Accent 1"
     for i, (label, value) in enumerate(meta_rows):
         table.rows[i].cells[0].text = label
         table.rows[i].cells[1].text = str(value) if value else "N/A"
@@ -647,24 +681,24 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
     p.runs[0].bold = True
 
     doc.add_heading("Fase 1 — Extração", level=1)
-    f1 = data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", "")
+    f1 = _sanitize_content(data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", ""))
     doc.add_paragraph(f1 or "Sem dados de extração.")
 
     doc.add_heading("Fase 2 — Auditoria", level=1)
-    f2 = data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", "")
+    f2 = _sanitize_content(data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", ""))
     doc.add_paragraph(f2 or "Sem dados de auditoria.")
 
     doc.add_heading("Fase 3 — Relatoria", level=1)
     for p_data in data.get("fase3_pareceres", []):
         if isinstance(p_data, dict):
             modelo = p_data.get("modelo", "")
-            conteudo = p_data.get("conteudo", "")
+            conteudo = _sanitize_content(p_data.get("conteudo", ""))
             if modelo:
                 doc.add_heading(modelo, level=2)
             doc.add_paragraph(conteudo)
 
     doc.add_heading("Fase 4 — Parecer do Conselheiro-Mor", level=1)
-    f4 = data.get("fase3_presidente", "")
+    f4 = _sanitize_content(data.get("fase3_presidente", ""))
     doc.add_paragraph(f4 or "Sem parecer do Conselheiro-Mor.")
 
     doc.add_paragraph("")
