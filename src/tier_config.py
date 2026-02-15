@@ -134,12 +134,12 @@ TIER_CONFIG = {
             "president": "gpt-5.2",
         },
 
-        # Custos estimados
+        # Custos estimados (calibrado 15-Fev-2026 com dados reais Diamante)
         "estimated_costs": {
-            "extraction": 0.64,
-            "audit": 1.22,
-            "judgment": 1.24,
-            "president": 0.30,
+            "extraction": 1.00,
+            "audit": 1.80,
+            "judgment": 1.80,
+            "president": 0.40,
         },
 
         # Features (textos APROVADOS - sem palavras vetadas)
@@ -184,11 +184,11 @@ TIER_CONFIG = {
             "president": "gpt-5.2-pro",        # UPGRADE
         },
 
-        # Custos estimados
+        # Custos estimados (calibrado 15-Fev-2026 com dados reais)
         "estimated_costs": {
-            "extraction": 0.64,
-            "audit": 1.42,
-            "judgment": 1.24,
+            "extraction": 1.00,
+            "audit": 2.00,
+            "judgment": 1.80,
             "president": 0.60,
         },
 

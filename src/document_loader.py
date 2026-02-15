@@ -207,7 +207,7 @@ class DocumentLoader:
         return text, num_pages, metadata
 
     def _extract_docx(self, file_bytes: bytes) -> tuple:
-        """Extrai texto de um DOCX usando python-docx."""
+        """Extrai texto de um DOCX usando python-docx com detecção de páginas."""
         try:
             from docx import Document
         except ImportError:
@@ -215,22 +215,66 @@ class DocumentLoader:
 
         doc = Document(io.BytesIO(file_bytes))
 
-        text_parts = []
+        # Detectar page breaks explícitos no XML do DOCX
+        from lxml import etree
+        BREAK_TYPE = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type'
+        BREAK_TAG = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}br'
+        LAST_RENDERED_PAGE = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}lastRenderedPageBreak'
 
-        # Extrair parágrafos
+        page_num = 1
+        text_parts = []
+        text_parts.append(f"[Página {page_num}]")
+
+        # Extrair parágrafos com detecção de page breaks
         for para in doc.paragraphs:
+            # Verificar page breaks no XML do parágrafo
+            for run in para.runs:
+                for elem in run._element:
+                    if elem.tag == BREAK_TAG and elem.get(BREAK_TYPE) == 'page':
+                        page_num += 1
+                        text_parts.append(f"\n[Página {page_num}]")
+                    elif elem.tag == LAST_RENDERED_PAGE:
+                        page_num += 1
+                        text_parts.append(f"\n[Página {page_num}]")
             if para.text.strip():
                 text_parts.append(para.text)
 
-        # Extrair tabelas
-        for table in doc.tables:
-            table_text = []
-            for row in table.rows:
-                row_text = " | ".join(cell.text.strip() for cell in row.cells)
-                if row_text.strip():
-                    table_text.append(row_text)
-            if table_text:
-                text_parts.append("[TABELA]\n" + "\n".join(table_text))
+        # Se não detectou nenhum page break, inserir marcadores sintéticos
+        if page_num == 1:
+            SYNTHETIC_PAGE_CHARS = 3000
+            raw_parts = []
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    raw_parts.append(para.text)
+            for table in doc.tables:
+                table_text = []
+                for row in table.rows:
+                    row_text = " | ".join(cell.text.strip() for cell in row.cells)
+                    if row_text.strip():
+                        table_text.append(row_text)
+                if table_text:
+                    raw_parts.append("[TABELA]\n" + "\n".join(table_text))
+
+            full_text = "\n\n".join(raw_parts)
+            page_num = 1
+            text_parts = [f"[Página {page_num}]"]
+            char_count = 0
+            for part in raw_parts:
+                char_count += len(part) + 2  # +2 para \n\n
+                if char_count > SYNTHETIC_PAGE_CHARS * page_num:
+                    page_num += 1
+                    text_parts.append(f"\n[Página {page_num}]")
+                text_parts.append(part)
+        else:
+            # Tem page breaks reais — adicionar tabelas ao final
+            for table in doc.tables:
+                table_text = []
+                for row in table.rows:
+                    row_text = " | ".join(cell.text.strip() for cell in row.cells)
+                    if row_text.strip():
+                        table_text.append(row_text)
+                if table_text:
+                    text_parts.append("[TABELA]\n" + "\n".join(table_text))
 
         text = "\n\n".join(text_parts)
 
@@ -246,8 +290,8 @@ class DocumentLoader:
         if core_props.created:
             metadata["Created"] = core_props.created.isoformat() if core_props.created else None
 
-        logger.info(f"DOCX extraído: {len(doc.paragraphs)} parágrafos, {len(text)} caracteres")
-        return text, 1, metadata
+        logger.info(f"DOCX extraído: {len(doc.paragraphs)} parágrafos, {page_num} páginas, {len(text)} caracteres")
+        return text, page_num, metadata
 
     def _extract_xlsx(self, file_bytes: bytes) -> tuple:
         """Extrai texto de um XLSX usando openpyxl."""

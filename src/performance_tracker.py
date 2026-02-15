@@ -405,7 +405,7 @@ def check_response_quality(content: str, role_name: str) -> Optional[Dict]:
     # Verificacoes JSON para roles que devem retornar JSON
     is_json_role = any(
         tag in role_name.lower()
-        for tag in ("_json", "consolidador", "chefe", "agregador")
+        for tag in ("_json", "consolidador", "chefe")
     )
     if not is_json_role:
         return None

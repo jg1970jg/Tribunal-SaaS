@@ -710,8 +710,8 @@ class OpenAIClient:
             # Se output_text está vazio, tentar extrair de output array
             if not output_text and "output" in raw_response:
                 raw_output = raw_response["output"]
-                logger.warning(f"[RESPONSES-API] output_text vazio! output é: {type(raw_output)}")
-                logger.warning(f"[RESPONSES-API] output value (first 1000 chars): {str(raw_output)[:1000]}")
+                logger.debug(f"[RESPONSES-API] output_text vazio (normal para Responses API), extraindo de output array: {type(raw_output)}")
+                logger.debug(f"[RESPONSES-API] output value (first 1000 chars): {str(raw_output)[:1000]}")
                 if isinstance(raw_output, list):
                     for item in raw_output:
                         if isinstance(item, dict):

@@ -20,7 +20,7 @@ from supabase import Client
 logger = logging.getLogger(__name__)
 
 # Constantes
-SAFETY_MARGIN = 1.25   # 25% margem de segurança
+SAFETY_MARGIN = 1.50   # 50% margem de segurança (calibrado 15-Fev-2026)
 USD_PER_CREDIT = 0.005  # 1 crédito = $0.005
 
 
@@ -304,6 +304,14 @@ class WalletManager:
             blocked_amount = float(block["amount"])
             custo_cliente = real_cost_usd * markup
             refunded = max(0, blocked_amount - custo_cliente)
+
+            if custo_cliente > blocked_amount:
+                overrun = custo_cliente - blocked_amount
+                logger.warning(
+                    f"[WALLET-OVERRUN] custo_cliente=${custo_cliente:.4f} > "
+                    f"blocked=${blocked_amount:.4f}, overrun=${overrun:.4f} "
+                    f"(analysis={analysis_id})"
+                )
 
             balance = self.get_balance(user_id)
             new_balance = max(0, balance["total"] - custo_cliente)

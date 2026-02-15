@@ -875,9 +875,12 @@ REVISTO:"""
                         model="openai/gpt-4.1",
                         prompt_tokens=resultado.prompt_tokens or (tokens),
                         completion_tokens=resultado.completion_tokens or (tokens_depois),
-                        raise_on_exceed=False,
+                        raise_on_exceed=True,
                     )
-                except Exception:
+                except Exception as e:
+                    if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
+                        logger.error(f"[CUSTO-BLOQUEIO] Limite excedido em rlm_{tipo_fase}: {e}")
+                        raise
                     pass
             if self._output_dir:
                 self._log_to_file(f"rlm_{tipo_fase}.md", resultado.content if resultado else "ERRO")
@@ -946,7 +949,7 @@ REVISTO:"""
         prompt: str,
         system_prompt: str,
         role_name: str,
-        temperature: float = 0.7,
+        temperature: float = 0.2,
         max_tokens: int = None,
     ) -> FaseResult:
         """
@@ -1061,9 +1064,12 @@ REVISTO:"""
                             model=modelo_final,
                             prompt_tokens=retry_pt,
                             completion_tokens=retry_ct,
-                            raise_on_exceed=False,
+                            raise_on_exceed=True,
                         )
-                    except Exception:
+                    except Exception as e:
+                        if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
+                            logger.error(f"[CUSTO-BLOQUEIO] Limite excedido em {role_name}_retry{retry_num}: {e}")
+                            raise
                         pass
 
             # Construir prompt melhorado para retry
@@ -1112,9 +1118,12 @@ REVISTO:"""
                     model=modelo_final,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
-                    raise_on_exceed=False,
+                    raise_on_exceed=True,
                 )
             except Exception as e:
+                if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
+                    logger.error(f"[CUSTO-BLOQUEIO] Limite excedido em {role_name}: {e}")
+                    raise  # Propagar para parar o pipeline
                 logger.warning(f"[CUSTO] Erro ao registar uso para {role_name}: {e}")
 
         # === REGISTAR PERFORMANCE (chamada final/bem-sucedida) ===
@@ -1563,9 +1572,12 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                             model=model,
                             prompt_tokens=r_prompt,
                             completion_tokens=r_completion,
-                            raise_on_exceed=False,
+                            raise_on_exceed=True,
                         )
                     except Exception as e:
+                        if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
+                            logger.error(f"[CUSTO-BLOQUEIO] Limite excedido em {extractor_id}-chunk{chunk_idx}: {e}")
+                            raise
                         logger.warning(f"[CUSTO] Erro ao registar {extractor_id}-chunk{chunk_idx}: {e}")
 
                 # Parsear output e criar EvidenceItems com source_spans
@@ -2175,9 +2187,12 @@ IMPORTANTE: Só usa page_num que existam no batch acima."""
                                 model=model,
                                 prompt_tokens=r_pt,
                                 completion_tokens=r_ct,
-                                raise_on_exceed=False,
+                                raise_on_exceed=True,
                             )
                         except Exception as e:
+                            if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
+                                logger.error(f"[CUSTO-BLOQUEIO] Limite excedido em {extractor_id}-batch{batch_idx}: {e}")
+                                raise
                             logger.warning(f"[CUSTO] Erro ao registar {extractor_id}-batch{batch_idx}: {e}")
 
                     # Parsear e validar output

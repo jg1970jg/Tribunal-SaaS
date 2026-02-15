@@ -637,6 +637,19 @@ class LegalVerifier:
         if lei_year_match:
             year_from_lei = int(lei_year_match.group(1))
 
+        # Padrão: "DD/MM/YYYY" ou "DD-MM-YYYY" (sem prefixo "de")
+        m = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})", date_text)
+        if m:
+            day = int(m.group(1))
+            month = int(m.group(2))
+            year = int(m.group(3))
+            if year < 100:
+                year += 2000
+            try:
+                return datetime(year, month, day)
+            except ValueError:
+                pass
+
         # Padrão: "de DD/MM" ou "de DD/MM/YYYY"
         m = re.search(r"de\s+(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?", date_text)
         if m:
@@ -654,9 +667,10 @@ class LegalVerifier:
                 return datetime(year, month, day)
             except ValueError:
                 pass
-        # Padrão: "de DD de Mês de YYYY"
+
+        # Padrão: "de DD de Mês de YYYY" ou "DD de Mês de YYYY"
         m = re.search(
-            r"de\s+(\d{1,2})\s+de\s+(\w+)(?:\s+de\s+(\d{4}))?",
+            r"(?:de\s+)?(\d{1,2})\s+de\s+(\w+)(?:\s+de\s+(\d{4}))?",
             date_text, re.IGNORECASE,
         )
         if m:
@@ -674,6 +688,11 @@ class LegalVerifier:
                     return datetime(year, month, day)
                 except ValueError:
                     pass
+
+        # Padrão: apenas ano "YYYY" — usar 1 de Janeiro
+        if year_from_lei and year_from_lei >= 1900:
+            return datetime(year_from_lei, 1, 1)
+
         return None
 
     def _load_version_history_from_db(self, nid: int) -> Optional[List[Tuple[int, str, Optional[datetime]]]]:
