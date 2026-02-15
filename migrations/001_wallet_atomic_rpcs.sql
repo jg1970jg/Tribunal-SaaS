@@ -44,9 +44,9 @@ BEGIN
     SET credits_blocked = COALESCE(credits_blocked, 0) + p_amount
     WHERE id = p_user_id;
 
-    -- Insert block record
+    -- Insert block record (cast TEXT → UUID para compatibilidade)
     INSERT INTO blocked_credits (user_id, analysis_id, amount, status)
-    VALUES (p_user_id, p_analysis_id, p_amount, 'blocked');
+    VALUES (p_user_id, p_analysis_id::uuid, p_amount, 'blocked');
 
     RETURN jsonb_build_object(
         'success', true,
@@ -71,11 +71,11 @@ DECLARE
     v_blocked NUMERIC;
     v_new_balance NUMERIC;
 BEGIN
-    -- Find and lock the block
+    -- Find and lock the block (FIX: cast TEXT → UUID)
     SELECT id, user_id, amount
     INTO v_block
     FROM blocked_credits
-    WHERE analysis_id = p_analysis_id AND status = 'blocked'
+    WHERE analysis_id = p_analysis_id::uuid AND status = 'blocked'
     LIMIT 1
     FOR UPDATE;
 
@@ -132,11 +132,11 @@ CREATE OR REPLACE FUNCTION cancel_block_atomic(
 DECLARE
     v_block RECORD;
 BEGIN
-    -- Find and lock the block
+    -- Find and lock the block (FIX: cast TEXT → UUID)
     SELECT id, user_id, amount
     INTO v_block
     FROM blocked_credits
-    WHERE analysis_id = p_analysis_id AND status = 'blocked'
+    WHERE analysis_id = p_analysis_id::uuid AND status = 'blocked'
     LIMIT 1
     FOR UPDATE;
 

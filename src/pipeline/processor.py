@@ -201,6 +201,8 @@ class PipelineResult:
     erro: Optional[str] = None
     # Custos REAIS
     custos: Optional[Dict] = None
+    # FIX 2026-02-14: Sumário estruturado por IA (para frontend)
+    resumo_por_ia: Optional[Dict] = None
 
     def to_dict(self) -> Dict:
         return {
@@ -235,6 +237,8 @@ class PipelineResult:
             "erro": self.erro,
             # Custos REAIS
             "custos": self.custos,
+            # FIX 2026-02-14: Sumário estruturado por IA
+            "resumo_por_ia": self.resumo_por_ia,
             # Metadados do documento
             "documento_texto": self.documento.text[:50000] if self.documento and self.documento.text else "",
             "documento_filename": self.documento.filename if self.documento else "",
@@ -2635,9 +2639,12 @@ INSTRUÇÕES:
             md_content = report.to_markdown()
             self._log_to_file(f"fase2_auditor_{i+1}.md", md_content)
 
+            # FIX 2026-02-14: Só contar erros reais no log (não INTEGRITY_WARNING)
+            n_real_errs = len([e for e in report.errors if not str(e).startswith("INTEGRITY_WARNING:")])
+            n_integrity = len([e for e in report.errors if str(e).startswith("INTEGRITY_WARNING:")])
             logger.info(
                 f"✓ Auditor {auditor_id}: {len(report.findings)} findings, "
-                f"{len(report.errors)} erros"
+                f"{n_real_errs} erros" + (f", {n_integrity} integrity_warnings" if n_integrity else "")
             )
 
             return {
@@ -2848,9 +2855,13 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
             md_content = opinion.to_markdown()
             self._log_to_file(f"fase3_relator_{i+1}.md", md_content)
 
+            # FIX 2026-02-14: Só contar erros reais no log (não INTEGRITY_WARNING)
+            n_real_errs_j = len([e for e in opinion.errors if not str(e).startswith("INTEGRITY_WARNING:")])
+            n_integrity_j = len([e for e in opinion.errors if str(e).startswith("INTEGRITY_WARNING:")])
             logger.info(
                 f"✓ Relator {judge_id}: {opinion.recommendation.value}, "
-                f"{len(opinion.decision_points)} pontos, {len(opinion.errors)} erros"
+                f"{len(opinion.decision_points)} pontos, {n_real_errs_j} erros"
+                + (f", {n_integrity_j} integrity_warnings" if n_integrity_j else "")
             )
 
             return {
@@ -3562,6 +3573,8 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                                 fase_completion += pu.completion_tokens
                     if fase_tokens == 0:
                         fase_tokens = len(r.to_markdown()) // 3  # fallback
+                    # FIX 2026-02-14: Só contar erros reais (não INTEGRITY_WARNING) para sucesso
+                    real_errors = [e for e in r.errors if not str(e).startswith("INTEGRITY_WARNING:")]
                     auditorias.append(FaseResult(
                         fase="auditoria",
                         modelo=r.model_name,
@@ -3571,7 +3584,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                         prompt_tokens=fase_prompt,
                         completion_tokens=fase_completion,
                         latencia_ms=0,
-                        sucesso=len(r.errors) == 0,
+                        sucesso=len(real_errors) == 0,
                     ))
             else:
                 auditorias, bruto_f2, consolidado_f2 = self._fase2_auditoria(consolidado_f1, area_direito)
@@ -3629,6 +3642,8 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                                 fase_completion += pu.completion_tokens
                     if fase_tokens == 0:
                         fase_tokens = len(o.to_markdown()) // 3  # fallback
+                    # FIX 2026-02-14: Só contar erros reais (não INTEGRITY_WARNING) para sucesso
+                    real_errors_j = [e for e in o.errors if not str(e).startswith("INTEGRITY_WARNING:")]
                     pareceres.append(FaseResult(
                         fase="relatoria",
                         modelo=o.model_name,
@@ -3638,7 +3653,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                         prompt_tokens=fase_prompt,
                         completion_tokens=fase_completion,
                         latencia_ms=0,
-                        sucesso=len(o.errors) == 0,
+                        sucesso=len(real_errors_j) == 0,
                     ))
             else:
                 pareceres, respostas_qa = self._fase3_relatoria(consolidado_f2, area_direito, perguntas)
@@ -3690,6 +3705,45 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.veredicto_final = veredicto
             result.simbolo_final = simbolo
             result.status_final = status
+
+            # FIX 2026-02-14: Construir resumo estruturado por IA (para frontend)
+            resumo_ia = {}
+            if audit_reports:
+                for r in audit_reports:
+                    real_errs = [e for e in r.errors if not str(e).startswith("INTEGRITY_WARNING:")]
+                    integrity_warns = [e for e in r.errors if str(e).startswith("INTEGRITY_WARNING:")]
+                    resumo_ia[f"auditor_{r.auditor_id}"] = {
+                        "tipo": "auditor",
+                        "modelo": r.model_name,
+                        "findings": len(r.findings),
+                        "erros": len(real_errs),
+                        "integrity_warnings": len(integrity_warns),
+                        "sucesso": len(real_errs) == 0,
+                    }
+            if judge_opinions:
+                for o in judge_opinions:
+                    real_errs = [e for e in o.errors if not str(e).startswith("INTEGRITY_WARNING:")]
+                    integrity_warns = [e for e in o.errors if str(e).startswith("INTEGRITY_WARNING:")]
+                    resumo_ia[f"relator_{o.judge_id}"] = {
+                        "tipo": "relator",
+                        "modelo": o.model_name,
+                        "recommendation": o.recommendation.value if hasattr(o.recommendation, 'value') else str(o.recommendation),
+                        "decision_points": len(o.decision_points),
+                        "erros": len(real_errs),
+                        "integrity_warnings": len(integrity_warns),
+                        "sucesso": len(real_errs) == 0,
+                    }
+            if final_decision:
+                real_errs = [e for e in final_decision.errors if not str(e).startswith("INTEGRITY_WARNING:")]
+                resumo_ia["presidente"] = {
+                    "tipo": "presidente",
+                    "modelo": final_decision.model_name,
+                    "decision_type": final_decision.decision_type.value if hasattr(final_decision.decision_type, 'value') else str(final_decision.decision_type),
+                    "confidence": round(final_decision.confidence, 4),
+                    "erros": len(real_errs),
+                    "sucesso": len(real_errs) == 0,
+                }
+            result.resumo_por_ia = resumo_ia
 
             # Calcular totais via CostController (tokens REAIS das APIs)
             if self._cost_controller:

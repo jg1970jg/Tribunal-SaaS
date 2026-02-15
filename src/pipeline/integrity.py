@@ -374,13 +374,20 @@ def validate_audit_report(
         evidence_ids = getattr(finding, 'evidence_item_ids', [])
         for item_id in evidence_ids:
             if valid_item_ids and item_id not in valid_item_ids:
-                errors.append(ValidationError(
-                    error_type="ITEM_NOT_FOUND",
-                    severity="WARNING",
-                    message=f"evidence_item_id '{item_id}' não encontrado em union_items",
-                    source=auditor_id,
-                ))
-                confidence_penalty += 0.01
+                # FIX 2026-02-14: Fuzzy match — LLMs frequentemente truncam ou alteram item_ids
+                # Verificar se existe um item_id que começa com o mesmo prefixo (≥10 chars)
+                fuzzy_match = False
+                if len(item_id) >= 10:
+                    prefix = item_id[:10]
+                    fuzzy_match = any(vid.startswith(prefix) or prefix in vid for vid in valid_item_ids)
+                if not fuzzy_match:
+                    errors.append(ValidationError(
+                        error_type="ITEM_NOT_FOUND",
+                        severity="WARNING",
+                        message=f"evidence_item_id '{item_id}' não encontrado em union_items",
+                        source=auditor_id,
+                    ))
+                    confidence_penalty += 0.01
 
     return is_valid, errors, min(confidence_penalty, 0.3)
 
