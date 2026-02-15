@@ -28,6 +28,8 @@ from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+import hashlib
+import threading
 
 from auth_service import get_current_user, get_supabase, get_supabase_admin
 from src.engine import (
@@ -335,6 +337,11 @@ async def me(request: Request, user: dict = Depends(get_current_user)):
     }
 
 
+# Anti-duplicado: impede 2 análises do mesmo user ao mesmo tempo
+_active_user_analyses: Dict[str, str] = {}  # user_id -> analysis_id
+_active_lock = threading.Lock()
+
+
 @app.post("/analyze")
 @limiter.limit("10/minute")
 @limiter.limit("50/hour")
@@ -364,6 +371,18 @@ async def analyze(
       3. Liquida créditos (custo real) ou cancela bloqueio (se erro)
       4. Retorna resultado completo em JSON
     """
+    # Anti-duplo-clique: rejeitar se user já tem análise a correr
+    user_id = user["id"]
+    with _active_lock:
+        if user_id in _active_user_analyses:
+            existing = _active_user_analyses[user_id]
+            logger.warning(f"[ANTI-DUP] User {user_id[:8]} já tem análise a correr: {existing}")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Já tem uma análise em curso. Aguarde que termine antes de submeter outra.",
+            )
+        _active_user_analyses[user_id] = "starting"
+
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
     ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".doc"}
 
@@ -482,6 +501,10 @@ async def analyze(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erro interno do servidor.",
         )
+    finally:
+        # Anti-duplo-clique: libertar o user
+        with _active_lock:
+            _active_user_analyses.pop(user_id, None)
 
 
 # ============================================================

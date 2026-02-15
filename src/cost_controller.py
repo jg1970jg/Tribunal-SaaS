@@ -327,8 +327,8 @@ class RunUsage:
     total_completion_tokens: int = 0
     total_tokens: int = 0
     total_cost_usd: float = 0.0
-    budget_limit_usd: float = 5.0
-    token_limit: int = 500000
+    budget_limit_usd: float = 15.0
+    token_limit: int = 1200000
     blocked: bool = False
     block_reason: Optional[str] = None
     timestamp_start: datetime = field(default_factory=datetime.now)
@@ -388,8 +388,8 @@ class CostController:
         self.run_id = run_id
 
         # Limites (do .env ou defaults)
-        self.budget_limit = budget_limit_usd or float(os.getenv("MAX_BUDGET_USD", "5.0"))
-        self.token_limit = token_limit or int(os.getenv("MAX_TOKENS_TOTAL", "500000"))
+        self.budget_limit = budget_limit_usd or float(os.getenv("MAX_BUDGET_USD", "15.0"))
+        self.token_limit = token_limit or int(os.getenv("MAX_TOKENS_TOTAL", "1200000"))
 
         # Uso
         self.usage = RunUsage(

@@ -429,9 +429,9 @@ MODEL_MAX_OUTPUT = {
     "anthropic/claude-3-5-sonnet":      8_192,
     "deepseek/deepseek-chat":           163_840,  # FIX: era 8192, real=163840
     # Novos extratores E6-E8
-    "qwen/qwen3-235b-a22b-2507":       8_192,
-    "meta-llama/llama-4-maverick":      16_384,
-    "mistralai/mistral-medium-3":       8_192,
+    "qwen/qwen3-235b-a22b-2507":       32_768,
+    "meta-llama/llama-4-maverick":      32_768,
+    "mistralai/mistral-medium-3":       32_768,
 }
 
 # =============================================================================
