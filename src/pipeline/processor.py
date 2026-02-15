@@ -372,7 +372,7 @@ Emite o PARECER FINAL:
 IMPORTANTE: Após o parecer, consolida as RESPOSTAS Q&A eliminando contradições e fornecendo respostas finais claras e numeradas."""
 
     @staticmethod
-    def _build_system_agregador(num_extractors: int = 8) -> str:
+    def _build_system_agregador(num_extractors: int = 7) -> str:
         """Gera system prompt do agregador dinâmico para N extractores."""
         all_ids = ",".join(f"E{i+1}" for i in range(num_extractors))
         partial_ex = ",".join(f"E{i+1}" for i in range(min(3, num_extractors)))
