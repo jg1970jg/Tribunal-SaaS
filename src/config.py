@@ -320,6 +320,27 @@ LLM_CONFIGS = [
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
+    {
+        "id": "E6",
+        "role": "Extrator Completo",
+        "model": "qwen/qwen3-235b-a22b-2507",
+        "temperature": 0.0,
+        "instructions": PROMPT_EXTRATOR_UNIVERSAL
+    },
+    {
+        "id": "E7",
+        "role": "Extrator Completo",
+        "model": "meta-llama/llama-4-maverick",
+        "temperature": 0.0,
+        "instructions": PROMPT_EXTRATOR_UNIVERSAL
+    },
+    {
+        "id": "E8",
+        "role": "Extrator Completo",
+        "model": "mistralai/mistral-medium-3",
+        "temperature": 0.0,
+        "instructions": PROMPT_EXTRATOR_UNIVERSAL
+    },
 ]
 
 EXTRATOR_MODELS = [cfg["model"] for cfg in LLM_CONFIGS]
@@ -384,7 +405,12 @@ MODEL_CONTEXT_LIMITS = {
     "openai/gpt-4o":                    128_000,
     "anthropic/claude-3-5-sonnet":      200_000,
     "anthropic/claude-haiku-4.5":       200_000,
+    "anthropic/claude-3-5-haiku":       200_000,
     "deepseek/deepseek-chat":           128_000,
+    # Novos extratores E6-E8
+    "qwen/qwen3-235b-a22b-2507":       262_144,
+    "meta-llama/llama-4-maverick":      1_048_576,
+    "mistralai/mistral-medium-3":       131_072,
 }
 
 MODEL_MAX_OUTPUT = {
@@ -396,11 +422,16 @@ MODEL_MAX_OUTPUT = {
     "google/gemini-3-pro-preview":      65_535,
     "x-ai/grok-4":                      128_000,
     "anthropic/claude-haiku-4.5":       64_000,
+    "anthropic/claude-3-5-haiku":       8_192,
     # Extratores
     "google/gemini-3-flash-preview":    65_535,
     "openai/gpt-4o":                    16_384,
     "anthropic/claude-3-5-sonnet":      8_192,
     "deepseek/deepseek-chat":           163_840,  # FIX: era 8192, real=163840
+    # Novos extratores E6-E8
+    "qwen/qwen3-235b-a22b-2507":       8_192,
+    "meta-llama/llama-4-maverick":      16_384,
+    "mistralai/mistral-medium-3":       8_192,
 }
 
 # =============================================================================

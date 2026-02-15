@@ -2,7 +2,7 @@
 """
 Processador Principal da Câmara de Análise - Pipeline de 3 Fases com LLMs + Q&A.
 
-Fase 1: 3 Extratores LLM -> Agregador (SEM perguntas)
+Fase 1: 8 Extratores LLM -> Agregador (SEM perguntas)
 Fase 2: 3 Auditores LLM -> Consolidador (SEM perguntas)
 Fase 3: 3 Relatores LLM -> Parecer + Q&A (COM perguntas)
 Fase 4: Conselheiro-Mor -> Parecer + Q&A Consolidado (COM perguntas)
@@ -371,7 +371,24 @@ Emite o PARECER FINAL:
 
 IMPORTANTE: Após o parecer, consolida as RESPOSTAS Q&A eliminando contradições e fornecendo respostas finais claras e numeradas."""
 
-    SYSTEM_AGREGADOR = """És o AGREGADOR da Fase 1. Recebes 3 extrações do mesmo documento feitas por modelos diferentes.
+    @staticmethod
+    def _build_system_agregador(num_extractors: int = 8) -> str:
+        """Gera system prompt do agregador dinâmico para N extractores."""
+        all_ids = ",".join(f"E{i+1}" for i in range(num_extractors))
+        partial_ex = ",".join(f"E{i+1}" for i in range(min(3, num_extractors)))
+
+        # Secções de cobertura por extractor
+        cobertura_sections = []
+        for i in range(num_extractors):
+            eid = f"E{i+1}"
+            cobertura_sections.append(
+                f'**[{eid}] encontrou exclusivamente:**\n'
+                f'- facto → incorporado em: [secção/linha]\n'
+                f'(ou: "(nenhum — todos os factos foram partilhados)")'
+            )
+        cobertura_text = "\n\n".join(cobertura_sections)
+
+        return f"""És o AGREGADOR da Fase 1. Recebes {num_extractors} extrações do mesmo documento feitas por modelos diferentes.
 
 TAREFA CRÍTICA - CONSOLIDAÇÃO LOSSLESS:
 - NUNCA percas informação única
@@ -382,68 +399,54 @@ FORMATO OBRIGATÓRIO:
 
 ## 1. RESUMO ESTRUTURADO
 ### Factos Relevantes
-- [E1,E2,E3] Facto consensual X
-- [E1,E2] Facto Y (parcial)
+- [{all_ids}] Facto consensual X
+- [{partial_ex}] Facto Y (parcial)
 - [E1] Facto Z (único - OBRIGATÓRIO manter)
 
 ### Datas e Prazos
-- [E1,E2,E3] DD/MM/AAAA - Descrição
+- [{all_ids}] DD/MM/AAAA - Descrição
 
 ### Partes Envolvidas
-- [E1,E2,E3] Nome - Papel/Função
+- [{all_ids}] Nome - Papel/Função
 
 ### Valores Monetários
-- [E1,E2,E3] €X.XXX,XX - Descrição
+- [{all_ids}] €X.XXX,XX - Descrição
 
 ### Referências Legais
-- [E1,E2,E3] Artigo Xº do Diploma Y
+- [{all_ids}] Artigo Xº do Diploma Y
 - [E1] Artigo Zº (único - verificar)
 
 ### Pedidos/Pretensões
-- [E1,E2,E3] Descrição do pedido
+- [{all_ids}] Descrição do pedido
 
 ### Documentos Mencionados
-- [E1,E2] Nome do documento
+- [{partial_ex}] Nome do documento
 
 ## 2. DIVERGÊNCIAS ENTRE EXTRATORES
-(Se E1 diz X e E2 diz Y sobre o mesmo facto, listar aqui)
+(Se um extrator diz X e outro diz Y sobre o mesmo facto, listar aqui)
 - Facto: [descrição]
-  - E1: [versão do E1]
-  - E2: [versão do E2]
-  - E3: [versão do E3 ou "não mencionou"]
+  - E1: [versão]
+  - E2: [versão]
+  - ... (cada extrator com versão diferente)
 
 ## 3. CONTROLO DE COBERTURA (OBRIGATÓRIO)
 
 REGRAS NÃO-NEGOCIÁVEIS:
-1) Tens de preencher as 3 subsecções abaixo: [E1], [E2] e [E3]
+1) Tens de preencher as {num_extractors} subsecções abaixo: [{all_ids}]
 2) Se um extrator NÃO tiver factos exclusivos, escreve LITERALMENTE:
    "(nenhum — todos os factos foram partilhados)"
-3) A "Confirmação" SÓ pode ser "SIM" se as 3 subsecções estiverem preenchidas (com factos ou com "(nenhum — ...)")
-4) Se "Confirmação" for "NÃO", OBRIGATORIAMENTE lista cada facto omitido em "ITENS NÃO INCORPORADOS" com razão concreta
-5) Quando Confirmação=SIM, para cada item exclusivo listado, indica onde foi incorporado:
-   - [E1] facto X → incorporado em: ##1/Factos, linha 3
-   - [E2] facto Y → incorporado em: ##1/Datas, linha 1
+3) A "Confirmação" SÓ pode ser "SIM" se TODAS as subsecções estiverem preenchidas
+4) Se "Confirmação" for "NÃO", OBRIGATORIAMENTE lista cada facto omitido em "ITENS NÃO INCORPORADOS"
+5) Quando Confirmação=SIM, para cada item exclusivo, indica onde foi incorporado
 
 FORMATO OBRIGATÓRIO PARA FACTOS:
 - facto curto e objetivo (máx 100 caracteres)
 - NÃO usar "detalhes adicionais" ou textos vagos
 
-**[E1] encontrou exclusivamente:**
-- facto A → incorporado em: [secção/linha]
-- facto B → incorporado em: [secção/linha]
-(ou: "(nenhum — todos os factos foram partilhados)")
-
-**[E2] encontrou exclusivamente:**
-- facto C → incorporado em: [secção/linha]
-(ou: "(nenhum — todos os factos foram partilhados)")
-
-**[E3] encontrou exclusivamente:**
-- facto D → incorporado em: [secção/linha]
-(ou: "(nenhum — todos os factos foram partilhados)")
+{cobertura_text}
 
 **Confirmação:** SIM
 (ou: **Confirmação:** NÃO)
-Escreve exatamente "Confirmação: SIM" ou "Confirmação: NÃO" - escolhe apenas um.
 
 **ITENS NÃO INCORPORADOS** (obrigatório se Confirmação=NÃO):
 - [EX] facto: motivo concreto da não incorporação
@@ -451,9 +454,9 @@ Escreve exatamente "Confirmação: SIM" ou "Confirmação: NÃO" - escolhe apena
 
 ---
 LEGENDA:
-- [E1,E2,E3] = Consenso total (3 extratores)
-- [E1,E2] / [E2,E3] / [E1,E3] = Consenso parcial (2 extratores)
-- [E1] / [E2] / [E3] = Único (1 extrator - NUNCA ELIMINAR sem justificação)
+- [{all_ids}] = Consenso total ({num_extractors} extratores)
+- Subconjuntos = Consenso parcial
+- [E1] / [E2] / etc = Único (1 extrator - NUNCA ELIMINAR sem justificação)
 
 REGRA NÃO-NEGOCIÁVEL: Na dúvida, MANTÉM. Melhor redundância que perda de dados."""
 
@@ -1175,7 +1178,7 @@ REVISTO:"""
         """Normaliza role name para performance tracking."""
         r = role_name.lower()
         if "extrator" in r or "extractor" in r:
-            for tag in ("e1", "e2", "e3", "e4", "e5"):
+            for tag in ("e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"):
                 if tag in r:
                     return tag.upper()
             return "E1"
@@ -1440,7 +1443,7 @@ REVISTO:"""
             )
 
         # 3. Configurar extratores
-        extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"] in ["E1", "E2", "E3", "E4", "E5"]]
+        extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"].startswith("E")]
         logger.info(f"=== {num_chunks} chunk(s) × {len(extractor_configs)} extratores = {num_chunks * len(extractor_configs)} chamadas LLM ===")
 
         # 4. Estruturas para armazenar resultados
@@ -1651,7 +1654,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
 
         # Executar extratores em PARALELO
         logger.info(f"[PARALELO] Lançando {len(extractor_configs)} extratores em paralelo...")
-        with ThreadPoolExecutor(max_workers=min(5, len(extractor_configs))) as executor:
+        with ThreadPoolExecutor(max_workers=min(10, len(extractor_configs))) as executor:
             futures = {}
             for i, cfg in enumerate(extractor_configs):
                 future = executor.submit(_run_extractor, i, cfg)
@@ -1839,7 +1842,7 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
         agregador_result = self._call_llm(
             model=self.agregador_model,
             prompt=prompt_agregador,
-            system_prompt=self.SYSTEM_AGREGADOR,
+            system_prompt=self._build_system_agregador(len(extractor_configs)),
             role_name="agregador",
         )
 
@@ -1855,7 +1858,7 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
 
     def _fase1_extracao(self, documento: DocumentContent, area: str) -> tuple:
         """
-        Fase 1: 3 Extratores LLM -> Agregador LLM (LOSSLESS).
+        Fase 1: 8 Extratores LLM -> Agregador LLM (LOSSLESS).
         NOTA: Extratores são CEGOS a perguntas do utilizador.
 
         CORREÇÃO #3: Para PDFs com pdf_safe_result, usa batches em vez de string única.
@@ -1883,9 +1886,9 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
         chunks = self._dividir_documento_chunks(documento.text)
         num_chunks = len(chunks)
         
-        logger.info(f"=== FASE 1: {num_chunks} chunk(s) × 5 extratores = {num_chunks * 5} chamadas LLM ===")
+        logger.info(f"=== FASE 1: {num_chunks} chunk(s) × {len(self._llm_configs)} extratores = {num_chunks * len(self._llm_configs)} chamadas LLM ===")
         
-        extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"] in ["E1", "E2", "E3", "E4", "E5"]]
+        extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"].startswith("E")]
         
         resultados = []
         for i, cfg in enumerate(extractor_configs):
@@ -1970,10 +1973,10 @@ CONTEÚDO{chunk_header}:
                 f"# Extrator {extractor_id}: {role}\n## Modelo: {model}\n## Chunks processados: {num_chunks}\n\n{conteudo_final}"
             )
 
-        # Criar agregado BRUTO (concatenação simples dos 5 extratores)
-        self._reportar_progresso("fase1", 32, "Criando agregado bruto (5 extratores)...")
+        # Criar agregado BRUTO (concatenação simples de todos os extratores)
+        self._reportar_progresso("fase1", 32, f"Criando agregado bruto ({len(extractor_configs)} extratores)...")
 
-        bruto_parts = ["# EXTRAÇÃO AGREGADA (BRUTO) - 5 EXTRATORES\n"]
+        bruto_parts = [f"# EXTRAÇÃO AGREGADA (BRUTO) - {len(extractor_configs)} EXTRATORES\n"]
         for i, r in enumerate(resultados):
             cfg = extractor_configs[i] if i < len(extractor_configs) else {"id": f"E{i+1}", "role": "Extrator"}
             bruto_parts.append(f"\n## [EXTRATOR {cfg['id']}: {cfg['role']} - {r.modelo}]\n")
@@ -1992,9 +1995,7 @@ CONTEÚDO{chunk_header}:
 
 MISSÃO DO AGREGADOR:
 Consolida estas {len(extractor_configs)} extrações numa única extração LOSSLESS.
-- E1-E3: Generalistas (contexto jurídico geral)
-- E4: Especialista em dados estruturados (datas, valores, referências)
-- E5: Especialista em documentos administrativos (anexos, tabelas, formulários)
+Cada extrator (E1-E{len(extractor_configs)}) trouxe perspectiva diferente com modelos distintos.
 
 CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de TODOS os extratores.
 Área do Direito: {area}"""
@@ -2002,7 +2003,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
         agregador_result = self._call_llm(
             model=self.agregador_model,
             prompt=prompt_agregador,
-            system_prompt=self.SYSTEM_AGREGADOR,
+            system_prompt=self._build_system_agregador(len(extractor_configs)),
             role_name="agregador",
         )
 
@@ -2124,8 +2125,8 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
         logger.info(f"Dividido em {len(batches)} batch(es)")
 
         # Processar cada extrator em todos os batches
-        # USAR 5 EXTRATORES COM PROMPTS ESPECIALIZADOS
-        extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"] in ["E1", "E2", "E3", "E4", "E5"]]
+        # USAR TODOS OS EXTRATORES (E1-E8) COM PROMPT UNIVERSAL
+        extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"].startswith("E")]
         logger.info(f"=== FASE 1 BATCH: Usando {len(extractor_configs)} extratores especializados ===")
 
         all_extractor_results = []  # Lista de resultados por extrator
@@ -2304,10 +2305,10 @@ Devolve o JSON completo no mesmo formato."""
         if recall_score < RECALL_MIN_THRESHOLD:
             logger.warning(f"ALERTA: Recall {recall_score:.2%} < threshold {RECALL_MIN_THRESHOLD:.0%}")
 
-        # Criar agregado BRUTO (concatenação simples dos 5 extratores)
-        self._reportar_progresso("fase1", 32, "Criando agregado bruto (5 extratores)...")
+        # Criar agregado BRUTO (concatenação simples de todos os extratores)
+        self._reportar_progresso("fase1", 32, f"Criando agregado bruto ({len(extractor_configs)} extratores)...")
 
-        bruto_parts = ["# EXTRAÇÃO AGREGADA (BRUTO) - MODO BATCH - 5 EXTRATORES\n"]
+        bruto_parts = [f"# EXTRAÇÃO AGREGADA (BRUTO) - MODO BATCH - {len(extractor_configs)} EXTRATORES\n"]
         for i, r in enumerate(resultados):
             cfg = extractor_configs[i] if i < len(extractor_configs) else {"id": f"E{i+1}", "role": "Extrator"}
             bruto_parts.append(f"\n## [EXTRATOR {cfg['id']}: {cfg['role']} - {r.modelo}]\n")
@@ -2329,9 +2330,7 @@ Devolve o JSON completo no mesmo formato."""
 
 MISSÃO DO AGREGADOR:
 Consolida estas {len(extractor_configs)} extrações numa única extração LOSSLESS.
-- E1-E3: Generalistas (contexto jurídico geral)
-- E4: Especialista em dados estruturados (datas, valores, referências)
-- E5: Especialista em documentos administrativos (anexos, tabelas, formulários)
+Cada extrator (E1-E{len(extractor_configs)}) trouxe perspectiva diferente com modelos distintos.
 
 CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de TODOS os extratores.
 Área do Direito: {area}
@@ -2341,7 +2340,7 @@ NOTA: As extrações foram feitas por página. Mantém referências de página q
             agregador_result = self._call_llm(
                 model=self.agregador_model,
                 prompt=prompt_agregador,
-                system_prompt=self.SYSTEM_AGREGADOR,
+                system_prompt=self._build_system_agregador(len(extractor_configs)),
                 role_name="agregador",
             )
             consolidado = f"# EXTRAÇÃO CONSOLIDADA (AGREGADOR: {self.agregador_model})\n\n{agregador_result.conteudo}"
@@ -2389,7 +2388,7 @@ NOTA: As extrações foram feitas por página. Mantém referências de página q
                 batch_bruto = "\n".join(batch_bruto_parts)
 
                 # Agregar este batch
-                prompt_batch = f"""EXTRAÇÕES DOS 3 MODELOS - BATCH {batch_idx + 1}/{len(batches)}
+                prompt_batch = f"""EXTRAÇÕES DOS {len(extractor_configs)} MODELOS - BATCH {batch_idx + 1}/{len(batches)}
 Páginas: {batch_pages[0]} a {batch_pages[-1]}
 
 {batch_bruto}
@@ -2402,7 +2401,7 @@ IMPORTANTE: Mantém referências de página específicas."""
                 batch_result = self._call_llm(
                     model=self.agregador_model,
                     prompt=prompt_batch,
-                    system_prompt=self.SYSTEM_AGREGADOR,
+                    system_prompt=self._build_system_agregador(len(extractor_configs)),
                     role_name=f"agregador_batch_{batch_idx + 1}",
                 )
 
@@ -2441,7 +2440,7 @@ TAREFA: Consolida TODOS os batches numa extração FINAL LOSSLESS.
             final_result = self._call_llm(
                 model=self.agregador_model,
                 prompt=prompt_final,
-                system_prompt=self.SYSTEM_AGREGADOR,
+                system_prompt=self._build_system_agregador(len(extractor_configs)),
                 role_name="agregador_final",
             )
 

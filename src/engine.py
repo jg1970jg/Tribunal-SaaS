@@ -517,11 +517,10 @@ def executar_analise(
         config_module.EXTRATOR_MODELS[3] = e4_openrouter
         config_module.EXTRATOR_MODELS_NEW[3] = e4_openrouter
 
+    extrator_summary = ", ".join(f"{cfg['id']}={cfg['model'].split('/')[-1]}" for cfg in config_module.LLM_CONFIGS)
     print(
         f"[ENGINE] Modelos ({tier_level.value}): "
-        f"E1={extraction_openrouter}, "
-        f"E3={config_module.EXTRATOR_MODELS[2]}, "
-        f"E4={config_module.EXTRATOR_MODELS[3]}, "
+        f"{extrator_summary}, "
         f"Consolidador={config_module.CHEFE_MODEL}, Conselheiro={config_module.PRESIDENTE_MODEL}, "
         f"A2={auditor_model}, J2={relator_model}"
     )

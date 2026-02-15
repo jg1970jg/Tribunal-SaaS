@@ -41,6 +41,9 @@ MODEL_COSTS = {
     "sonnet-4.5": 0.08,
     "deepseek": 0.06,
     "claude-opus-4": 0.21,  # Com cache
+    "qwen3-235b": 0.02,
+    "llama-4-maverick": 0.04,
+    "mistral-medium-3": 0.06,
 
     # Auditores (Fase 2)
     "gpt-5.2": 0.12,
@@ -78,6 +81,7 @@ TIER_CONFIG = {
         # Modelos por fase
         "models": {
             "extraction": "sonnet-4.5",      # E1
+            "extraction_e4": "haiku-3.5",    # E4: Haiku 3.5 ($0.25/M — 12× mais barato)
             "audit_chief": "gpt-5.2",
             "audit_claude": "sonnet-4.5",     # A2
             "judgment_claude": "sonnet-4.5",  # J2
@@ -123,14 +127,14 @@ TIER_CONFIG = {
         "color_bg": "bg-gradient-to-br from-slate-50 to-gray-100",
         "badge": "⭐ RECOMENDADO",
 
-        # Modelos por fase (Opus nas fases críticas)
+        # Modelos por fase (Sonnet na extração, Opus na auditoria/relatoria)
         "models": {
-            "extraction": "claude-opus-4",     # UPGRADE E1
+            "extraction": "sonnet-4.5",        # MUDANÇA: era claude-opus-4 (lento)
             "extraction_e3": "gpt-5.2",        # UPGRADE E3 (era gpt-4o)
             "extraction_e4": "haiku-4.5",      # UPGRADE E4 (era claude-3.5-sonnet)
             "audit_chief": "gpt-5.2",
-            "audit_claude": "claude-opus-4",   # UPGRADE A2
-            "judgment_claude": "claude-opus-4", # UPGRADE J2
+            "audit_claude": "claude-opus-4",   # Opus na auditoria (mantém qualidade)
+            "judgment_claude": "claude-opus-4", # Opus na relatoria (mantém qualidade)
             "president": "gpt-5.2",
         },
 
@@ -173,14 +177,14 @@ TIER_CONFIG = {
         "color_bg": "bg-gradient-to-br from-yellow-50 to-amber-100",
         "badge": "💎 MÁXIMA QUALIDADE",
 
-        # Modelos por fase (Tudo premium)
+        # Modelos por fase (ELITE: Opus em TUDO incluindo extração)
         "models": {
-            "extraction": "claude-opus-4",
+            "extraction": "claude-opus-4",     # Elite usa Opus na extração
             "extraction_e3": "gpt-5.2",        # UPGRADE E3 (era gpt-4o)
             "extraction_e4": "haiku-4.5",      # UPGRADE E4 (era claude-3.5-sonnet)
             "audit_chief": "gpt-5.2-pro",     # UPGRADE
-            "audit_claude": "claude-opus-4",
-            "judgment_claude": "claude-opus-4",
+            "audit_claude": "claude-opus-4",   # Opus na auditoria
+            "judgment_claude": "claude-opus-4", # Opus na relatoria
             "president": "gpt-5.2-pro",        # UPGRADE
         },
 
@@ -345,10 +349,16 @@ OPENROUTER_MODEL_MAPPING = {
     "gemini-3-pro-preview": "google/gemini-3-pro-preview",
     "grok-4.1": "x-ai/grok-4.1",
     "haiku-4.5": "anthropic/claude-haiku-4.5",
+    "haiku-3.5": "anthropic/claude-3-5-haiku",
 
     # Conselheiro-Mor
     "gpt-5.2-presidente": "openai/gpt-5.2",
     "gpt-5.2-pro-presidente": "openai/gpt-5.2-pro",
+
+    # Novos extratores E6-E8
+    "qwen3-235b": "qwen/qwen3-235b-a22b-2507",
+    "llama-4-maverick": "meta-llama/llama-4-maverick",
+    "mistral-medium-3": "mistralai/mistral-medium-3",
 }
 
 

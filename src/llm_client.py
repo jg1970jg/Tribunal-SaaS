@@ -142,6 +142,7 @@ logger = logging.getLogger(__name__)
 MODELS_MANUAL_CACHE = {
     "anthropic/claude-sonnet-4.5",
     "anthropic/claude-3-5-sonnet",
+    "anthropic/claude-3-5-haiku",
     "anthropic/claude-opus-4.6",
     "anthropic/claude-opus-4.5",
 }
