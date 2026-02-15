@@ -63,7 +63,8 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # Configurações gerais
 API_TIMEOUT = 180
 API_MAX_RETRIES = 5
-EXTRACTOR_TOTAL_TIMEOUT = 1200  # 20 min max para todos os extractores em paralelo
+EXTRACTOR_TIMEOUT_PER_CHUNK = 150  # 2.5 min por chunk (margem sobre os ~2min reais)
+EXTRACTOR_TIMEOUT_MIN = 1200       # Mínimo 20 min
 LOG_LEVEL = "INFO"
 
 # =============================================================================

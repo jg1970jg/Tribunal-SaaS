@@ -1652,10 +1652,11 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                 "resultado": resultado,
             }
 
-        # Executar extratores em PARALELO (timeout para evitar bloqueio por modelos lentos)
-        from src.config import EXTRACTOR_TOTAL_TIMEOUT
-        EXTRACTOR_TIMEOUT_SECONDS = EXTRACTOR_TOTAL_TIMEOUT
-        logger.info(f"[PARALELO] Lançando {len(extractor_configs)} extratores em paralelo (timeout={EXTRACTOR_TIMEOUT_SECONDS}s)...")
+        # Executar extratores em PARALELO (timeout dinâmico por nº de chunks)
+        from src.config import EXTRACTOR_TIMEOUT_PER_CHUNK, EXTRACTOR_TIMEOUT_MIN
+        EXTRACTOR_TIMEOUT_SECONDS = max(EXTRACTOR_TIMEOUT_MIN, num_chunks * EXTRACTOR_TIMEOUT_PER_CHUNK)
+        logger.info(f"[PARALELO] Lançando {len(extractor_configs)} extratores em paralelo "
+                    f"(timeout={EXTRACTOR_TIMEOUT_SECONDS}s = {num_chunks} chunks × {EXTRACTOR_TIMEOUT_PER_CHUNK}s)...")
         with ThreadPoolExecutor(max_workers=min(10, len(extractor_configs))) as executor:
             futures = {}
             for i, cfg in enumerate(extractor_configs):
