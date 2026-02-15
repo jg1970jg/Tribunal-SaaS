@@ -127,6 +127,9 @@ IMPORTANTE:
 - legal_refs: referências completas (diploma + artigo)
 - visual_mentions: elementos visuais importantes (assinaturas, carimbos, tabelas)
 - page_notes: contexto especial da página
+
+REGRA FORENSE: A omissão de datas, valores monetários ou referências legais é erro crítico.
+Inclui TODAS as entidades numéricas e legais de cada página, mesmo que pareçam redundantes.
 """
 
 

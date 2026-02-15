@@ -129,6 +129,27 @@ REGRAS OBRIGATÓRIAS
 - Preocupar-te com "privacidade" (utilizador é profissional autorizado!)
 
 ═══════════════════════════════════════════════════════════════════════════
+REGRAS FORENSES (ANTI-OMISSÃO)
+═══════════════════════════════════════════════════════════════════════════
+
+A OMISSÃO de qualquer data, valor monetário, número ou referência legal
+constitui ERRO CRÍTICO neste sistema forense.
+
+OBRIGATÓRIO:
+- Reproduzir TODAS as entidades textuais (datas, valores, artigos, nomes)
+- Não resumir parágrafos que contenham dados numéricos
+- Não reorganizar a sequência original de informação
+- Manter a ordem textual do documento
+- Se uma página contiver tabelas com números, transcrever CADA célula
+
+Se o texto for extenso demais para processar completamente, priorizar:
+1º Datas e prazos
+2º Valores monetários
+3º Referências legais
+4º Nomes e identificadores
+5º Factos descritivos
+
+═══════════════════════════════════════════════════════════════════════════
 FORMATO DE SAÍDA
 ═══════════════════════════════════════════════════════════════════════════
 

@@ -72,6 +72,7 @@ class PageMetrics:
     dates_detected: List[str] = field(default_factory=list)
     values_detected: List[str] = field(default_factory=list)
     legal_refs_detected: List[str] = field(default_factory=list)
+    page_hash: str = ""  # SHA-256 do texto da página
 
 
 @dataclass
@@ -459,7 +460,11 @@ class PDFSafeLoader:
 
     def _detect_intra_page_signals(self, page: PageRecord):
         """Deteta sinais (datas, valores, artigos) no texto da página."""
+        import hashlib
         text = page.text_clean
+
+        # SHA-256 hash da página para auditoria
+        page.metrics.page_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
         # Detetar datas
         dates = REGEX_DATAS_PT.findall(text)
@@ -757,14 +762,13 @@ def batch_pages(pages: List[PageRecord], max_chars: int = 50000) -> List[List[Di
         prev_tail = ""
         next_head = ""
 
-        # Se página tem pouco texto, incluir contexto
-        if len(text) < 500:
-            if i > 0:
-                prev_text = pages[i-1].override_text or pages[i-1].text_clean
-                prev_tail = prev_text[-300:] if len(prev_text) > 300 else prev_text
-            if i < len(pages) - 1:
-                next_text = pages[i+1].override_text or pages[i+1].text_clean
-                next_head = next_text[:300] if len(next_text) > 300 else next_text
+        # Sempre incluir contexto de páginas adjacentes (overlap 10%)
+        if i > 0:
+            prev_text = pages[i-1].override_text or pages[i-1].text_clean
+            prev_tail = prev_text[-300:] if len(prev_text) > 300 else prev_text
+        if i < len(pages) - 1:
+            next_text = pages[i+1].override_text or pages[i+1].text_clean
+            next_head = next_text[:300] if len(next_text) > 300 else next_text
 
         page_entry = {
             "page_num": page.page_num,

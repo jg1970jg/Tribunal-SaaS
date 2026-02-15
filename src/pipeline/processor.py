@@ -2092,7 +2092,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
         Returns:
             tuple: (resultados, bruto, consolidado)
         """
-        from src.pipeline.pdf_safe import batch_pages, CoverageMatrix
+        from src.pipeline.pdf_safe import batch_pages, CoverageMatrix, detetor_intra_pagina
         from src.pipeline.extractor_json import (
             SYSTEM_EXTRATOR_JSON,
             build_extractor_input,
@@ -2100,6 +2100,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
             extractions_to_markdown,
             merge_extractor_results,
         )
+        from src.config import MAX_SIGNAL_RETRIES, RECALL_MIN_THRESHOLD
 
         pdf_result = documento.pdf_safe_result
         pages = pdf_result.pages
@@ -2107,7 +2108,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
         logger.info(f"Fase 1 BATCH: {len(pages)} páginas, PDF Seguro ativado")
 
         # Dividir páginas em batches
-        batches = batch_pages(pages, max_chars=50000)
+        batches = batch_pages(pages, max_chars=CHUNK_SIZE_CHARS)
         logger.info(f"Dividido em {len(batches)} batch(es)")
 
         # Processar cada extrator em todos os batches
@@ -2136,7 +2137,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
                 json_input = build_extractor_input(batch)
                 valid_page_nums = [p["page_num"] for p in batch]
 
-                prompt = f"""DOCUMENTO A ANALISAR (Batch {batch_idx + 1}/{len(batches)}):
+                original_prompt = f"""DOCUMENTO A ANALISAR (Batch {batch_idx + 1}/{len(batches)}):
 Ficheiro: {documento.filename}
 Área do Direito: {area}
 Total de páginas no documento: {len(pages)}
@@ -2150,34 +2151,72 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
 Extrai informação de CADA página no formato JSON especificado.
 IMPORTANTE: Só usa page_num que existam no batch acima."""
 
-                # Chamar LLM com temperature específica
-                response = self.llm_client.chat_simple(
-                    model=model,
-                    prompt=prompt,
-                    system_prompt=SYSTEM_EXTRATOR_JSON,
-                    temperature=temperature,
-                )
+                # Retry loop para sinais em falta
+                prompt = original_prompt
+                for attempt in range(MAX_SIGNAL_RETRIES + 1):
+                    # Chamar LLM com temperature específica
+                    response = self.llm_client.chat_simple(
+                        model=model,
+                        prompt=prompt,
+                        system_prompt=SYSTEM_EXTRATOR_JSON,
+                        temperature=temperature,
+                    )
 
-                # Registar tokens REAIS no CostController
-                if hasattr(self, '_cost_controller') and self._cost_controller:
-                    r_pt = response.prompt_tokens
-                    r_ct = response.completion_tokens
-                    if response.total_tokens == 0 and response.content:
-                        r_pt = len(prompt) // 4
-                        r_ct = len(response.content) // 4
-                    try:
-                        self._cost_controller.register_usage(
-                            phase=f"fase1_{extractor_id}_batch{batch_idx}",
-                            model=model,
-                            prompt_tokens=r_pt,
-                            completion_tokens=r_ct,
-                            raise_on_exceed=False,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[CUSTO] Erro ao registar {extractor_id}-batch{batch_idx}: {e}")
+                    # Registar tokens REAIS no CostController
+                    if hasattr(self, '_cost_controller') and self._cost_controller:
+                        r_pt = response.prompt_tokens
+                        r_ct = response.completion_tokens
+                        if response.total_tokens == 0 and response.content:
+                            r_pt = len(prompt) // 4
+                            r_ct = len(response.content) // 4
+                        try:
+                            self._cost_controller.register_usage(
+                                phase=f"fase1_{extractor_id}_batch{batch_idx}" + (f"_retry{attempt}" if attempt > 0 else ""),
+                                model=model,
+                                prompt_tokens=r_pt,
+                                completion_tokens=r_ct,
+                                raise_on_exceed=False,
+                            )
+                        except Exception as e:
+                            logger.warning(f"[CUSTO] Erro ao registar {extractor_id}-batch{batch_idx}: {e}")
 
-                # Parsear e validar output
-                parsed = parse_extractor_output(response.content, valid_page_nums, extractor_id)
+                    # Parsear e validar output
+                    parsed = parse_extractor_output(response.content, valid_page_nums, extractor_id)
+
+                    # Verificar sinais em falta (retry se necessário)
+                    if attempt < MAX_SIGNAL_RETRIES:
+                        try:
+                            batch_page_records = [p for p in pages if p.page_num in valid_page_nums]
+                            md_content = extractions_to_markdown(parsed["extractions"], extractor_id)
+                            missing = detetor_intra_pagina(batch_page_records, md_content, extractor_id)
+                            total_missing = sum(s["total_missing"] for s in missing)
+
+                            if total_missing == 0:
+                                break  # Cobertura completa
+
+                            # Construir prompt de retry com sinais em falta
+                            missing_list = []
+                            for s in missing:
+                                for sig in s["missing_signals"]:
+                                    missing_list.append(f"- Página {s['page_num']}: {sig['signal_type']} = \"{sig['detected']}\"")
+
+                            prompt = f"""RETRY {attempt + 1}: A tua extração anterior OMITIU os seguintes sinais críticos:
+
+{chr(10).join(missing_list)}
+
+DOCUMENTO ORIGINAL:
+{json_input}
+
+INSTRUÇÕES: Re-extrai incluindo TODOS os sinais acima. Não omitas nenhum.
+Devolve o JSON completo no mesmo formato."""
+
+                            logger.warning(f"  RETRY {attempt+1} para {extractor_id} batch {batch_idx+1}: "
+                                          f"{total_missing} sinais em falta")
+                        except Exception as e:
+                            logger.debug(f"Erro na verificação de sinais para retry: {e}")
+                            break  # Não bloquear o pipeline
+                    # End retry loop
+
                 extractor_json_results.append(parsed)
 
                 # Converter para markdown para compatibilidade
@@ -2237,6 +2276,18 @@ IMPORTANTE: Só usa page_num que existam no batch acima."""
             logger.warning(f"ALERTA: {len(signal_report['uncovered_signals'])} página(s) com sinais não extraídos")
             for s in signal_report["uncovered_signals"][:5]:  # Primeiras 5
                 logger.warning(f"  Página {s['page_num']}: {len(s['uncovered'])} sinal(ais) em falta")
+
+        # Calcular recall score
+        total_signals = signal_report.get("total_signals_detected", 0)
+        total_uncovered = sum(len(s["uncovered"]) for s in signal_report.get("uncovered_signals", []))
+        if total_signals > 0:
+            recall_score = (total_signals - total_uncovered) / total_signals
+        else:
+            recall_score = 1.0
+        signal_report["recall_score"] = round(recall_score, 4)
+        logger.info(f"RECALL SCORE: {recall_score:.2%} ({total_signals - total_uncovered}/{total_signals} sinais)")
+        if recall_score < RECALL_MIN_THRESHOLD:
+            logger.warning(f"ALERTA: Recall {recall_score:.2%} < threshold {RECALL_MIN_THRESHOLD:.0%}")
 
         # Criar agregado BRUTO (concatenação simples dos 5 extratores)
         self._reportar_progresso("fase1", 32, "Criando agregado bruto (5 extratores)...")
@@ -2573,9 +2624,17 @@ Consolida estas {n_auditores} auditorias numa única auditoria LOSSLESS.
                 except Exception as e:
                     logger.warning(f"Erro ao carregar cobertura: {e}")
 
+        # Gerar canonical doc_id para rastreabilidade
+        canonical_doc_id = ""
+        if hasattr(self, '_documento') and self._documento:
+            _fhash = getattr(self._documento, 'file_hash', '') or ''
+            if _fhash:
+                canonical_doc_id = f"doc_{_fhash[:12]}"
+
         # NOVO: Prompt inclui dados estruturados (evidence_item_ids)
+        doc_id_line = f"\nDoc ID Canónico: {canonical_doc_id}" if canonical_doc_id else ""
         prompt_base = f"""EXTRAÇÃO A AUDITAR:
-Área do Direito: {area}
+Área do Direito: {area}{doc_id_line}
 {coverage_info}
 
 ## ITEMS EXTRAÍDOS (JSON ESTRUTURADO - usar evidence_item_ids nas citations!)
@@ -2766,6 +2825,51 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                 [r.to_dict() for r in audit_reports],
                 f, ensure_ascii=False, indent=2
             )
+
+        # =====================================================================
+        # CONSENSUS ENGINE: Validação determinística + consenso adaptativo
+        # =====================================================================
+        try:
+            from src.pipeline.consensus_engine import run_consensus_engine
+
+            # Construir page_texts e page_offsets a partir dos dados disponíveis
+            page_texts_map = {}
+            page_offsets_map = {}
+            canonical_text = getattr(self, '_document_text', '') or ''
+            file_hash = ""
+
+            if hasattr(self, '_page_mapper') and self._page_mapper:
+                # Usar page_mapper boundaries para obter textos por página
+                for boundary in self._page_mapper.boundaries:
+                    page_texts_map[boundary.page_num] = canonical_text[boundary.start_char:boundary.end_char]
+                    page_offsets_map[boundary.page_num] = boundary.start_char
+
+            # Tentar obter file_hash do documento
+            if hasattr(self, '_documento') and self._documento:
+                file_hash = getattr(self._documento, 'file_hash', '') or ''
+
+            if canonical_text and page_texts_map:
+                self._reportar_progresso("fase2", 58, "Consensus Engine: validação determinística...")
+                consensus_result = run_consensus_engine(
+                    audit_reports=audit_reports,
+                    canonical_text=canonical_text,
+                    page_texts=page_texts_map,
+                    page_offsets=page_offsets_map,
+                    file_hash=file_hash,
+                    output_dir=self._output_dir,
+                )
+                logger.info(
+                    f"[CONSENSUS] Completo: "
+                    f"Citations {consensus_result['citation_validation']['valid']}/{consensus_result['citation_validation']['total']} válidas | "
+                    f"Fases activas: A={'SIM'} B={'SIM' if consensus_result['phases_active']['B'] else 'NÃO'} C={'SIM' if consensus_result['phases_active']['C'] else 'NÃO'}"
+                )
+            else:
+                logger.warning("[CONSENSUS] Dados insuficientes para consensus engine (sem texto canónico ou page map)")
+
+        except Exception as e:
+            logger.error(f"[CONSENSUS] Erro no consensus engine (não-bloqueante): {e}")
+            import traceback
+            traceback.print_exc()
 
         consolidado = self._aplicar_rlm(consolidado, "auditoria")
 
@@ -3522,6 +3626,9 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.fase1_agregado_bruto = bruto_f1
             result.fase1_agregado_consolidado = consolidado_f1
             result.fase1_agregado = consolidado_f1  # Backwards compat
+
+            # Guardar referência ao documento para consensus engine
+            self._documento = documento
 
             # Inicializar IntegrityValidator para validações nas fases 2-4
             if USE_UNIFIED_PROVENANCE:

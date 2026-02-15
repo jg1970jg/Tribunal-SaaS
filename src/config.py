@@ -172,8 +172,8 @@ AGREGADOR_MODEL = "openai/gpt-5.2"  # Agregador sempre 5.2 (via OpenRouter)
 # CENÁRIO A - CHUNKING AUTOMÁTICO
 # =============================================================================
 
-CHUNK_SIZE_CHARS = 50000    # Sweet spot: até 35 pág sem chunking
-CHUNK_OVERLAP_CHARS = 2500  # 5% overlap
+CHUNK_SIZE_CHARS = 22000       # Reduzido para melhor recall LLM
+CHUNK_OVERLAP_CHARS = 2200     # 10% overlap
 
 # =============================================================================
 # PROVENIÊNCIA E COBERTURA (NOVO!)
@@ -184,6 +184,10 @@ USE_UNIFIED_PROVENANCE = True
 
 # Alertar se cobertura < X%
 COVERAGE_MIN_THRESHOLD = 95.0
+
+# Threshold de recall de sinais
+RECALL_MIN_THRESHOLD = 0.95    # Warning se < 95%
+MAX_SIGNAL_RETRIES = 2         # Max retries por chunk com sinais em falta
 
 # Ignorar gaps menores que X chars na auditoria de cobertura
 COVERAGE_MIN_GAP_SIZE = 100
@@ -206,6 +210,32 @@ META_INTEGRITY_CITATION_COUNT_TOLERANCE = 5
 CONFIDENCE_MAX_PENALTY = 0.40       # era 0.50 — raramente atingido
 CONFIDENCE_SEVERE_CEILING = 0.80    # era 0.75 — menos punitivo
 APPLY_CONFIDENCE_POLICY = True
+
+# =============================================================================
+# CONSENSUS ENGINE - FASES A/B/C COM ACTIVAÇÃO AUTOMÁTICA
+# =============================================================================
+
+# Thresholds de activação por número de runs históricos
+PHASE_B_MIN_RUNS = 10      # Contradiction scan + normalização activa após 10 runs
+PHASE_C_MIN_RUNS = 30      # Peso histórico + re-query activa após 30 runs
+
+# Fase A: Citation determinístico
+CITATION_FUZZY_THRESHOLD = 0.85    # Ratio mínimo para fuzzy match
+CITATION_LENGTH_TOLERANCE = 0.20   # Tolerância de comprimento ±20%
+
+# Fase B: Normalização de severidade
+SEVERITY_LEVELS = ["baixo", "medio", "alto", "critico"]
+SEVERITY_CRITICAL_KEYWORDS = ["nulidade", "invalidade", "ilegalidade", "anulável", "nulo", "inválido"]
+SEVERITY_NEVER_REDUCE_BELOW = "medio"  # Nunca reduzir abaixo deste nível
+
+# Fase C: Peso histórico adaptativo
+HISTORICAL_WINDOW = 20             # Janela deslizante para peso histórico (últimos N runs)
+MAX_REQUERY_PER_RUN = 3            # Budget máximo de re-queries por run
+MAX_REQUERY_PER_AUDITOR = 1        # Budget máximo de re-queries por auditor
+
+# Consensus engine: níveis de confiança
+CONSENSUS_CERTIFIED_MIN_AUDITORS = 3    # Mín. auditores para "facto certificado"
+CONSENSUS_PROBABLE_MIN_AUDITORS = 2     # Mín. auditores para "facto provável"
 
 # =============================================================================
 # MAX OUTPUT TOKENS POR FASE (NOVO!)
