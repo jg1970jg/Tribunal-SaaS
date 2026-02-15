@@ -3585,11 +3585,30 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         elif tier_name == 'silver':
             default_budget = 15.0
         budget = float(os.getenv("MAX_BUDGET_USD", str(default_budget)))
+
+        # Token limit DINÂMICO baseado no tamanho do documento
+        # Fórmula: num_extractores × num_chunks × ~20K tokens/chunk + margem fases 2-4
+        doc_chars = len(self._document_text)
+        num_extractors = len([c for c in self._llm_configs if c["id"].startswith("E")])
+        num_chunks = max(1, doc_chars // CHUNK_SIZE_CHARS + 1)
+        # Fase 1: extractores (bulk dos tokens)
+        fase1_estimate = num_extractors * num_chunks * 25_000
+        # Fases 2-4: auditores + relatores + presidente (~200K margem)
+        fases_2_4_estimate = 200_000
+        token_limit = fase1_estimate + fases_2_4_estimate
+        # Mínimo 500K, sem máximo
+        token_limit = max(500_000, token_limit)
+
         self._cost_controller = CostController(
             run_id=run_id,
             budget_limit_usd=budget,
+            token_limit=token_limit,
         )
-        logger.info(f"[CUSTO] CostController inicializado: run={run_id}, tier={tier_name}, budget=${budget:.2f}")
+        logger.info(
+            f"[CUSTO] CostController inicializado: run={run_id}, tier={tier_name}, "
+            f"budget=${budget:.2f}, token_limit={token_limit:,} "
+            f"(doc={doc_chars:,} chars, {num_extractors} extractores, {num_chunks} chunks)"
+        )
 
         # Inicializar PerformanceTracker para feedback adaptativo
         self._perf_tracker = None
