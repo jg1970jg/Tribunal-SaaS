@@ -98,6 +98,7 @@ def validate_citation_2pass(
         original_start_char=0,
         original_end_char=0,
         original_page_num=declared_page,
+        status="PENDING",
     )
 
     if not excerpt or not excerpt.strip():

@@ -18,6 +18,40 @@ logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 
+def _repair_truncated_json(text: str) -> dict | list | None:
+    """
+    Tenta reparar JSON truncado (cortado pelo max_output tokens).
+    Adiciona ] e } em falta para fechar o JSON.
+    """
+    text = text.strip().rstrip(',')  # Remover trailing comma
+    # Contar braces/brackets abertos vs fechados
+    open_braces = text.count('{') - text.count('}')
+    open_brackets = text.count('[') - text.count(']')
+
+    if open_braces <= 0 and open_brackets <= 0:
+        return None  # Não está truncado
+
+    # Tentar fechar: primeiro ] depois }
+    repaired = text
+    # Remover última propriedade incompleta (ex: "value": "texto cortad)
+    # Procurar último item completo
+    last_complete = max(repaired.rfind('}'), repaired.rfind(']'))
+    if last_complete > 0:
+        repaired = repaired[:last_complete + 1]
+        # Recalcular
+        open_braces = repaired.count('{') - repaired.count('}')
+        open_brackets = repaired.count('[') - repaired.count(']')
+
+    repaired += ']' * open_brackets + '}' * open_braces
+
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+
+    return None
+
+
 def extract_json_from_text(text: str) -> dict | list | None:
     """
     Tenta extrair JSON válido de texto que pode conter markdown,
@@ -49,6 +83,15 @@ def extract_json_from_text(text: str) -> dict | list | None:
     else:
         logger.debug(f"[JSON-EXTRACT] Estratégia 2: nenhum bloco markdown encontrado")
 
+    # 2b. Markdown ```json SEM ``` final (JSON truncado pelo max_output)
+    md_open = re.search(r'```(?:json)?\s*\n?', text)
+    if md_open and not md_match:
+        json_body = text[md_open.end():]
+        repaired = _repair_truncated_json(json_body)
+        if repaired is not None:
+            logger.info(f"[JSON-EXTRACT] Estratégia 2b: reparou JSON truncado de markdown")
+            return repaired
+
     # 3. Encontrar primeiro { e último }
     first_brace = text.find('{')
     last_brace = text.rfind('}')
@@ -57,7 +100,15 @@ def extract_json_from_text(text: str) -> dict | list | None:
             return json.loads(text[first_brace:last_brace + 1])
         except json.JSONDecodeError as e:
             logger.debug(f"[JSON-EXTRACT] Estratégia 3 falhou: {e}")
-    else:
+
+    # 3b. JSON truncado — { encontrado mas sem } final válido
+    if first_brace != -1:
+        repaired = _repair_truncated_json(text[first_brace:])
+        if repaired is not None:
+            logger.info(f"[JSON-EXTRACT] Estratégia 3b: reparou JSON truncado")
+            return repaired
+
+    if first_brace == -1:
         logger.debug(f"[JSON-EXTRACT] Estratégia 3: nenhum par {{}} encontrado")
 
     # 4. Encontrar primeiro [ e último ]
@@ -81,7 +132,7 @@ def extract_json_from_text(text: str) -> dict | list | None:
             except json.JSONDecodeError as e:
                 logger.debug(f"[JSON-EXTRACT] Estratégia 5 falhou (prefix={prefix!r}): {e}")
 
-    logger.warning(f"[JSON-EXTRACT] TODAS AS 5 ESTRATÉGIAS FALHARAM para input de {len(text)} chars")
+    logger.warning(f"[JSON-EXTRACT] TODAS AS 7 ESTRATÉGIAS FALHARAM para input de {len(text)} chars")
     logger.warning(f"[JSON-EXTRACT] Tipo de chars no início: {[c for c in text[:20]]}")
 
     return None

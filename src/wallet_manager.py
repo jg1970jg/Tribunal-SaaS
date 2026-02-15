@@ -258,10 +258,11 @@ class WalletManager:
 
         # --- Tentar RPC atómico ---
         try:
+            # FIX: Cast para str garante compatibilidade UUID/text no Supabase RPC
             rpc_result = self.sb.rpc("settle_credits_atomic", {
-                "p_analysis_id": analysis_id,
-                "p_real_cost_usd": real_cost_usd,
-                "p_markup": markup,
+                "p_analysis_id": str(analysis_id),
+                "p_real_cost_usd": float(real_cost_usd),
+                "p_markup": float(markup),
             }).execute()
 
             if rpc_result.data:

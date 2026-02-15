@@ -471,8 +471,8 @@ class OpenAIClient:
 
     @retry(
         retry=retry_if_exception(_is_retryable_http_error),
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
+        stop=stop_after_attempt(7),
+        wait=wait_exponential(multiplier=2, min=2, max=120),
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
     def _make_request_responses(
