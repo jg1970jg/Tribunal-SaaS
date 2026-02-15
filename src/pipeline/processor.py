@@ -4034,7 +4034,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
     def _gerar_resumo_md(self, result: PipelineResult) -> str:
         """Gera um resumo em Markdown."""
         linhas = [
-            f"# LEXFORUM GOLDENMASTER - RESULTADO",
+            f"# TRIBUNAL SAAS - RESULTADO",
             f"",
             f"**Run ID:** {result.run_id}",
             f"**Data:** {result.timestamp_inicio.strftime('%d/%m/%Y %H:%M')}",

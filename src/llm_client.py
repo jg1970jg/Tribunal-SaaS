@@ -920,8 +920,8 @@ class OpenRouterClient:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://tribunal-goldenmaster.local",
-            "X-Title": "Tribunal GoldenMaster GUI",
+            "HTTP-Referer": "https://tribunal-saas.local",
+            "X-Title": "Tribunal SaaS",
         }
 
     @retry(

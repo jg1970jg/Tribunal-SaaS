@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-PROCESSADOR POR ZONAS - Tribunal GoldenMaster
+PROCESSADOR POR ZONAS - Tribunal SaaS
 ============================================================
 Divide documentos grandes em zonas (por páginas ou por chars)
 e processa cada zona pelo pipeline completo.

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-TRIBUNAL GOLDENMASTER - Utilitário de Limpeza
+TRIBUNAL SAAS - Utilitário de Limpeza
 ============================================================
 Remove pastas temporárias antigas (outputs/temp_*) de forma segura.
 Não apaga runs válidos.
@@ -225,7 +225,7 @@ def main():
     from src.config import OUTPUT_DIR
 
     parser = argparse.ArgumentParser(
-        description="Limpa pastas temporárias do Tribunal GoldenMaster"
+        description="Limpa pastas temporárias do Tribunal SaaS"
     )
     parser.add_argument(
         "--max-age",
@@ -247,7 +247,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("TRIBUNAL GOLDENMASTER - Cleanup de Pastas Temporárias")
+    print("TRIBUNAL SAAS - Cleanup de Pastas Temporárias")
     print("=" * 60)
     print(f"Output dir: {OUTPUT_DIR}")
     print()

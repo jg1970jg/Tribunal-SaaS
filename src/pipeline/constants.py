@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Constantes partilhadas do sistema TRIBUNAL GOLDENMASTER.
+Constantes partilhadas do sistema TRIBUNAL SAAS.
 
 Centraliza definicoes para evitar divergencias entre modulos.
 """

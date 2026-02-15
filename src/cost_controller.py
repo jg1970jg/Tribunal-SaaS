@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-CONTROLO DE CUSTOS - Tribunal GoldenMaster
+CONTROLO DE CUSTOS - Tribunal SaaS
 ============================================================
 Monitoriza e controla custos/tokens por execução do pipeline.
 Preços DINÂMICOS via OpenRouter API com cache de 24h.
