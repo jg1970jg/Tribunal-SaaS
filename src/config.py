@@ -282,7 +282,7 @@ def get_max_tokens_para_fase(role_name: str) -> int:
     return None
 
 # =============================================================================
-# 5 EXTRATORES COM PROMPT UNIVERSAL
+# 7 EXTRATORES COM PROMPT UNIVERSAL
 # MUDANÇA: E1 de Opus 4.6 para Sonnet 4.5 (5× mais barato)
 # =============================================================================
 
@@ -404,8 +404,7 @@ MODEL_CONTEXT_LIMITS = {
     "anthropic/claude-haiku-4.5":       200_000,
     "anthropic/claude-3-5-haiku":       200_000,
     "deepseek/deepseek-chat":           128_000,
-    # Novos extratores E6-E8
-    "qwen/qwen3-235b-a22b-2507":       262_144,
+    # Extratores E6-E7
     "meta-llama/llama-4-maverick":      1_048_576,
     "mistralai/mistral-medium-3":       131_072,
 }
@@ -425,8 +424,7 @@ MODEL_MAX_OUTPUT = {
     "openai/gpt-4o":                    16_384,
     "anthropic/claude-3-5-sonnet":      8_192,
     "deepseek/deepseek-chat":           163_840,  # FIX: era 8192, real=163840
-    # Novos extratores E6-E8
-    "qwen/qwen3-235b-a22b-2507":       32_768,
+    # Extratores E6-E7
     "meta-llama/llama-4-maverick":      32_768,
     "mistralai/mistral-medium-3":       32_768,
 }

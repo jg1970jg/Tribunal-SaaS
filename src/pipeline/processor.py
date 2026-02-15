@@ -2,8 +2,8 @@
 """
 Processador Principal da Câmara de Análise - Pipeline de 3 Fases com LLMs + Q&A.
 
-Fase 1: 8 Extratores LLM -> Agregador (SEM perguntas)
-Fase 2: 3 Auditores LLM -> Consolidador (SEM perguntas)
+Fase 1: 7 Extratores LLM -> Agregador (SEM perguntas)
+Fase 2: 4 Auditores LLM -> Consolidador (SEM perguntas)
 Fase 3: 3 Relatores LLM -> Parecer + Q&A (COM perguntas)
 Fase 4: Conselheiro-Mor -> Parecer + Q&A Consolidado (COM perguntas)
 """
@@ -1873,7 +1873,7 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
 
     def _fase1_extracao(self, documento: DocumentContent, area: str) -> tuple:
         """
-        Fase 1: 8 Extratores LLM -> Agregador LLM (LOSSLESS).
+        Fase 1: 7 Extratores LLM -> Agregador LLM (LOSSLESS).
         NOTA: Extratores são CEGOS a perguntas do utilizador.
 
         CORREÇÃO #3: Para PDFs com pdf_safe_result, usa batches em vez de string única.
@@ -2140,7 +2140,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
         logger.info(f"Dividido em {len(batches)} batch(es)")
 
         # Processar cada extrator em todos os batches
-        # USAR TODOS OS EXTRATORES (E1-E8) COM PROMPT UNIVERSAL
+        # USAR TODOS OS EXTRATORES (E1-E7) COM PROMPT UNIVERSAL
         extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"].startswith("E")]
         logger.info(f"=== FASE 1 BATCH: Usando {len(extractor_configs)} extratores especializados ===")
 

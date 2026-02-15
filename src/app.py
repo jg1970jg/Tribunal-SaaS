@@ -1642,24 +1642,26 @@ def pagina_ajuda():
 
     ---
 
-    ### 📊 Fase 1: Extração (5 modelos especializados + Agregador LOSSLESS)
+    ### 📊 Fase 1: Extração (7 modelos especializados + Agregador LOSSLESS)
 
     ```
     Documento → [E1: Claude Sonnet 4.5] → Extração Jurídica Geral
-             → [E2: Gemini 3 Flash] → Visão Alternativa  
-             → [E3: GPT-5.2] → Validação Cruzada
-             → [E4: DeepSeek V3.2] → Dados Estruturados (datas, €, %)
-             → [E5: Qwen 235B] → Docs Administrativos (anexos, tabelas)
+             → [E2: Gemini 3 Flash] → Visão Alternativa
+             → [E3: GPT-4o] → Validação Cruzada
+             → [E4: Claude 3.5 Sonnet] → Dados Estruturados (datas, €, %)
+             → [E5: DeepSeek] → Docs Administrativos (anexos, tabelas)
+             → [E6: Llama 4 Maverick] → Extração Complementar
+             → [E7: Mistral Medium 3] → Extração Complementar
                                   ↓
                         [AGREGADOR LLM: consolida LOSSLESS]
     ```
 
     **O que extraem:**
     - **E1-E3 (Generalistas):** Factos, contexto jurídico, referências legais
-    - **E4 (Especialista):** TODAS as datas, valores €, percentagens, refs legais
-    - **E5 (Especialista):** Índices de anexos, formulários, tabelas, metadados
+    - **E4-E5 (Especialistas):** TODAS as datas, valores €, percentagens, refs legais
+    - **E6-E7 (Complementares):** Cobertura adicional, perspectivas alternativas
 
-    **Agregador LOSSLESS:** GPT-5.2 consolida as 5 extrações **sem perder informação única**.
+    **Agregador LOSSLESS:** GPT-5.2 consolida as 7 extrações **sem perder informação única**.
     Se um extrator encontrou um dado que outros não encontraram, esse dado é mantido.
 
     ---

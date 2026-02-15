@@ -41,7 +41,6 @@ MODEL_COSTS = {
     "sonnet-4.5": 0.08,
     "deepseek": 0.06,
     "claude-opus-4": 0.21,  # Com cache
-    "qwen3-235b": 0.02,
     "llama-4-maverick": 0.04,
     "mistral-medium-3": 0.06,
 
@@ -355,8 +354,7 @@ OPENROUTER_MODEL_MAPPING = {
     "gpt-5.2-presidente": "openai/gpt-5.2",
     "gpt-5.2-pro-presidente": "openai/gpt-5.2-pro",
 
-    # Novos extratores E6-E8
-    "qwen3-235b": "qwen/qwen3-235b-a22b-2507",
+    # Extratores E6-E7
     "llama-4-maverick": "meta-llama/llama-4-maverick",
     "mistral-medium-3": "mistralai/mistral-medium-3",
 }
