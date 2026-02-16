@@ -78,6 +78,7 @@ from src.pipeline.extractor_unified import (
     build_unified_prompt,
     parse_unified_output,
     aggregate_with_provenance,
+    validate_and_filter_extractors,
     calculate_coverage,
     items_to_markdown,
     render_agregado_markdown_from_json,
@@ -128,6 +129,16 @@ from src.pipeline.confidence_policy import (
 from src.llm_client import OpenRouterClient, LLMResponse, get_llm_client
 from src.document_loader import DocumentContent, load_document
 from src.legal_verifier import LegalVerifier, VerificacaoLegal, get_legal_verifier
+from prompts_maximos import (
+    PROMPT_EXTRATOR_TEXTO,
+    PROMPT_EXTRATOR_VISUAL,
+    PROMPT_AGREGADOR_DEDUP,
+    PROMPT_AUDITOR,
+    PROMPT_ADVOGADO_DIABO,
+    PROMPT_AUDITOR_SENIOR,
+    PROMPT_JUIZ,
+    PROMPT_CONSELHEIRO_MOR,
+)
 from src.utils.perguntas import parse_perguntas, validar_perguntas
 from src.utils.metadata_manager import guardar_metadata, gerar_titulo_automatico
 
@@ -203,6 +214,8 @@ class PipelineResult:
     custos: Optional[Dict] = None
     # FIX 2026-02-14: Sumário estruturado por IA (para frontend)
     resumo_por_ia: Optional[Dict] = None
+    # v4.0: Fase 0 Triagem
+    fase0_triage: Optional[Dict] = None
 
     def to_dict(self) -> Dict:
         return {
@@ -239,6 +252,8 @@ class PipelineResult:
             "custos": self.custos,
             # FIX 2026-02-14: Sumário estruturado por IA
             "resumo_por_ia": self.resumo_por_ia,
+            # v4.0: Fase 0 Triagem
+            "fase0_triage": self.fase0_triage,
             # Metadados do documento
             "documento_texto": self.documento.text[:50000] if self.documento and self.documento.text else "",
             "documento_filename": self.documento.filename if self.documento else "",
@@ -289,177 +304,33 @@ class LexForumProcessor:
         Consolida respostas Q&A
     """
 
-    # Prompts do sistema
-    SYSTEM_EXTRATOR = """És um extrator de informação jurídica especializado em Direito Português.
-A tua tarefa é extrair do documento fornecido:
-1. Factos relevantes
-2. Datas e prazos
-3. Partes envolvidas
-4. Valores monetários
-5. Referências legais (leis, artigos, decretos)
-6. Pedidos ou pretensões
-7. Documentos mencionados
+    # Prompts do sistema — v4.0 Handover (importados de prompts_maximos.py)
+    SYSTEM_EXTRATOR = PROMPT_EXTRATOR_TEXTO
+    SYSTEM_EXTRATOR_VISUAL = PROMPT_EXTRATOR_VISUAL
 
-Sê objetivo, preciso e completo. Usa formato estruturado."""
+    SYSTEM_AUDITOR = PROMPT_AUDITOR
+    SYSTEM_ADVOGADO_DIABO = PROMPT_ADVOGADO_DIABO
+    SYSTEM_AUDITOR_SENIOR = PROMPT_AUDITOR_SENIOR
 
-    SYSTEM_AUDITOR = """És um auditor jurídico especializado em Direito Português.
-A tua tarefa é auditar a extração de informação e:
-1. Verificar se a extração está completa
-2. Identificar inconsistências
-3. Apontar informação em falta
-4. Avaliar a relevância jurídica dos factos
-5. Sugerir legislação portuguesa aplicável
+    SYSTEM_RELATOR = PROMPT_JUIZ
 
-Sê crítico e rigoroso. Fundamenta as tuas observações."""
-
-    SYSTEM_RELATOR = """És um relator especializado em Direito Português.
-Com base na análise e auditoria fornecidas, emite um parecer jurídico que inclua:
-1. Enquadramento legal (legislação portuguesa aplicável)
-2. Análise dos factos à luz da lei
-3. Jurisprudência relevante (se aplicável)
-4. Conclusão fundamentada
-5. Recomendação (procedente/improcedente/parcialmente procedente)
-
-Cita sempre os artigos específicos da legislação portuguesa."""
-
-    SYSTEM_RELATOR_QA = """És um relator especializado em Direito Português.
-Com base na análise e auditoria fornecidas, emite um parecer jurídico que inclua:
-1. Enquadramento legal (legislação portuguesa aplicável)
-2. Análise dos factos à luz da lei
-3. Jurisprudência relevante (se aplicável)
-4. Conclusão fundamentada
-5. Recomendação (procedente/improcedente/parcialmente procedente)
-
-Cita sempre os artigos específicos da legislação portuguesa.
+    SYSTEM_RELATOR_QA = PROMPT_JUIZ + """
 
 IMPORTANTE: Após o parecer, responde às PERGUNTAS DO UTILIZADOR de forma clara e numerada."""
 
-    SYSTEM_CONSELHEIRO = """És o Conselheiro-Mor da Câmara de Análise, responsável pela verificação final.
-A tua tarefa é:
-1. Analisar os pareceres dos relatores
-2. Verificar a fundamentação legal
-3. Identificar consensos e divergências
-4. Emitir o parecer final
+    SYSTEM_CONSELHEIRO = PROMPT_CONSELHEIRO_MOR
 
-Para cada citação legal, indica:
-- ✓ se a citação está correta e aplicável
-- ✗ se a citação está incorreta ou não aplicável
-- ⚠ se requer atenção ou verificação adicional
-
-Emite o PARECER FINAL:
-- PROCEDENTE (✓): se o pedido deve ser deferido
-- IMPROCEDENTE (✗): se o pedido deve ser indeferido
-- PARCIALMENTE PROCEDENTE (⚠): se apenas parte do pedido procede"""
-
-    SYSTEM_CONSELHEIRO_QA = """És o Conselheiro-Mor da Câmara de Análise, responsável pela verificação final.
-A tua tarefa é:
-1. Analisar os pareceres dos relatores
-2. Verificar a fundamentação legal
-3. Identificar consensos e divergências
-4. Emitir o parecer final
-5. CONSOLIDAR as respostas Q&A dos 3 relatores
-
-Para cada citação legal, indica:
-- ✓ se a citação está correta e aplicável
-- ✗ se a citação está incorreta ou não aplicável
-- ⚠ se requer atenção ou verificação adicional
-
-Emite o PARECER FINAL:
-- PROCEDENTE (✓): se o pedido deve ser deferido
-- IMPROCEDENTE (✗): se o pedido deve ser indeferido
-- PARCIALMENTE PROCEDENTE (⚠): se apenas parte do pedido procede
+    SYSTEM_CONSELHEIRO_QA = PROMPT_CONSELHEIRO_MOR + """
 
 IMPORTANTE: Após o parecer, consolida as RESPOSTAS Q&A eliminando contradições e fornecendo respostas finais claras e numeradas."""
 
     @staticmethod
     def _build_system_agregador(num_extractors: int = 7) -> str:
-        """Gera system prompt do agregador dinâmico para N extractores."""
-        all_ids = ",".join(f"E{i+1}" for i in range(num_extractors))
-        partial_ex = ",".join(f"E{i+1}" for i in range(min(3, num_extractors)))
-
-        # Secções de cobertura por extractor
-        cobertura_sections = []
-        for i in range(num_extractors):
-            eid = f"E{i+1}"
-            cobertura_sections.append(
-                f'**[{eid}] encontrou exclusivamente:**\n'
-                f'- facto → incorporado em: [secção/linha]\n'
-                f'(ou: "(nenhum — todos os factos foram partilhados)")'
-            )
-        cobertura_text = "\n\n".join(cobertura_sections)
-
-        return f"""És o AGREGADOR da Fase 1. Recebes {num_extractors} extrações do mesmo documento feitas por modelos diferentes.
-
-TAREFA CRÍTICA - CONSOLIDAÇÃO LOSSLESS:
-- NUNCA percas informação única
-- Se um extrator encontrou um facto que outros não encontraram, MANTÉM esse facto
-- Remove apenas duplicados EXATOS (mesmo facto, mesma data, mesmo valor)
-
-FORMATO OBRIGATÓRIO:
-
-## 1. RESUMO ESTRUTURADO
-### Factos Relevantes
-- [{all_ids}] Facto consensual X
-- [{partial_ex}] Facto Y (parcial)
-- [E1] Facto Z (único - OBRIGATÓRIO manter)
-
-### Datas e Prazos
-- [{all_ids}] DD/MM/AAAA - Descrição
-
-### Partes Envolvidas
-- [{all_ids}] Nome - Papel/Função
-
-### Valores Monetários
-- [{all_ids}] €X.XXX,XX - Descrição
-
-### Referências Legais
-- [{all_ids}] Artigo Xº do Diploma Y
-- [E1] Artigo Zº (único - verificar)
-
-### Pedidos/Pretensões
-- [{all_ids}] Descrição do pedido
-
-### Documentos Mencionados
-- [{partial_ex}] Nome do documento
-
-## 2. DIVERGÊNCIAS ENTRE EXTRATORES
-(Se um extrator diz X e outro diz Y sobre o mesmo facto, listar aqui)
-- Facto: [descrição]
-  - E1: [versão]
-  - E2: [versão]
-  - ... (cada extrator com versão diferente)
-
-## 3. CONTROLO DE COBERTURA (OBRIGATÓRIO)
-
-REGRAS NÃO-NEGOCIÁVEIS:
-1) Tens de preencher as {num_extractors} subsecções abaixo: [{all_ids}]
-2) Se um extrator NÃO tiver factos exclusivos, escreve LITERALMENTE:
-   "(nenhum — todos os factos foram partilhados)"
-3) A "Confirmação" SÓ pode ser "SIM" se TODAS as subsecções estiverem preenchidas
-4) Se "Confirmação" for "NÃO", OBRIGATORIAMENTE lista cada facto omitido em "ITENS NÃO INCORPORADOS"
-5) Quando Confirmação=SIM, para cada item exclusivo, indica onde foi incorporado
-
-FORMATO OBRIGATÓRIO PARA FACTOS:
-- facto curto e objetivo (máx 100 caracteres)
-- NÃO usar "detalhes adicionais" ou textos vagos
-
-{cobertura_text}
-
-**Confirmação:** SIM
-(ou: **Confirmação:** NÃO)
-
-**ITENS NÃO INCORPORADOS** (obrigatório se Confirmação=NÃO):
-- [EX] facto: motivo concreto da não incorporação
-(ou: "(nenhum)" se Confirmação=SIM)
-
----
-LEGENDA:
-- [{all_ids}] = Consenso total ({num_extractors} extratores)
-- Subconjuntos = Consenso parcial
-- [E1] / [E2] / etc = Único (1 extrator - NUNCA ELIMINAR sem justificação)
-
-REGRA NÃO-NEGOCIÁVEL: Na dúvida, MANTÉM. Melhor redundância que perda de dados."""
-
+        """Gera system prompt do agregador — v4.0 Handover com deduplicação semântica."""
+        return PROMPT_AGREGADOR_DEDUP.replace(
+            "7 different AIs",
+            f"{num_extractors} different AIs"
+        )
     SYSTEM_CONSOLIDADOR = """És o CONSOLIDADOR da Fase 2. Recebes 4 auditorias da mesma extração feitas por modelos diferentes.
 
 TAREFA CRÍTICA - CONSOLIDAÇÃO LOSSLESS:
@@ -648,8 +519,7 @@ REGRAS CRÍTICAS:
 
     SYSTEM_AUDITOR_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
-És um auditor jurídico especializado em Direito Português.
-A tua tarefa é auditar a extração de informação e produzir um relatório JSON estruturado.
+""" + PROMPT_AUDITOR + """
 
 DADOS DE ENTRADA:
 Recebes items extraídos na Fase 1 em formato JSON estruturado. Cada item tem:
@@ -701,8 +571,7 @@ REGRAS CRÍTICAS:
 
     SYSTEM_RELATOR_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
-És um relator especializado em Direito Português.
-Com base na análise e auditoria fornecidas, emite um parecer jurídico em formato JSON.
+""" + PROMPT_JUIZ + """
 
 DEVES devolver APENAS um JSON válido com a seguinte estrutura:
 {
@@ -774,8 +643,7 @@ Cita sempre artigos específicos da legislação portuguesa."""
 
     SYSTEM_CONSELHEIRO_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
-És o Conselheiro-Mor da Câmara de Análise, responsável pela verificação final.
-Analisa os pareceres dos relatores e emite o parecer final em formato JSON.
+""" + PROMPT_CONSELHEIRO_MOR + """
 
 DEVES devolver APENAS um JSON válido com a seguinte estrutura:
 {
@@ -952,7 +820,7 @@ REVISTO:"""
         prompt: str,
         system_prompt: str,
         role_name: str,
-        temperature: float = 0.2,
+        temperature: float = 0.0,
         max_tokens: int = None,
     ) -> FaseResult:
         """
@@ -1019,8 +887,16 @@ REVISTO:"""
         _accumulated_prompt_tokens = response.prompt_tokens or 0
         _accumulated_completion_tokens = response.completion_tokens or 0
 
-        # === QUALITY GATE + RETRIES (max 2) ===
-        MAX_RETRIES = 2
+        # === QUALITY GATE + RETRIES (por modelo) ===
+        # v4.0: Retries controlados por modelo (Opus=0, o1-pro=1, default=2)
+        MODEL_MAX_RETRIES = {
+            "anthropic/claude-opus-4.6": 0,
+            "anthropic/claude-opus-4.5": 0,
+            "openai/o1-pro": 1,
+            "openai/gpt-5.2-pro": 1,
+            "x-ai/grok-4": 0,  # BANIDO
+        }
+        MAX_RETRIES = MODEL_MAX_RETRIES.get(modelo_final, 2)
         for retry_num in range(1, MAX_RETRIES + 1):
             if not response.success or not response.content:
                 quality_issue = {"code": "CALL_FAILED", "critical": True, "msg": "LLM call failed"}
@@ -1485,8 +1361,10 @@ REVISTO:"""
                 # Construir prompt unificado com metadados do chunk
                 prompt = build_unified_prompt(chunk, area, extractor_id)
 
-                # System prompt combinado
-                sys_prompt = f"""{SYSTEM_EXTRATOR_UNIFIED}
+                # System prompt combinado — v4.0: visual extractors (E2, E7) use PROMPT_EXTRATOR_VISUAL
+                is_visual = cfg.get("visual", False)
+                base_prompt = PROMPT_EXTRATOR_VISUAL if is_visual else SYSTEM_EXTRATOR_UNIFIED
+                sys_prompt = f"""{base_prompt}
 
 INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
 {instructions}"""
@@ -1696,12 +1574,18 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                 f"Pipeline abortado."
             )
 
-        # 6. Agregação com preservação de proveniência
-        self._reportar_progresso("fase1", 32, "Agregando com preservação de proveniência...")
+        # 6. v4.0: Smart discard + Agregação com deduplicação semântica
+        self._reportar_progresso("fase1", 30, "Descarte inteligente de extractores fracos...")
+
+        # v4.0: Filtrar extractores fracos (preservando factos exclusivos)
+        items_filtered = validate_and_filter_extractors(items_by_extractor)
+
+        self._reportar_progresso("fase1", 32, "Agregando com deduplicação semântica...")
 
         union_items, conflicts = aggregate_with_provenance(
-            items_by_extractor=items_by_extractor,
+            items_by_extractor=items_filtered,
             detect_conflicts=True,
+            deduplicate=True,
         )
 
         logger.info(f"Agregação: {len(union_items)} items unidos, {len(conflicts)} conflitos detetados")
@@ -2181,12 +2065,14 @@ IMPORTANTE: Só usa page_num que existam no batch acima."""
 
                 # Retry loop para sinais em falta
                 prompt = original_prompt
+                # v4.0: visual extractors (E2, E7) use PROMPT_EXTRATOR_VISUAL
+                batch_sys_prompt = PROMPT_EXTRATOR_VISUAL if cfg.get("visual", False) else SYSTEM_EXTRATOR_JSON
                 for attempt in range(MAX_SIGNAL_RETRIES + 1):
                     # Chamar LLM com temperature específica
                     response = self.llm_client.chat_simple(
                         model=model,
                         prompt=prompt,
-                        system_prompt=SYSTEM_EXTRATOR_JSON,
+                        system_prompt=batch_sys_prompt,
                         temperature=temperature,
                     )
 
@@ -2524,11 +2410,13 @@ Audita a extração acima, verificando completude, precisão e relevância jurí
         resultados = []
         for i, model in enumerate(self.auditor_models):
             self._reportar_progresso("fase2", 40 + i * 5, f"Auditor {i+1}: {model}")
+            # v4.0: A4 uses Devil's Advocate prompt
+            aud_sys_prompt = self.SYSTEM_ADVOGADO_DIABO if f"A{i+1}" == "A4" else self.SYSTEM_AUDITOR
 
             resultado = self._call_llm(
                 model=model,
                 prompt=prompt_base,
-                system_prompt=self.SYSTEM_AUDITOR,
+                system_prompt=aud_sys_prompt,
                 role_name=f"auditor_{i+1}",
             )
             resultados.append(resultado)
@@ -2684,15 +2572,24 @@ INSTRUÇÕES:
         audit_reports: List[AuditReport] = []
         bruto_parts = ["# AUDITORIAS JSON AGREGADAS (BRUTO)\n"]
 
+        # v4.0: A4-specific Devil's Advocate JSON prompt
+        SYSTEM_A4_ADVOGADO_DIABO_JSON = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
+
+""" + PROMPT_ADVOGADO_DIABO + """
+
+OUTPUT: Same JSON format as other auditors, plus include a "devils_advocate_conclusion" field ("errors_found" or "audit_clean") and a "challenges" array."""
+
         def _run_auditor(i, model):
             """Executa um auditor. Thread-safe."""
             auditor_id = f"A{i+1}"
+            # v4.0: A4 uses Devil's Advocate prompt
+            sys_prompt = SYSTEM_A4_ADVOGADO_DIABO_JSON if auditor_id == "A4" else self.SYSTEM_AUDITOR_JSON
 
             def _do_audit():
                 return self._call_llm(
                     model=model,
                     prompt=prompt_base,
-                    system_prompt=self.SYSTEM_AUDITOR_JSON,
+                    system_prompt=sys_prompt,
                     role_name=f"auditor_{i+1}_json",
                 )
 
@@ -2780,6 +2677,67 @@ INSTRUÇÕES:
                 f"Apenas {len(audit_reports)} auditores funcionaram (mínimo 2). "
                 f"Pipeline abortado."
             )
+
+        # ===== v4.0: A5 OPUS — AUDITOR SÉNIOR (APENAS ELITE) =====
+        use_a5 = getattr(self, '_use_a5_opus', False)
+        if use_a5 and len(audit_reports) >= 2:
+            self._reportar_progresso("fase2", 50, "A5 Opus: Auditor Sénior (ELITE)...")
+            logger.info("[ELITE] Executando A5 Opus — Auditor Sénior")
+
+            # Preparar input com resultados dos A1-A4
+            a1_a4_summary = "\n\n".join([
+                f"## Auditor {r.auditor_id} ({r.model_name}):\n"
+                f"Findings: {len(r.findings)}\n"
+                f"{r.to_markdown()[:3000]}\n---"
+                for r in audit_reports
+            ])
+
+            a5_prompt = f"""EVIDENCE MAP (from Phase 1):
+{prompt_base}
+
+AUDITOR FINDINGS (A1-A4):
+{a1_a4_summary}
+
+Review the other auditors' work. Validate their findings. Catch what they missed.
+You are the final quality gate before the Judges."""
+
+            a5_sys_prompt = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON.
+
+""" + PROMPT_AUDITOR_SENIOR
+
+            try:
+                a5_result = self._call_llm(
+                    model="anthropic/claude-opus-4.6",
+                    prompt=a5_prompt,
+                    system_prompt=a5_sys_prompt,
+                    role_name="auditor_5_json_senior",
+                )
+
+                if a5_result and a5_result.conteudo:
+                    a5_report = parse_audit_report(
+                        output=a5_result.conteudo,
+                        auditor_id="A5",
+                        model_name="anthropic/claude-opus-4.6",
+                        run_id=run_id,
+                    )
+                    if hasattr(self, '_integrity_validator') and self._integrity_validator:
+                        a5_report = self._integrity_validator.validate_and_annotate_audit(a5_report)
+
+                    audit_reports.append(a5_report)
+                    bruto_parts.append(f"\n## [AUDITOR A5 (SÉNIOR): anthropic/claude-opus-4.6]\n")
+                    bruto_parts.append(a5_report.to_markdown())
+                    bruto_parts.append("\n---\n")
+
+                    # Guardar JSON A5
+                    a5_json_path = self._output_dir / "fase2_auditor_5_senior.json"
+                    with open(a5_json_path, 'w', encoding='utf-8') as f:
+                        json_module.dump(a5_report.to_dict(), f, ensure_ascii=False, indent=2)
+
+                    logger.info(f"[ELITE] A5 Opus: {len(a5_report.findings)} findings")
+                else:
+                    logger.warning("[ELITE] A5 Opus retornou vazio — ignorado")
+            except Exception as e:
+                logger.error(f"[ELITE] A5 Opus falhou: {e} — continuando sem A5")
 
         bruto = "\n".join(bruto_parts)
         self._log_to_file("fase2_auditorias_brutas.md", bruto)
@@ -3645,6 +3603,42 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         judge_opinions = None
 
         try:
+            # ===== FASE 0: TRIAGEM (v4.0 Handover) =====
+            fase0_triage = None
+            try:
+                from src.pipeline.triage import TriageProcessor, inject_page_markers
+                triage_proc = TriageProcessor(
+                    llm_client=self.llm_client,
+                    cost_controller=self._cost_controller,
+                )
+                self._reportar_progresso("fase0", 2, "Triagem: classificando domínio jurídico...")
+                fase0_triage = triage_proc.run(
+                    text=documento.text,
+                    filename=documento.filename,
+                    num_pages=getattr(documento, 'num_pages', 0),
+                )
+                # Se triagem detectou domínio com confiança, usar em vez do user input
+                if fase0_triage.domain_confidence >= 0.75 and area_direito in ("Civil", ""):
+                    logger.info(
+                        f"[FASE0] Triagem sugere domínio '{fase0_triage.domain}' "
+                        f"(confiança={fase0_triage.domain_confidence:.0%}), "
+                        f"user input='{area_direito}'"
+                    )
+                # Injectar marcadores de página se necessário
+                documento_text_orig = documento.text
+                documento.text = inject_page_markers(documento.text)
+                if documento.text != documento_text_orig:
+                    logger.info("[FASE0] Marcadores [Pág_X] injectados no texto")
+                # Photo warning
+                if fase0_triage.photo_warning == "queue_mode":
+                    logger.warning(
+                        f"[FASE0] ALERTA: {fase0_triage.photo_estimate} fotos estimadas — "
+                        f"modo fila recomendado"
+                    )
+                self._reportar_progresso("fase0", 8, f"Triagem concluída: {fase0_triage.domain}")
+            except Exception as e:
+                logger.warning(f"[FASE0] Triagem falhou (non-blocking): {e}")
+
             # Fase 1: Extração (SEM perguntas) + Agregador LOSSLESS
             unified_result = None
             if USE_UNIFIED_PROVENANCE:
@@ -3669,6 +3663,10 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             else:
                 # Modo legacy
                 extracoes, bruto_f1, consolidado_f1 = self._fase1_extracao(documento, area_direito)
+
+            # v4.0: Guardar resultado da triagem
+            if fase0_triage:
+                result.fase0_triage = fase0_triage.to_dict()
 
             result.fase1_extracoes = extracoes
             result.fase1_agregado_bruto = bruto_f1

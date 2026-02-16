@@ -174,8 +174,8 @@ AGREGADOR_MODEL = "openai/gpt-5.2"  # Agregador sempre 5.2 (via OpenRouter)
 # CENÁRIO A - CHUNKING AUTOMÁTICO
 # =============================================================================
 
-CHUNK_SIZE_CHARS = 22000       # Reduzido para melhor recall LLM
-CHUNK_OVERLAP_CHARS = 2200     # 10% overlap
+CHUNK_SIZE_CHARS = 50000       # v4.0: 50k chars (era 22k)
+CHUNK_OVERLAP_CHARS = 12500    # v4.0: 25% overlap (era 10%)
 
 # =============================================================================
 # PROVENIÊNCIA E COBERTURA (NOVO!)
@@ -282,61 +282,67 @@ def get_max_tokens_para_fase(role_name: str) -> int:
     return None
 
 # =============================================================================
-# 7 EXTRATORES COM PROMPT UNIVERSAL
-# MUDANÇA: E1 de Opus 4.6 para Sonnet 4.5 (5× mais barato)
+# 7 EXTRATORES — v4.0 HANDOVER (Fev 2026)
+# E1: Haiku 4.5 (CAMPEÃO: 955 itens)
+# E2: Gemini 3 Pro (VISÃO: carimbos, selos) — Flash REMOVIDO (83% omissão)
+# E3: GPT-5.2 (JSON robusto: 729 itens) — GPT-4o promovido
+# E4: Sonnet 4.5 (Nuance PT: 616 itens)
+# E5: DeepSeek V3 (Custo: 219 itens)
+# E6: Mistral Medium 3 (EU: 484 itens) — Maverick REMOVIDO (JSON fail)
+# E7: Qwen 2.5-VL 72B (OCR: layout complexo) — NOVO
 # =============================================================================
 
 LLM_CONFIGS = [
     {
         "id": "E1",
-        "role": "Extrator Completo",
-        "model": "anthropic/claude-sonnet-4.5",     # MUDANÇA: era claude-opus-4.6
+        "role": "Extrator Texto",
+        "model": "anthropic/claude-haiku-4.5",       # v4.0: CAMPEÃO (955 itens)
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
     {
         "id": "E2",
-        "role": "Extrator Completo",
-        "model": "google/gemini-3-flash-preview",
+        "role": "Extrator Visual",
+        "model": "google/gemini-3-pro-preview",       # v4.0: Visão (carimbos, selos)
         "temperature": 0.0,
-        "instructions": PROMPT_EXTRATOR_UNIVERSAL
+        "instructions": PROMPT_EXTRATOR_UNIVERSAL,
+        "visual": True,
     },
     {
         "id": "E3",
-        "role": "Extrator Completo",
-        "model": "openai/gpt-4o",
+        "role": "Extrator Texto",
+        "model": "openai/gpt-5.2",                    # v4.0: JSON robusto (729 itens)
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
     {
         "id": "E4",
-        "role": "Extrator Completo",
-        "model": "anthropic/claude-3-5-sonnet",
+        "role": "Extrator Texto",
+        "model": "anthropic/claude-sonnet-4.5",        # v4.0: Nuance PT (616 itens)
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
     {
         "id": "E5",
-        "role": "Extrator Completo",
-        "model": "deepseek/deepseek-chat",
+        "role": "Extrator Texto",
+        "model": "deepseek/deepseek-chat",             # v4.0: Custo (219 itens)
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
-    # E6 (Qwen3 235B) REMOVIDO — demasiado lento no OpenRouter (4-16min/chunk)
-    # bloqueia todo o pipeline indefinidamente. Custo ~$0.001/chunk não compensa.
     {
         "id": "E6",
-        "role": "Extrator Completo",
-        "model": "meta-llama/llama-4-maverick",
+        "role": "Extrator Texto",
+        "model": "mistralai/mistral-medium-3",         # v4.0: EU (484 itens)
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
     {
         "id": "E7",
-        "role": "Extrator Completo",
-        "model": "mistralai/mistral-medium-3",
+        "role": "Extrator Visual",
+        "model": "qwen/qwen-2.5-vl-72b-instruct",    # v4.0: OCR layout complexo
         "temperature": 0.0,
-        "instructions": PROMPT_EXTRATOR_UNIVERSAL
+        "instructions": PROMPT_EXTRATOR_UNIVERSAL,
+        "visual": True,
     },
 ]
 
@@ -344,38 +350,44 @@ EXTRATOR_MODELS = [cfg["model"] for cfg in LLM_CONFIGS]
 EXTRATOR_MODELS_NEW = EXTRATOR_MODELS
 
 # =============================================================================
-# AUDITORES - GPT-5.2 + SONNET 4.5 + GEMINI 3 PRO + GROK 4.1 (4 auditores!)
-# MUDANÇA: A2 de Opus 4.6 para Sonnet 4.5 (5× mais barato)
+# AUDITORES — v4.0 HANDOVER
+# A1: GPT-5.2 (Prazos e lógica)
+# A2: Gemini 3 Pro (Visual: carimbos vs texto)
+# A3: Sonnet 4.5 (Texto + visão complementar)
+# A4: Llama 4 405B (Advogado do Diabo) — Grok BANIDO ($2.54 desperdiçados)
+# A5: Opus 4.6 (Auditor Sénior — APENAS ELITE) — ver engine.py
 # =============================================================================
 
 AUDITOR_MODELS = [
-    "openai/gpt-5.2",                  # A1: GPT-5.2 (titular, failover → gpt-4.1)
-    "anthropic/claude-sonnet-4.5",      # A2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
-    "google/gemini-3-pro-preview",      # A3: Gemini 3 Pro (ctx 1.049K, out 66K)
-    "x-ai/grok-4",                      # A4: xAI Grok 4 (ctx 256K, reasoning model)
+    "openai/gpt-5.2",                  # A1: Prazos e lógica
+    "google/gemini-3-pro-preview",      # A2: Visual (carimbos vs texto) — v4.0
+    "anthropic/claude-sonnet-4.5",      # A3: Texto + visão complementar — v4.0
+    "meta-llama/llama-4-405b-instruct", # A4: Advogado do Diabo — v4.0 (Grok BANIDO)
 ]
 
 AUDITORES = [
-    {"id": "A1", "model": AUDITOR_MODELS[0], "temperature": 0.1},
+    {"id": "A1", "model": AUDITOR_MODELS[0], "temperature": 0.0},
     {"id": "A2", "model": AUDITOR_MODELS[1], "temperature": 0.0},
     {"id": "A3", "model": AUDITOR_MODELS[2], "temperature": 0.0},
-    {"id": "A4", "model": AUDITOR_MODELS[3], "temperature": 0.1},
+    {"id": "A4", "model": AUDITOR_MODELS[3], "temperature": 0.0},
 ]
 
 # =============================================================================
-# RELATORES - GPT-5.2 + SONNET 4.5 + GEMINI 3 PRO
-# MUDANÇA: J2 de Opus 4.6 para Sonnet 4.5 (5× mais barato)
+# JUÍZES — v4.0 HANDOVER (3 IAs de RACIOCÍNIO de 3 marcas)
+# J1: o1-pro (Raciocínio puro) — OpenAI
+# J2: DeepSeek R1 (Lógica matemática) — DeepSeek
+# J3: Opus 4.6 (Interpretação doutrinária) — Anthropic
 # =============================================================================
 
 RELATOR_MODELS = [
-    "openai/gpt-5.2",                  # J1: GPT-5.2 (titular, failover → gpt-4.1)
-    "anthropic/claude-sonnet-4.5",      # J2: Claude Sonnet 4.5 (MUDANÇA: era Opus 4.6)
-    "google/gemini-3-pro-preview"       # J3: Gemini 3 Pro (ctx 1.049K, out 66K)
+    "openai/o1-pro",                    # J1: Raciocínio puro — v4.0
+    "deepseek/deepseek-reasoner",       # J2: DeepSeek R1 — v4.0
+    "anthropic/claude-opus-4.6",        # J3: Doutrina — v4.0
 ]
 
 RELATORES = [
-    {"id": "J1", "model": RELATOR_MODELS[0], "temperature": 0.2},
-    {"id": "J2", "model": RELATOR_MODELS[1], "temperature": 0.1},
+    {"id": "J1", "model": RELATOR_MODELS[0], "temperature": 0.0},
+    {"id": "J2", "model": RELATOR_MODELS[1], "temperature": 0.0},
     {"id": "J3", "model": RELATOR_MODELS[2], "temperature": 0.0},
 ]
 
@@ -393,40 +405,44 @@ MODEL_CONTEXT_LIMITS = {
     "openai/gpt-5.2":                  400_000,
     "openai/gpt-5.2-pro":              400_000,
     "openai/gpt-4.1":                  1_048_000,
+    "openai/o1-pro":                    200_000,     # v4.0: J1 reasoning
+    "openai/gpt-4o":                    128_000,
+    "openai/gpt-4o-mini":              128_000,      # v4.0: Fase 0
     "anthropic/claude-opus-4.6":        1_000_000,
     "anthropic/claude-sonnet-4.5":      200_000,
-    "google/gemini-3-pro-preview":      1_049_000,
-    "x-ai/grok-4":                      256_000,
-    # Extratores
-    "google/gemini-3-flash-preview":    1_049_000,
-    "openai/gpt-4o":                    128_000,
-    "anthropic/claude-3-5-sonnet":      200_000,
     "anthropic/claude-haiku-4.5":       200_000,
+    "anthropic/claude-3-5-sonnet":      200_000,
     "anthropic/claude-3-5-haiku":       200_000,
+    "google/gemini-3-pro-preview":      1_049_000,
+    "google/gemini-3-flash-preview":    1_049_000,
     "deepseek/deepseek-chat":           128_000,
-    # Extratores E6-E7
-    "meta-llama/llama-4-maverick":      1_048_576,
+    "deepseek/deepseek-reasoner":       128_000,     # v4.0: J2 DeepSeek R1
     "mistralai/mistral-medium-3":       131_072,
+    "meta-llama/llama-4-405b-instruct": 128_000,     # v4.0: A4 Advogado do Diabo
+    "meta-llama/llama-4-8b-instruct":   128_000,     # v4.0: Fase 0
+    "qwen/qwen-2.5-vl-72b-instruct":   128_000,     # v4.0: E7 OCR
 }
 
 MODEL_MAX_OUTPUT = {
     "openai/gpt-5.2":                  128_000,
     "openai/gpt-5.2-pro":              128_000,
     "openai/gpt-4.1":                  32_768,
+    "openai/o1-pro":                    100_000,     # v4.0: J1
+    "openai/gpt-4o":                    16_384,
+    "openai/gpt-4o-mini":              16_384,       # v4.0: Fase 0
     "anthropic/claude-opus-4.6":        128_000,
-    "anthropic/claude-sonnet-4.5":      64_000,   # FIX: era 8192, real=64000
-    "google/gemini-3-pro-preview":      65_535,
-    "x-ai/grok-4":                      128_000,
+    "anthropic/claude-sonnet-4.5":      64_000,
     "anthropic/claude-haiku-4.5":       64_000,
     "anthropic/claude-3-5-haiku":       8_192,
-    # Extratores
-    "google/gemini-3-flash-preview":    65_535,
-    "openai/gpt-4o":                    16_384,
     "anthropic/claude-3-5-sonnet":      8_192,
-    "deepseek/deepseek-chat":           163_840,  # FIX: era 8192, real=163840
-    # Extratores E6-E7
-    "meta-llama/llama-4-maverick":      32_768,
+    "google/gemini-3-pro-preview":      65_535,
+    "google/gemini-3-flash-preview":    65_535,
+    "deepseek/deepseek-chat":           163_840,
+    "deepseek/deepseek-reasoner":       64_000,      # v4.0: J2
     "mistralai/mistral-medium-3":       32_768,
+    "meta-llama/llama-4-405b-instruct": 32_768,      # v4.0: A4
+    "meta-llama/llama-4-8b-instruct":   32_768,      # v4.0: Fase 0
+    "qwen/qwen-2.5-vl-72b-instruct":   32_768,      # v4.0: E7
 }
 
 # =============================================================================
@@ -435,7 +451,7 @@ MODEL_MAX_OUTPUT = {
 # =============================================================================
 
 FALLBACK_MODEL_NIVEL2 = "openai/gpt-4.1"           # Suplente (ctx 1.048K, out 32K)
-FALLBACK_MODEL_NIVEL3 = "x-ai/grok-4.1-fast"       # Emergência (ctx 2.000K, out 30K)
+FALLBACK_MODEL_NIVEL3 = "google/gemini-3-pro-preview"  # v4.0: Grok BANIDO → Gemini Pro (1M+ ctx)
 
 # Limites em caracteres (tokens x 4) com margem de 30% para prompt overhead
 LIMITE_NIVEL1_CHARS = 1_120_000     # ~400K tokens x 4 x 0.70 = docs até ~280 páginas

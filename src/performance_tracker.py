@@ -403,10 +403,11 @@ def check_response_quality(content: str, role_name: str) -> Optional[Dict]:
         }
 
     # Verificacoes JSON para roles que devem retornar JSON
+    # FIX v4.0: "agregador" produz Markdown, não JSON — excluir do quality gate JSON
     is_json_role = any(
         tag in role_name.lower()
         for tag in ("_json", "consolidador", "chefe")
-    )
+    ) and "agregador" not in role_name.lower()
     if not is_json_role:
         return None
 

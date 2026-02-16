@@ -252,6 +252,12 @@ OPENAI_MODELS_NO_TEMPERATURE = [
     "o3-pro",
 ]
 
+# v4.0: Modelos reasoning de outros providers (também sem temperature)
+REASONING_MODELS_NO_TEMPERATURE = [
+    "deepseek/deepseek-reasoner",
+    "deepseek-reasoner",
+]
+
 
 @dataclass
 class LLMResponse:
@@ -344,11 +350,15 @@ def supports_temperature(model_name: str) -> bool:
     """
     Verifica se o modelo suporta o parâmetro temperature.
 
-    Modelos de reasoning (pro, o1, o3) NÃO suportam temperature.
+    Modelos de reasoning (pro, o1, o3, deepseek-reasoner) NÃO suportam temperature.
     """
     clean_name = model_name.replace("openai/", "").lower()
     for no_temp_model in OPENAI_MODELS_NO_TEMPERATURE:
         if no_temp_model.lower() in clean_name:
+            return False
+    # v4.0: Check reasoning models from other providers
+    for reasoning_model in REASONING_MODELS_NO_TEMPERATURE:
+        if reasoning_model.lower() in model_name.lower():
             return False
     return True
 
