@@ -746,7 +746,7 @@ REVISTO:"""
                         model="openai/gpt-4.1",
                         prompt_tokens=resultado.prompt_tokens or (tokens),
                         completion_tokens=resultado.completion_tokens or (tokens_depois),
-                        raise_on_exceed=True,
+                        raise_on_exceed=False,
                     )
                 except Exception as e:
                     if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
@@ -943,7 +943,7 @@ REVISTO:"""
                             model=modelo_final,
                             prompt_tokens=retry_pt,
                             completion_tokens=retry_ct,
-                            raise_on_exceed=True,
+                            raise_on_exceed=False,
                         )
                     except Exception as e:
                         if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
@@ -1453,7 +1453,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                             model=model,
                             prompt_tokens=r_prompt,
                             completion_tokens=r_completion,
-                            raise_on_exceed=True,
+                            raise_on_exceed=False,
                         )
                     except Exception as e:
                         if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
@@ -2089,7 +2089,7 @@ IMPORTANTE: Só usa page_num que existam no batch acima."""
                                 model=model,
                                 prompt_tokens=r_pt,
                                 completion_tokens=r_ct,
-                                raise_on_exceed=True,
+                                raise_on_exceed=False,
                             )
                         except Exception as e:
                             if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:

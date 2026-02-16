@@ -509,15 +509,12 @@ class CostController:
             )
 
     def _check_limits(self):
-        """Verifica se limites foram excedidos (APENAS orçamento, não tokens)."""
-        if self.usage.total_cost_usd > self.budget_limit:
-            self.usage.blocked = True
-            self.usage.block_reason = f"Budget excedido: ${self.usage.total_cost_usd:.4f} > ${self.budget_limit:.2f}"
-            logger.error(f"BLOQUEADO: {self.usage.block_reason}")
-            raise BudgetExceededError(
-                self.usage.block_reason,
-                self.usage.total_cost_usd,
-                self.budget_limit,
+        """Verifica limites — apenas loga WARNING, NUNCA bloqueia o pipeline."""
+        if self.usage.total_cost_usd > self.budget_limit and not self.usage.blocked:
+            logger.warning(
+                f"[CUSTO-ALERTA] Budget ultrapassado: "
+                f"${self.usage.total_cost_usd:.4f} > ${self.budget_limit:.2f} "
+                f"(run={self.run_id}) — pipeline continua"
             )
 
         # FIX v4.0: Tokens são métrica/log, NÃO bloqueiam
@@ -529,12 +526,8 @@ class CostController:
             )
 
     def can_continue(self) -> bool:
-        """Verifica se pode continuar processamento (apenas orçamento)."""
-        with self._lock:
-            return (
-                not self.usage.blocked
-                and self.usage.total_cost_usd < self.budget_limit
-            )
+        """Retorna sempre True — pipeline nunca pára por custos."""
+        return True
 
     def get_remaining_budget(self) -> float:
         """Retorna budget restante em USD."""
