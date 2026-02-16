@@ -586,16 +586,31 @@ def executar_analise(
     print(f"[ENGINE] Documento: {documento.filename} ({documento.num_chars:,} chars)")
 
     try:
-        # FIX 2026-02-14: Passar CÓPIAS das listas de modelos (thread-safety)
+        # v4.0: Selecção de modelos por tier
+        auditor_models_for_run = list(config_module.AUDITOR_MODELS)
+
+        # v4.0: Presidente (Conselheiro-Mor) por tier
+        presidente_model_for_run = config_module.PRESIDENTE_MODEL
+        from src.tier_config import get_openrouter_model
+        president_key = tier_models.get("president", "gpt-5.2")
+        presidente_model_for_run = get_openrouter_model(president_key)
+        print(f"[ENGINE] Presidente model (tier={tier}): {presidente_model_for_run}")
+
+        # v4.0: A5 Opus (APENAS ELITE)
+        use_a5_opus = tier_models.get("audit_a5_opus", False)
+        if use_a5_opus:
+            print(f"[ENGINE] ELITE: A5 Opus auditor sénior ACTIVADO")
+
         processor = LexForumProcessor(
             extrator_models=list(config_module.EXTRATOR_MODELS),
-            auditor_models=list(config_module.AUDITOR_MODELS),
+            auditor_models=auditor_models_for_run,
             relator_models=list(config_module.JUIZ_MODELS),
             chefe_model=config_module.CHEFE_MODEL,
-            presidente_model=config_module.PRESIDENTE_MODEL,
+            presidente_model=presidente_model_for_run,
             callback_progresso=callback,
         )
         processor._tier = tier  # Passar tier para o performance tracker
+        processor._use_a5_opus = use_a5_opus  # v4.0: Flag para A5 Opus
         resultado = processor.processar(documento, area_direito, perguntas_raw, titulo)
     except ValueError as e:
         # ── ERRO: Cancelar bloqueio ──

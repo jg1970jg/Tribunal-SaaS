@@ -404,10 +404,18 @@ async def analyze(
 
         logger.info(f"[TIER-DEBUG] Tier recebido do frontend: '{tier}'")
 
+        # v4.0: Aceitar aliases standard/premium/elite
+        tier_aliases = {
+            "standard": "bronze",
+            "premium": "silver",
+            "elite": "gold",
+        }
+        tier = tier_aliases.get(tier.lower(), tier.lower())
+
         if tier not in ("bronze", "silver", "gold"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Tier inválido. Opções: bronze, silver, gold.",
+                detail="Tier inválido. Opções: bronze/standard, silver/premium, gold/elite.",
             )
 
         # FIX 2026-02-14: Executar em thread separada para não bloquear event loop
@@ -1062,12 +1070,15 @@ async def calculate_tier_cost_endpoint(
       document_tokens: tamanho do documento em tokens (opcional)
     """
     from src.tier_config import TierLevel, calculate_tier_cost as calc_cost
+    # v4.0: Aceitar aliases
+    tier_map = {"standard": "bronze", "premium": "silver", "elite": "gold"}
+    tier_normalized = tier_map.get(tier.lower(), tier.lower())
     try:
-        tier_level = TierLevel(tier.lower())
+        tier_level = TierLevel(tier_normalized)
     except ValueError:
         raise HTTPException(
             status_code=422,
-            detail=f"Tier inválido: {tier}. Use: bronze, silver ou gold"
+            detail=f"Tier inválido: {tier}. Use: bronze/standard, silver/premium, gold/elite"
         )
 
     costs = calc_cost(tier_level, document_tokens)

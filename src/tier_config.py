@@ -69,6 +69,10 @@ MODEL_COSTS = {
 # ============================================================
 
 TIER_CONFIG = {
+    # ================================================================
+    # STANDARD (Bronze) — v4.0 Handover
+    # Fases 1-5 base, GPT-5.2 na síntese
+    # ================================================================
     TierLevel.BRONZE: {
         "label": "Standard",
         "icon": "🥉",
@@ -77,33 +81,27 @@ TIER_CONFIG = {
         "color_border": "border-amber-500",
         "color_bg": "bg-gradient-to-br from-amber-50 to-orange-50",
 
-        # Modelos por fase
         "models": {
-            "extraction": "sonnet-4.5",      # E1
-            "extraction_e4": "haiku-3.5",    # E4: Haiku 3.5 ($0.25/M — 12× mais barato)
-            "audit_chief": "gpt-5.2",
-            "audit_claude": "sonnet-4.5",     # A2
-            "judgment_claude": "sonnet-4.5",  # J2
-            "president": "gpt-5.2",
+            "president": "gpt-5.2",              # Fase 5: GPT-5.2
+            "audit_a5_opus": False,               # Sem A5 Opus
         },
 
-        # Custos estimados (por fase)
         "estimated_costs": {
-            "extraction": 0.51,
-            "audit": 0.90,
-            "judgment": 0.96,
-            "president": 0.30,
+            "triage": 0.05,          # Fase 0
+            "extraction": 2.00,      # Fase 1 (7 IAs)
+            "aggregation": 0.50,     # Fase 2
+            "audit": 1.50,           # Fase 3 (4 IAs)
+            "judgment": 2.00,        # Fase 4 (3 IAs reasoning)
+            "president": 0.50,       # Fase 5
         },
 
-        # Features (textos APROVADOS - sem palavras vetadas)
         "features": [
             "Análise automática eficiente",
-            "Identifica problemas principais",
-            "Relatório estruturado",
-            "Múltiplas IAs a trabalhar",
+            "7 IAs na extração + 4 auditores",
+            "3 juízes de raciocínio (o1-pro, R1, Opus)",
+            "Relatório estruturado em pt-PT",
         ],
 
-        # Casos ideais (textos APROVADOS - sem palavras vetadas)
         "ideal_cases": {
             "title": "Ideal para:",
             "cases": [
@@ -113,10 +111,14 @@ TIER_CONFIG = {
                 "Análise com múltiplas IAs",
             ]
         },
-        "time_estimate": "15-20 min",
+        "time_estimate": "15-25 min",
         "included": True,
     },
 
+    # ================================================================
+    # PREMIUM (Silver) — v4.0 Handover
+    # Fases 1-5 iguais, Opus 4.6 na síntese
+    # ================================================================
     TierLevel.SILVER: {
         "label": "Premium",
         "icon": "🥈",
@@ -126,34 +128,27 @@ TIER_CONFIG = {
         "color_bg": "bg-gradient-to-br from-slate-50 to-gray-100",
         "badge": "⭐ RECOMENDADO",
 
-        # Modelos por fase (Sonnet na extração, Opus na auditoria/relatoria)
         "models": {
-            "extraction": "sonnet-4.5",        # MUDANÇA: era claude-opus-4 (lento)
-            "extraction_e3": "gpt-5.2",        # UPGRADE E3 (era gpt-4o)
-            "extraction_e4": "haiku-4.5",      # UPGRADE E4 (era claude-3.5-sonnet)
-            "audit_chief": "gpt-5.2",
-            "audit_claude": "claude-opus-4",   # Opus na auditoria (mantém qualidade)
-            "judgment_claude": "claude-opus-4", # Opus na relatoria (mantém qualidade)
-            "president": "gpt-5.2",
+            "president": "claude-opus-4",         # Fase 5: Opus 4.6
+            "audit_a5_opus": False,               # Sem A5 Opus
         },
 
-        # Custos estimados (calibrado 15-Fev-2026 com dados reais Diamante)
         "estimated_costs": {
-            "extraction": 1.00,
-            "audit": 1.80,
-            "judgment": 1.80,
-            "president": 0.40,
+            "triage": 0.05,
+            "extraction": 2.00,
+            "aggregation": 0.50,
+            "audit": 1.50,
+            "judgment": 2.00,
+            "president": 2.00,       # Opus mais caro
         },
 
-        # Features (textos APROVADOS - sem palavras vetadas)
         "features": [
-            "IA avançada (Claude Opus + GPT)",
-            "Encontra o que Standard não vê",
+            "Opus 4.6 redige o parecer final",
+            "Nuance e doutrina superior",
+            "7 IAs + 4 auditores + 3 juízes reasoning",
             "Relatório focado e assertivo",
-            "Análise mais aprofundada",
         ],
 
-        # Casos ideais (textos APROVADOS - sem palavras vetadas)
         "ideal_cases": {
             "title": "Ideal para:",
             "cases": [
@@ -163,47 +158,44 @@ TIER_CONFIG = {
                 "Quando quer certeza na análise",
             ]
         },
-        "time_estimate": "15-20 min",
+        "time_estimate": "15-25 min",
         "included": False,
     },
 
+    # ================================================================
+    # ELITE (Gold) — v4.0 Handover
+    # Fases 1-5 + A5 Opus na auditoria + GPT-5.2-Pro na síntese
+    # ================================================================
     TierLevel.GOLD: {
         "label": "Elite",
         "icon": "🥇",
-        "description": "IAs de topo para máxima qualidade",
+        "description": "Máxima qualidade com 5 auditores",
         "color_gradient": "from-yellow-400 to-yellow-700",
         "color_border": "border-yellow-400",
         "color_bg": "bg-gradient-to-br from-yellow-50 to-amber-100",
         "badge": "💎 MÁXIMA QUALIDADE",
 
-        # Modelos por fase (ELITE: Opus em TUDO incluindo extração)
         "models": {
-            "extraction": "claude-opus-4",     # Elite usa Opus na extração
-            "extraction_e3": "gpt-5.2",        # UPGRADE E3 (era gpt-4o)
-            "extraction_e4": "haiku-4.5",      # UPGRADE E4 (era claude-3.5-sonnet)
-            "audit_chief": "gpt-5.2-pro",     # UPGRADE
-            "audit_claude": "claude-opus-4",   # Opus na auditoria
-            "judgment_claude": "claude-opus-4", # Opus na relatoria
-            "president": "gpt-5.2-pro",        # UPGRADE
+            "president": "gpt-5.2-pro",          # Fase 5: GPT-5.2-Pro
+            "audit_a5_opus": True,                # A5 Opus como auditor sénior
         },
 
-        # Custos estimados (calibrado 15-Fev-2026 com dados reais)
         "estimated_costs": {
-            "extraction": 1.00,
-            "audit": 2.00,
-            "judgment": 1.80,
-            "president": 0.60,
+            "triage": 0.05,
+            "extraction": 2.00,
+            "aggregation": 0.50,
+            "audit": 3.00,           # +A5 Opus
+            "judgment": 2.00,
+            "president": 3.00,       # GPT-5.2-Pro
         },
 
-        # Features (textos APROVADOS - sem palavras vetadas)
         "features": [
-            "IAs de topo (GPT-PRO, Claude Opus, Gemini Pro)",
-            "Análise muito detalhada e minuciosa",
+            "GPT-5.2-Pro redige o parecer final",
+            "5 auditores (incluindo Opus como sénior)",
+            "Máxima profundidade e redação",
             "Deteta nuances jurídicas subtis",
-            "Relatório completo e fundamentado",
         ],
 
-        # Casos ideais (textos APROVADOS - sem palavras vetadas)
         "ideal_cases": {
             "title": "Ideal para:",
             "cases": [
@@ -213,7 +205,7 @@ TIER_CONFIG = {
                 "Quando quer a máxima confiança",
             ]
         },
-        "time_estimate": "20-25 min",
+        "time_estimate": "20-30 min",
         "included": False,
     },
 }
@@ -331,32 +323,29 @@ def calculate_custom_selection_cost(
 # ============================================================
 
 OPENROUTER_MODEL_MAPPING = {
-    # Extratores
+    # Anthropic
     "sonnet-4.5": "anthropic/claude-sonnet-4.5",
-    "sonnet-3.5": "anthropic/claude-3.5-sonnet",
     "claude-opus-4": "anthropic/claude-opus-4.6",
-    "gemini-3-flash-preview": "google/gemini-3-flash-preview",
-    "gpt-4o": "openai/gpt-4o",
-    "deepseek": "deepseek/deepseek-chat",
-
-    # Auditores e Relatores
-    "gpt-5.2": "openai/gpt-5.2",
-    "gpt-5.2-pro": "openai/gpt-5.2-pro",
-    "claude-sonnet-4.5": "anthropic/claude-sonnet-4.5",
-    "claude-opus-4-audit": "anthropic/claude-opus-4.6",
-    "claude-opus-4-judge": "anthropic/claude-opus-4.6",
-    "gemini-3-pro-preview": "google/gemini-3-pro-preview",
-    "grok-4.1": "x-ai/grok-4.1",
     "haiku-4.5": "anthropic/claude-haiku-4.5",
     "haiku-3.5": "anthropic/claude-3-5-haiku",
-
-    # Conselheiro-Mor
-    "gpt-5.2-presidente": "openai/gpt-5.2",
-    "gpt-5.2-pro-presidente": "openai/gpt-5.2-pro",
-
-    # Extratores E6-E7
-    "llama-4-maverick": "meta-llama/llama-4-maverick",
+    # OpenAI
+    "gpt-5.2": "openai/gpt-5.2",
+    "gpt-5.2-pro": "openai/gpt-5.2-pro",
+    "gpt-4o": "openai/gpt-4o",
+    "gpt-4o-mini": "openai/gpt-4o-mini",
+    "o1-pro": "openai/o1-pro",
+    # Google
+    "gemini-3-pro-preview": "google/gemini-3-pro-preview",
+    "gemini-3-flash-preview": "google/gemini-3-flash-preview",
+    # DeepSeek
+    "deepseek": "deepseek/deepseek-chat",
+    "deepseek-r1": "deepseek/deepseek-reasoner",
+    # Meta
+    "llama-4-405b": "meta-llama/llama-4-405b-instruct",
+    "llama-4-8b": "meta-llama/llama-4-8b-instruct",
+    # Mistral / Qwen
     "mistral-medium-3": "mistralai/mistral-medium-3",
+    "qwen-vl-72b": "qwen/qwen-2.5-vl-72b-instruct",
 }
 
 

@@ -152,6 +152,14 @@ def parse_unified_output(
     json_data = extract_json_from_text(output)
 
     if not json_data:
+        # v4.0: Tentar auto-repair antes de desistir
+        repaired = auto_repair_json(output)
+        if repaired:
+            json_data = extract_json_from_text(repaired)
+            if json_data:
+                logger.info(f"[JSON-REPAIR] {extractor_id}: JSON reparado com sucesso")
+
+    if not json_data:
         errors.append(f"Não foi possível extrair JSON do output do {extractor_id}")
         # Tentar fallback para extração por regex
         items = _fallback_extract_with_offsets(chunk, extractor_id, page_mapper)
@@ -359,56 +367,245 @@ def _normalize_value(item_type: ItemType, raw_text: str) -> str:
 
 
 # ============================================================================
-# AGREGADOR COM PROVENIÊNCIA
+# v4.0 HANDOVER — DEDUPLICAÇÃO SEMÂNTICA + DESCARTE INTELIGENTE
+# ============================================================================
+
+def normalize_and_hash(text: str) -> str:
+    """
+    Normaliza texto para comparação semântica.
+    Remove acentos, pontuação, espaços extras e converte para minúsculas.
+    Retorna hash MD5 do texto normalizado.
+    """
+    import unicodedata
+    import re as _re
+    # Remover acentos
+    nfkd = unicodedata.normalize('NFKD', text)
+    sem_acentos = ''.join(c for c in nfkd if not unicodedata.combining(c))
+    # Minúsculas, sem pontuação, sem espaços extras
+    normalizado = _re.sub(r'[^\w\s]', '', sem_acentos.lower())
+    normalizado = _re.sub(r'\s+', ' ', normalizado).strip()
+    return hashlib.md5(normalizado.encode()).hexdigest()
+
+
+def validate_and_filter_extractors(
+    items_by_extractor: Dict[str, List[EvidenceItem]],
+    min_ratio: float = 0.20,
+) -> Dict[str, List[EvidenceItem]]:
+    """
+    v4.0 Handover — Descarte inteligente de extractores fracos.
+
+    Se um extrator tem <min_ratio da média de items:
+    - Verifica se tem factos exclusivos (que nenhum outro extrator encontrou)
+    - Factos exclusivos são mantidos com verificacao_obrigatoria=True
+    - Factos não-exclusivos do extrator fraco são descartados
+
+    Args:
+        items_by_extractor: {extractor_id: [items]}
+        min_ratio: Rácio mínimo vs média (default 20%)
+
+    Returns:
+        Dict filtrado com extratores válidos (ou parcialmente válidos)
+    """
+    if not items_by_extractor:
+        return items_by_extractor
+
+    counts = {eid: len(items) for eid, items in items_by_extractor.items()}
+    if not counts:
+        return items_by_extractor
+
+    avg_count = sum(counts.values()) / len(counts)
+    threshold = avg_count * min_ratio
+
+    logger.info(f"[SMART-DISCARD] Média items/extrator: {avg_count:.0f}, threshold 20%: {threshold:.0f}")
+
+    # Construir hash index de todos os items de todos os extractores
+    # hash -> set of extractor_ids that found this item
+    all_hashes: Dict[str, set] = {}
+    item_hash_map: Dict[str, Dict[str, str]] = {}  # extractor_id -> {item_hash: item}
+
+    for eid, items in items_by_extractor.items():
+        item_hash_map[eid] = {}
+        for item in items:
+            h = normalize_and_hash(item.value_normalized or item.raw_text or "")
+            if h not in all_hashes:
+                all_hashes[h] = set()
+            all_hashes[h].add(eid)
+            item_hash_map[eid][h] = item
+
+    filtered = {}
+    for eid, items in items_by_extractor.items():
+        if counts[eid] >= threshold:
+            # Extrator OK — manter tudo
+            filtered[eid] = items
+            logger.info(f"[SMART-DISCARD] {eid}: {counts[eid]} items — MANTIDO (>= threshold)")
+        else:
+            # Extrator fraco — verificar factos exclusivos
+            exclusive_items = []
+            for item in items:
+                h = normalize_and_hash(item.value_normalized or item.raw_text or "")
+                sources = all_hashes.get(h, set())
+                if len(sources) <= 1:
+                    # Facto exclusivo — manter com flag
+                    item.context = (item.context or "") + " [FONTE_UNICA — VERIFICACAO_OBRIGATORIA]"
+                    exclusive_items.append(item)
+
+            if exclusive_items:
+                filtered[eid] = exclusive_items
+                logger.warning(
+                    f"[SMART-DISCARD] {eid}: {counts[eid]} items (< threshold {threshold:.0f}) — "
+                    f"MANTIDO PARCIAL: {len(exclusive_items)} factos exclusivos preservados"
+                )
+            else:
+                logger.warning(
+                    f"[SMART-DISCARD] {eid}: {counts[eid]} items (< threshold {threshold:.0f}) — "
+                    f"DESCARTADO: 0 factos exclusivos"
+                )
+
+    return filtered
+
+
+# ============================================================================
+# AGREGADOR COM PROVENIÊNCIA + DEDUPLICAÇÃO SEMÂNTICA
 # ============================================================================
 
 def aggregate_with_provenance(
     items_by_extractor: Dict[str, List[EvidenceItem]],
-    detect_conflicts: bool = True
+    detect_conflicts: bool = True,
+    deduplicate: bool = True,
 ) -> Tuple[List[EvidenceItem], List[Dict]]:
     """
     Agrega items de múltiplos extratores preservando proveniência.
 
-    SEM DEDUPLICAÇÃO - mantém tudo, mas detecta conflitos.
+    v4.0: Com deduplicação semântica — items idênticos (mesma info, palavras diferentes)
+    são fundidos num único item com múltiplas fontes. Conflitos são detectados e marcados.
 
     Args:
         items_by_extractor: {extractor_id: [items]}
         detect_conflicts: Se True, detecta valores divergentes
+        deduplicate: Se True, aplica deduplicação semântica (v4.0)
 
     Returns:
         (union_items, conflicts)
     """
-    union_items = []
+    if not deduplicate:
+        # Modo legacy — sem deduplicação
+        return _aggregate_legacy(items_by_extractor, detect_conflicts)
+
+    # v4.0: Deduplicação semântica
+    # Agrupar items por hash normalizado
+    hash_groups: Dict[str, List[Tuple[str, EvidenceItem]]] = {}  # hash -> [(extractor_id, item)]
     conflicts = []
 
-    # Índice por span para detecção de conflitos
-    # key = (item_type, span_aproximado) -> [(extractor, value, item)]
+    for extractor_id, items in items_by_extractor.items():
+        for item in items:
+            h = normalize_and_hash(item.value_normalized or item.raw_text or "")
+            if h not in hash_groups:
+                hash_groups[h] = []
+            hash_groups[h].append((extractor_id, item))
+
+    # Construir items deduplicados
+    union_items = []
+    for h, entries in hash_groups.items():
+        if len(entries) == 1:
+            # Item único — manter como está
+            eid, item = entries[0]
+            union_items.append(item)
+        else:
+            # Múltiplos extractores encontraram o mesmo item
+            # Verificar se os valores são realmente iguais ou divergentes
+            values = set()
+            for eid, item in entries:
+                values.add((item.value_normalized or "").strip().lower())
+
+            if len(values) <= 1:
+                # Consenso — fundir source_spans
+                base_eid, base_item = entries[0]
+                for eid, item in entries[1:]:
+                    base_item.source_spans.extend(item.source_spans)
+                # Adicionar info de consenso no contexto
+                source_ids = sorted(set(e[0] for e in entries))
+                consensus_tag = f"[{','.join(source_ids)}] consenso:{len(entries)}"
+                base_item.context = consensus_tag + (" " + base_item.context if base_item.context else "")
+                union_items.append(base_item)
+            else:
+                # Divergência — manter ambos e registar conflito
+                for eid, item in entries:
+                    union_items.append(item)
+                conflict = {
+                    "conflict_id": f"conflict_{h[:8]}",
+                    "item_type": entries[0][1].item_type.value,
+                    "hash": h,
+                    "values": [
+                        {"extractor_id": e[0], "value": e[1].value_normalized}
+                        for e in entries
+                    ],
+                }
+                conflicts.append(conflict)
+
+    # Detectar conflitos adicionais por span proximity
+    if detect_conflicts:
+        span_index: Dict[str, List[Tuple[str, str, EvidenceItem]]] = {}
+        for item in union_items:
+            for span in item.source_spans:
+                bucket = span.start_char // 100
+                key = f"{item.item_type.value}:{span.doc_id}:{bucket}"
+                if key not in span_index:
+                    span_index[key] = []
+                span_index[key].append((span.extractor_id, item.value_normalized, item))
+
+        for key, span_entries in span_index.items():
+            if len(span_entries) > 1:
+                span_values = set(e[1] for e in span_entries)
+                if len(span_values) > 1:
+                    # Check if already captured
+                    existing_ids = {c["conflict_id"] for c in conflicts}
+                    cid = f"conflict_{hashlib.md5(key.encode()).hexdigest()[:8]}"
+                    if cid not in existing_ids:
+                        conflicts.append({
+                            "conflict_id": cid,
+                            "item_type": span_entries[0][2].item_type.value,
+                            "span_key": key,
+                            "values": [
+                                {"extractor_id": e[0], "value": e[1]}
+                                for e in span_entries
+                            ],
+                        })
+
+    logger.info(
+        f"Agregação v4.0: {len(union_items)} items deduplicados "
+        f"(de {sum(len(v) for v in items_by_extractor.values())} brutos), "
+        f"{len(conflicts)} conflitos"
+    )
+
+    return union_items, conflicts
+
+
+def _aggregate_legacy(
+    items_by_extractor: Dict[str, List[EvidenceItem]],
+    detect_conflicts: bool = True,
+) -> Tuple[List[EvidenceItem], List[Dict]]:
+    """Agregação legacy sem deduplicação (backward compatibility)."""
+    union_items = []
+    conflicts = []
     span_index: Dict[str, List[Tuple[str, str, EvidenceItem]]] = {}
 
     for extractor_id, items in items_by_extractor.items():
         for item in items:
-            # Adicionar à união
             union_items.append(item)
-
             if detect_conflicts:
-                # Indexar para detecção de conflitos
                 for span in item.source_spans:
-                    # Usar bucket de 100 chars para agrupar spans próximos
                     bucket = span.start_char // 100
                     key = f"{item.item_type.value}:{span.doc_id}:{bucket}"
-
                     if key not in span_index:
                         span_index[key] = []
                     span_index[key].append((extractor_id, item.value_normalized, item))
 
-    # Detectar conflitos
     if detect_conflicts:
         for key, entries in span_index.items():
             if len(entries) > 1:
-                # Verificar valores diferentes
                 values = set(e[1] for e in entries)
                 if len(values) > 1:
-                    conflict = {
+                    conflicts.append({
                         "conflict_id": f"conflict_{hashlib.md5(key.encode()).hexdigest()[:8]}",
                         "item_type": entries[0][2].item_type.value,
                         "span_key": key,
@@ -416,13 +613,9 @@ def aggregate_with_provenance(
                             {"extractor_id": e[0], "value": e[1]}
                             for e in entries
                         ],
-                    }
-                    conflicts.append(conflict)
+                    })
 
-    logger.info(
-        f"Agregação: {len(union_items)} items, {len(conflicts)} conflitos"
-    )
-
+    logger.info(f"Agregação legacy: {len(union_items)} items, {len(conflicts)} conflitos")
     return union_items, conflicts
 
 
@@ -696,6 +889,243 @@ def render_agregado_markdown_from_json(agregado_json: Dict) -> str:
             lines.append(f"- {part.get('doc_id', 'doc')}{page_info}: {part.get('reason', 'ilegível')}")
 
     return "\n".join(lines)
+
+
+# ============================================================================
+# v4.0 HANDOVER — AUTO-REPAIR JSON + EXTRAÇÃO RECURSIVA
+# ============================================================================
+
+def auto_repair_json(text: str) -> Optional[str]:
+    """
+    v4.0 Handover — Repara JSON malformado de outputs LLM.
+
+    Fixes applied:
+    1. Remove markdown fences (```json...```)
+    2. Remove text before first { or [
+    3. Remove text after last } or ]
+    4. Count brackets and close missing ones
+    5. Remove trailing commas before } or ]
+    6. Handle truncated strings
+
+    Args:
+        text: Raw text potentially containing malformed JSON
+
+    Returns:
+        Repaired JSON string, or None if unrecoverable
+    """
+    if not text or not text.strip():
+        return None
+
+    import re as _re
+
+    cleaned = text.strip()
+
+    # 1. Remove markdown fences
+    cleaned = _re.sub(r'```(?:json)?\s*', '', cleaned)
+    cleaned = _re.sub(r'```\s*$', '', cleaned)
+    cleaned = cleaned.strip()
+
+    # 2. Find first { or [
+    first_brace = -1
+    for i, c in enumerate(cleaned):
+        if c in '{[':
+            first_brace = i
+            break
+    if first_brace < 0:
+        return None
+    cleaned = cleaned[first_brace:]
+
+    # 3. Find last } or ]
+    last_brace = -1
+    for i in range(len(cleaned) - 1, -1, -1):
+        if cleaned[i] in '}]':
+            last_brace = i
+            break
+    if last_brace >= 0:
+        cleaned = cleaned[:last_brace + 1]
+
+    # 4. Remove trailing commas before } or ]
+    cleaned = _re.sub(r',\s*([}\]])', r'\1', cleaned)
+
+    # 5. Count and fix unbalanced brackets
+    open_braces = cleaned.count('{') - cleaned.count('}')
+    open_brackets = cleaned.count('[') - cleaned.count(']')
+
+    # Handle truncated strings (unclosed quotes)
+    in_string = False
+    escaped = False
+    for c in cleaned:
+        if escaped:
+            escaped = False
+            continue
+        if c == '\\':
+            escaped = True
+            continue
+        if c == '"':
+            in_string = not in_string
+
+    if in_string:
+        # Close the string
+        cleaned += '"'
+
+    # Close missing brackets
+    if open_brackets > 0:
+        cleaned += ']' * open_brackets
+    if open_braces > 0:
+        cleaned += '}' * open_braces
+
+    # 6. Try to parse
+    try:
+        json.loads(cleaned)
+        return cleaned
+    except json.JSONDecodeError:
+        # Last resort: try to fix common issues
+        # Remove any control characters
+        cleaned = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned)
+        try:
+            json.loads(cleaned)
+            return cleaned
+        except json.JSONDecodeError:
+            logger.warning("[JSON-REPAIR] Could not repair JSON after all attempts")
+            return None
+
+
+def detect_continuation(json_data: dict) -> Optional[int]:
+    """
+    Detect if extraction output signals it was truncated.
+
+    Checks for:
+    - {"status": "to_be_continued", "last_item_id": N}
+    - Presence of continuation markers
+
+    Returns:
+        last_item_id if continuation needed, None otherwise
+    """
+    if not isinstance(json_data, dict):
+        return None
+
+    status = json_data.get("status", "")
+    if status == "to_be_continued":
+        return json_data.get("last_item_id", 0)
+
+    # Check in items array
+    items = json_data.get("items", [])
+    if items and isinstance(items[-1], dict):
+        last_item = items[-1]
+        if last_item.get("status") == "to_be_continued":
+            return last_item.get("last_item_id", last_item.get("id", len(items)))
+
+    return None
+
+
+def recursive_extraction(
+    llm_client,
+    model: str,
+    chunk,
+    area_direito: str,
+    extractor_id: str,
+    system_prompt: str,
+    temperature: float = 0.0,
+    max_iterations: int = 5,
+    max_tokens: int = 32768,
+    page_mapper=None,
+) -> Tuple[List[Any], List[Dict], List[str]]:
+    """
+    v4.0 Handover — Extração recursiva para outputs truncados.
+
+    Se o LLM indica "to_be_continued", reinicia a partir do último item.
+    Máximo max_iterations iterações.
+
+    Args:
+        llm_client: OpenRouterClient
+        model: Model ID
+        chunk: Chunk a processar
+        area_direito: Legal domain
+        extractor_id: E1-E7
+        system_prompt: System prompt to use
+        temperature: LLM temperature
+        max_iterations: Max continuation rounds
+        max_tokens: Max tokens per call
+        page_mapper: Optional page mapper
+
+    Returns:
+        (all_items, all_unreadable, all_errors)
+    """
+    all_items = []
+    all_unreadable = []
+    all_errors = []
+
+    last_item_id = None
+
+    for iteration in range(max_iterations):
+        # Build prompt
+        prompt = build_unified_prompt(chunk, area_direito, extractor_id)
+
+        if last_item_id is not None:
+            prompt += f"\n\nCONTINUATION: Resume extraction from item ID {last_item_id + 1}. Do NOT repeat items 1-{last_item_id}."
+
+        try:
+            response = llm_client.chat_simple(
+                model=model,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+            if not response or not response.content:
+                all_errors.append(f"Iteration {iteration}: empty response")
+                break
+
+            # Try to repair JSON if needed
+            content = response.content
+            try:
+                json.loads(content)
+            except (json.JSONDecodeError, ValueError):
+                repaired = auto_repair_json(content)
+                if repaired:
+                    content = repaired
+                    logger.info(f"[RECURSIVE] Iteration {iteration}: JSON repaired")
+
+            # Parse output
+            items, unreadable, errors = parse_unified_output(
+                output=content,
+                chunk=chunk,
+                extractor_id=extractor_id,
+                model_name=model,
+                page_mapper=page_mapper,
+            )
+
+            all_items.extend(items)
+            all_unreadable.extend(unreadable)
+            all_errors.extend(errors)
+
+            # Check for continuation
+            from src.pipeline.extractor_json import extract_json_from_text
+            json_data = extract_json_from_text(content)
+            if json_data:
+                continuation = detect_continuation(json_data)
+                if continuation is not None:
+                    last_item_id = continuation
+                    logger.info(
+                        f"[RECURSIVE] Iteration {iteration}: "
+                        f"to_be_continued at item {last_item_id}, continuing..."
+                    )
+                    continue
+
+            # No continuation needed
+            logger.info(
+                f"[RECURSIVE] Iteration {iteration}: "
+                f"extraction complete ({len(items)} items this round, {len(all_items)} total)"
+            )
+            break
+
+        except Exception as e:
+            all_errors.append(f"Iteration {iteration}: {e}")
+            logger.error(f"[RECURSIVE] Iteration {iteration} failed: {e}")
+            break
+
+    return all_items, all_unreadable, all_errors
 
 
 # ============================================================================

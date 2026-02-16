@@ -23,25 +23,38 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 HARDCODED_PRICING = {
+    # OpenAI
     "openai/gpt-4o": {"input": 2.50, "output": 10.00},
     "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "openai/gpt-4.1": {"input": 2.00, "output": 8.00},          # NOVO: suplente failover
+    "openai/gpt-4.1": {"input": 2.00, "output": 8.00},
     "openai/gpt-5.2": {"input": 1.75, "output": 14.00},
     "openai/gpt-5.2-pro": {"input": 21.00, "output": 168.00},
-    "anthropic/claude-opus-4.6": {"input": 5.00, "output": 25.00},  # NOVO: actualizado de 4.5
-    "anthropic/claude-opus-4.5": {"input": 5.00, "output": 25.00},  # Mantido para historico
-    "anthropic/claude-sonnet-4.5": {"input": 3.00, "output": 15.00},  # NOVO: substitui Opus em E1/A2/J2
+    "openai/o1-pro": {"input": 10.00, "output": 30.00},           # v4.0: J1 reasoning
+    # Anthropic
+    "anthropic/claude-opus-4.6": {"input": 15.00, "output": 75.00},  # v4.0: preço corrigido
+    "anthropic/claude-opus-4.5": {"input": 5.00, "output": 25.00},
+    "anthropic/claude-sonnet-4.5": {"input": 3.00, "output": 15.00},
+    "anthropic/claude-haiku-4.5": {"input": 0.80, "output": 4.00},   # v4.0: preço corrigido
     "anthropic/claude-3-5-sonnet": {"input": 6.00, "output": 30.00},
     "anthropic/claude-3.5-haiku": {"input": 0.25, "output": 1.25},
-    "google/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
+    # Google
+    "google/gemini-3-flash-preview": {"input": 0.10, "output": 0.40},  # v4.0: preço corrigido
     "google/gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
-    "deepseek/deepseek-chat": {"input": 0.28, "output": 0.42},
+    # DeepSeek
+    "deepseek/deepseek-chat": {"input": 0.25, "output": 0.38},
+    "deepseek/deepseek-reasoner": {"input": 2.00, "output": 8.00},    # v4.0: J2 R1
+    # Meta
+    "meta-llama/llama-4-405b-instruct": {"input": 2.00, "output": 6.00},  # v4.0: A4
+    "meta-llama/llama-4-8b-instruct": {"input": 0.05, "output": 0.08},    # v4.0: Fase 0
     "meta-llama/llama-4-maverick": {"input": 0.20, "output": 0.60},
-    "mistralai/mistral-medium-3": {"input": 1.00, "output": 4.00},
+    # Mistral / Qwen
+    "mistralai/mistral-medium-3": {"input": 0.40, "output": 2.00},        # v4.0: preço corrigido
+    "qwen/qwen-2.5-vl-72b-instruct": {"input": 0.30, "output": 1.20},    # v4.0: E7 OCR
+    # Grok (mantido para histórico mas BANIDO)
     "x-ai/grok-4": {"input": 3.00, "output": 15.00},
     "x-ai/grok-4.1-fast": {"input": 0.20, "output": 0.50},
     "x-ai/grok-4.1": {"input": 0.20, "output": 0.50},
-    "anthropic/claude-haiku-4.5": {"input": 1.00, "output": 5.00},
+    # Default
     "default": {"input": 1.00, "output": 4.00},
 }
 
@@ -494,15 +507,9 @@ class CostController:
                 f"${self.usage.total_cost_usd:.4f} > ${self.budget_limit:.2f} "
                 f"(run={self.run_id}) — continuando sem bloquear"
             )
-        if self.usage.total_tokens > self.token_limit and not self.usage.blocked:
-            logger.warning(
-                f"[CUSTO-ALERTA] Tokens excedidos: "
-                f"{self.usage.total_tokens:,} > {self.token_limit:,} "
-                f"(run={self.run_id}) — continuando sem bloquear"
-            )
 
     def _check_limits(self):
-        """Verifica se limites foram excedidos."""
+        """Verifica se limites foram excedidos (APENAS orçamento, não tokens)."""
         if self.usage.total_cost_usd > self.budget_limit:
             self.usage.blocked = True
             self.usage.block_reason = f"Budget excedido: ${self.usage.total_cost_usd:.4f} > ${self.budget_limit:.2f}"
@@ -513,23 +520,20 @@ class CostController:
                 self.budget_limit,
             )
 
+        # FIX v4.0: Tokens são métrica/log, NÃO bloqueiam
         if self.usage.total_tokens > self.token_limit:
-            self.usage.blocked = True
-            self.usage.block_reason = f"Tokens excedidos: {self.usage.total_tokens:,} > {self.token_limit:,}"
-            logger.error(f"BLOQUEADO: {self.usage.block_reason}")
-            raise TokenLimitExceededError(
-                self.usage.block_reason,
-                self.usage.total_tokens,
-                self.token_limit,
+            logger.warning(
+                f"[CUSTO-INFO] Tokens acima do indicativo: "
+                f"{self.usage.total_tokens:,} > {self.token_limit:,} "
+                f"(run={self.run_id}) — NÃO bloqueia, apenas log"
             )
 
     def can_continue(self) -> bool:
-        """Verifica se pode continuar processamento."""
+        """Verifica se pode continuar processamento (apenas orçamento)."""
         with self._lock:
             return (
                 not self.usage.blocked
                 and self.usage.total_cost_usd < self.budget_limit
-                and self.usage.total_tokens < self.token_limit
             )
 
     def get_remaining_budget(self) -> float:
