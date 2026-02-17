@@ -46,7 +46,7 @@ HARDCODED_PRICING = {
     "meta-llama/llama-3.1-8b-instruct": {"input": 0.05, "output": 0.08},   # v4.0: Fase 0
     # Mistral / Qwen
     "mistralai/mistral-medium-3": {"input": 0.40, "output": 2.00},        # v4.0: preço corrigido
-    "qwen/qwen-2.5-vl-72b-instruct": {"input": 0.30, "output": 1.20},    # v4.0: E7 OCR
+    "qwen/qwen2.5-vl-72b-instruct": {"input": 0.30, "output": 1.20},    # v4.0: E7 OCR
     # Default
     "default": {"input": 1.00, "output": 4.00},
 }

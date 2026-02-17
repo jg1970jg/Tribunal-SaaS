@@ -878,7 +878,7 @@ REVISTO:"""
         effective_temp = temperature
 
         # v4.0: Reasoning models (o1-pro, o1, o3) don't support system_prompt or temperature
-        REASONING_MODELS = {"openai/o1-pro", "openai/o1", "openai/o3-pro", "openai/o3-mini", "deepseek/deepseek-reasoner"}
+        REASONING_MODELS = {"openai/o1-pro", "openai/o1", "openai/o3-pro", "openai/o3-mini", "deepseek/deepseek-reasoner", "deepseek/deepseek-r1"}
         if modelo_final in REASONING_MODELS:
             # Embed system prompt into user prompt for reasoning models
             if effective_system:
@@ -901,10 +901,11 @@ REVISTO:"""
         # === QUALITY GATE + RETRIES (por modelo) ===
         # v4.0: Retries controlados por modelo (Opus=0, o1-pro=1, default=2)
         MODEL_MAX_RETRIES = {
-            "anthropic/claude-opus-4.6": 0,
+            "anthropic/claude-opus-4.6": 1,  # A5 Elite auditor needs 1 retry
             "openai/o1-pro": 1,
             "openai/gpt-5.2-pro": 1,
             "deepseek/deepseek-reasoner": 1,
+            "deepseek/deepseek-r1": 1,
         }
         MAX_RETRIES = MODEL_MAX_RETRIES.get(modelo_final, 2)
         for retry_num in range(1, MAX_RETRIES + 1):

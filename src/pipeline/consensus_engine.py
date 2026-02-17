@@ -70,7 +70,7 @@ class CitationValidationResult:
     original_excerpt: str
     original_start_char: int
     original_end_char: int
-    original_page_num: Optional[int]
+    original_page_num: Optional[int] = None
     # Resultado
     status: str = "PENDING"  # VALID_EXACT, VALID_FUZZY, PAGE_MISMATCH, INVALID_AMBIGUOUS, INVALID
     calculated_start_char: int = -1

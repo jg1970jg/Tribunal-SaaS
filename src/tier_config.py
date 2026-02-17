@@ -363,7 +363,7 @@ OPENROUTER_MODEL_MAPPING = {
     "gpt-4o-mini": "openai/gpt-4o-mini",
     "gpt-4.1": "openai/gpt-4.1",
     "o1-pro": "openai/o1-pro",
-    "deepseek-reasoner": "deepseek/deepseek-reasoner",
+    "deepseek-reasoner": "deepseek/deepseek-r1",
     # Google
     "gemini-3-pro-preview": "google/gemini-3-pro-preview",
     "gemini-3-flash-preview": "google/gemini-3-flash-preview",
@@ -375,7 +375,7 @@ OPENROUTER_MODEL_MAPPING = {
     "llama-3.1-8b": "meta-llama/llama-3.1-8b-instruct",
     # Mistral / Qwen
     "mistral-medium-3": "mistralai/mistral-medium-3",
-    "qwen-vl-72b": "qwen/qwen-2.5-vl-72b-instruct",
+    "qwen-vl-72b": "qwen/qwen2.5-vl-72b-instruct",
 }
 
 

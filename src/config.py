@@ -339,7 +339,7 @@ LLM_CONFIGS = [
     {
         "id": "E7",
         "role": "Extrator Visual",
-        "model": "qwen/qwen-2.5-vl-72b-instruct",    # v4.0: OCR layout complexo
+        "model": "qwen/qwen2.5-vl-72b-instruct",    # v4.0: OCR layout complexo
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL,
         "visual": True,
@@ -418,7 +418,7 @@ MODEL_CONTEXT_LIMITS = {
     "mistralai/mistral-medium-3":       131_072,
     "meta-llama/llama-3.1-405b-instruct": 128_000,    # v4.0: A4 Advogado do Diabo
     "meta-llama/llama-3.1-8b-instruct":  128_000,    # v4.0: Fase 0
-    "qwen/qwen-2.5-vl-72b-instruct":   128_000,     # v4.0: E7 OCR
+    "qwen/qwen2.5-vl-72b-instruct":   128_000,     # v4.0: E7 OCR
 }
 
 MODEL_MAX_OUTPUT = {
@@ -439,7 +439,7 @@ MODEL_MAX_OUTPUT = {
     "mistralai/mistral-medium-3":       32_768,
     "meta-llama/llama-3.1-405b-instruct": 32_768,     # v4.0: A4
     "meta-llama/llama-3.1-8b-instruct":  32_768,     # v4.0: Fase 0
-    "qwen/qwen-2.5-vl-72b-instruct":   32_768,      # v4.0: E7
+    "qwen/qwen2.5-vl-72b-instruct":   32_768,      # v4.0: E7
 }
 
 # =============================================================================
@@ -499,7 +499,7 @@ VISION_CAPABLE_MODELS = {
     "anthropic/claude-sonnet-4.5",      # MUDANÇA: era opus-4.6
     "google/gemini-3-flash-preview",
     "openai/gpt-4o",
-    "qwen/qwen-2.5-vl-72b-instruct",
+    "qwen/qwen2.5-vl-72b-instruct",
 }
 
 DRE_BASE_URL = "https://diariodarepublica.pt"
