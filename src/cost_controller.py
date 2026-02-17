@@ -44,9 +44,15 @@ HARDCODED_PRICING = {
     # Meta
     "meta-llama/llama-3.1-405b-instruct": {"input": 2.00, "output": 6.00},  # v4.0: A4
     "meta-llama/llama-3.1-8b-instruct": {"input": 0.05, "output": 0.08},   # v4.0: Fase 0
-    # Mistral / Qwen
-    "mistralai/mistral-medium-3": {"input": 0.40, "output": 2.00},        # v4.0: preço corrigido
-    "qwen/qwen2.5-vl-72b-instruct": {"input": 0.30, "output": 1.20},    # v4.0: E7 OCR
+    "meta-llama/llama-3.3-70b-instruct": {"input": 0.10, "output": 0.32},  # E5 texto (Meta)
+    # Mistral (legacy — manter para failover)
+    "mistralai/mistral-medium-3": {"input": 0.40, "output": 2.00},
+    # Qwen (legacy — manter para failover)
+    "qwen/qwen2.5-vl-72b-instruct": {"input": 0.30, "output": 1.20},
+    # Amazon
+    "amazon/nova-pro-v1": {"input": 0.80, "output": 3.20},              # E6 visual (Amazon)
+    # NVIDIA
+    "nvidia/llama-3.1-nemotron-70b-instruct": {"input": 0.10, "output": 0.30},  # E7 texto (NVIDIA)
     # Default
     "default": {"input": 1.00, "output": 4.00},
 }

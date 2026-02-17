@@ -5,7 +5,7 @@ CONFIGURAÇÃO LEXFORUM - PIPELINE v4.0
 
 PIPELINE 6 FASES:
   Fase 0: Triagem (3 IAs baratas: GPT-4o-mini, Gemini Flash, Llama 8B)
-  Fase 1: Extração (7 IAs: Haiku, Gemini Pro, GPT-5.2, Sonnet, DeepSeek, Mistral, Qwen VL)
+  Fase 1: Extração (7 IAs: Haiku, Gemini Pro, GPT-5.2, Sonnet, Llama 3.3, Nova Pro, Nemotron)
   Fase 2: Agregação com deduplicação semântica
   Fase 3: Auditoria (4 IAs: GPT-5.2, Gemini Pro, Sonnet 4.5, Llama 405B) + A5 Opus (Elite)
   Fase 4: Julgamento (3 IAs reasoning: o1-pro, DeepSeek R1, Opus 4.6)
@@ -238,9 +238,9 @@ def get_max_tokens_para_fase(role_name: str) -> int:
 # E2: Gemini 3 Pro (VISÃO: carimbos, selos) — Flash REMOVIDO (83% omissão)
 # E3: GPT-5.2 (JSON robusto: 729 itens) — GPT-4o promovido
 # E4: Sonnet 4.5 (Nuance PT: 616 itens)
-# E5: DeepSeek V3 (Custo: 219 itens)
-# E6: Mistral Medium 3 (EU: 484 itens) — Maverick REMOVIDO (JSON fail)
-# E7: Qwen 2.5-VL 72B (OCR: layout complexo) — NOVO
+# E5: Llama 3.3 70B (Meta) — texto
+# E6: Amazon Nova Pro (Amazon) — visual
+# E7: Nemotron 70B (NVIDIA) — texto
 # =============================================================================
 
 LLM_CONFIGS = [
@@ -276,24 +276,24 @@ LLM_CONFIGS = [
     {
         "id": "E5",
         "role": "Extrator Texto",
-        "model": "deepseek/deepseek-chat",             # v4.0: Custo (219 itens)
+        "model": "meta-llama/llama-3.3-70b-instruct",  # Llama 3.3 70B (Meta) — texto
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
     {
         "id": "E6",
-        "role": "Extrator Texto",
-        "model": "mistralai/mistral-medium-3",         # v4.0: EU (484 itens)
-        "temperature": 0.0,
-        "instructions": PROMPT_EXTRATOR_UNIVERSAL
-    },
-    {
-        "id": "E7",
         "role": "Extrator Visual",
-        "model": "qwen/qwen2.5-vl-72b-instruct",    # v4.0: OCR layout complexo
+        "model": "amazon/nova-pro-v1",                  # Amazon Nova Pro (Amazon) — visual
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL,
         "visual": True,
+    },
+    {
+        "id": "E7",
+        "role": "Extrator Texto",
+        "model": "nvidia/llama-3.1-nemotron-70b-instruct",  # Nemotron 70B (NVIDIA) — texto
+        "temperature": 0.0,
+        "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
 ]
 
@@ -369,7 +369,10 @@ MODEL_CONTEXT_LIMITS = {
     "mistralai/mistral-medium-3":       131_072,
     "meta-llama/llama-3.1-405b-instruct": 128_000,    # v4.0: A4 Advogado do Diabo
     "meta-llama/llama-3.1-8b-instruct":  128_000,    # v4.0: Fase 0
-    "qwen/qwen2.5-vl-72b-instruct":   128_000,     # v4.0: E7 OCR
+    "meta-llama/llama-3.3-70b-instruct": 131_072,    # E5 Llama 3.3 (Meta)
+    "amazon/nova-pro-v1":               300_000,     # E6 Nova Pro (Amazon) — 300k context
+    "nvidia/llama-3.1-nemotron-70b-instruct": 131_072,  # E7 Nemotron (NVIDIA)
+    "qwen/qwen2.5-vl-72b-instruct":   128_000,     # legacy
 }
 
 MODEL_MAX_OUTPUT = {
@@ -390,7 +393,10 @@ MODEL_MAX_OUTPUT = {
     "mistralai/mistral-medium-3":       32_768,
     "meta-llama/llama-3.1-405b-instruct": 32_768,     # v4.0: A4
     "meta-llama/llama-3.1-8b-instruct":  32_768,     # v4.0: Fase 0
-    "qwen/qwen2.5-vl-72b-instruct":   32_768,      # v4.0: E7
+    "meta-llama/llama-3.3-70b-instruct": 32_768,     # E5 Llama 3.3 (Meta)
+    "amazon/nova-pro-v1":               5_120,       # E6 Nova Pro (Amazon) — output menor
+    "nvidia/llama-3.1-nemotron-70b-instruct": 32_768,  # E7 Nemotron (NVIDIA)
+    "qwen/qwen2.5-vl-72b-instruct":   32_768,      # legacy
 }
 
 # =============================================================================
@@ -450,7 +456,7 @@ VISION_CAPABLE_MODELS = {
     "anthropic/claude-sonnet-4.5",      # E4
     "google/gemini-3-pro-preview",      # E2 (visual extractor)
     "openai/gpt-4o",
-    "qwen/qwen2.5-vl-72b-instruct",    # E7 (visual extractor)
+    "amazon/nova-pro-v1",              # E6 (visual extractor) — NOVO
 }
 
 DRE_BASE_URL = "https://diariodarepublica.pt"

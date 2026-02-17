@@ -39,9 +39,9 @@ MODEL_COSTS = {
     "gemini-3-pro": 0.12,        # E2
     "gpt-5.2": 0.12,             # E3
     "sonnet-4.5": 0.08,          # E4
-    "deepseek": 0.04,            # E5
-    "mistral-medium-3": 0.06,    # E6
-    "qwen-vl-72b": 0.05,         # E7
+    "llama-3.3-70b": 0.03,        # E5 Llama 3.3 (Meta)
+    "nova-pro": 0.05,             # E6 Amazon Nova Pro (visual)
+    "nemotron-70b": 0.03,         # E7 Nemotron (NVIDIA)
 
     # Auditores (Fase 3) — v4.0
     "gpt-5.2-audit": 0.15,       # A1
@@ -373,7 +373,12 @@ OPENROUTER_MODEL_MAPPING = {
     # Meta
     "llama-3.1-405b": "meta-llama/llama-3.1-405b-instruct",
     "llama-3.1-8b": "meta-llama/llama-3.1-8b-instruct",
-    # Mistral / Qwen
+    "llama-3.3-70b": "meta-llama/llama-3.3-70b-instruct",      # E5
+    # Amazon
+    "nova-pro": "amazon/nova-pro-v1",                            # E6 visual
+    # NVIDIA
+    "nemotron-70b": "nvidia/llama-3.1-nemotron-70b-instruct",  # E7
+    # Mistral / Qwen (legacy)
     "mistral-medium-3": "mistralai/mistral-medium-3",
     "qwen-vl-72b": "qwen/qwen2.5-vl-72b-instruct",
 }
