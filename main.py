@@ -1225,6 +1225,49 @@ async def wallet_credit(
 
 
 # ============================================================
+# ADMIN - LISTA DE UTILIZADORES
+# ============================================================
+
+@app.get("/admin/users")
+@limiter.limit("30/minute")
+async def admin_list_users(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Lista todos os utilizadores com saldos (apenas admin)."""
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Apenas administradores.")
+
+    try:
+        sb = get_supabase_admin()
+
+        # Buscar todos os profiles com saldo
+        profiles_resp = sb.table("profiles").select(
+            "id, email, full_name, credits_balance, credits_blocked"
+        ).order("credits_balance", desc=True).limit(500).execute()
+
+        users = []
+        for p in (profiles_resp.data or []):
+            total = float(p.get("credits_balance") or 0)
+            blocked = float(p.get("credits_blocked") or 0)
+            users.append({
+                "user_id": p["id"],
+                "email": p.get("email", ""),
+                "full_name": p.get("full_name", ""),
+                "balance_usd": total,
+                "blocked_usd": blocked,
+                "available_usd": total - blocked,
+            })
+
+        return {"users": users, "total": len(users)}
+
+    except Exception as e:
+        logger.error(f"Erro ao listar utilizadores: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao listar utilizadores.")
+
+
+# ============================================================
 # ADMIN - MODEL PERFORMANCE
 # ============================================================
 
