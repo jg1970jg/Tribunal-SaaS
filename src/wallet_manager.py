@@ -308,11 +308,15 @@ class WalletManager:
 
             if custo_cliente > blocked_amount:
                 overrun = custo_cliente - blocked_amount
-                logger.warning(
+                logger.critical(
                     f"[WALLET-OVERRUN] custo_cliente=${custo_cliente:.4f} > "
                     f"blocked=${blocked_amount:.4f}, overrun=${overrun:.4f} "
-                    f"(analysis={analysis_id})"
+                    f"(analysis={analysis_id}) — CAPPING charge at blocked amount"
                 )
+                # v4.0 FIX: Nunca cobrar mais do que o bloqueado ao utilizador
+                # A diferença é absorvida como perda operacional
+                custo_cliente = blocked_amount
+                refunded = 0.0
 
             balance = self.get_balance(user_id)
             new_balance = max(0, balance["total"] - custo_cliente)
