@@ -393,9 +393,9 @@ MODEL_MAX_OUTPUT = {
     "mistralai/mistral-medium-3":       32_768,
     "meta-llama/llama-3.1-405b-instruct": 32_768,     # v4.0: A4
     "meta-llama/llama-3.1-8b-instruct":  32_768,     # v4.0: Fase 0
-    "meta-llama/llama-3.3-70b-instruct": 32_768,     # E5 Llama 3.3 (Meta)
+    "meta-llama/llama-3.3-70b-instruct": 16_384,     # E5 Llama 3.3 (Meta) — real OpenRouter
     "amazon/nova-pro-v1":               5_120,       # E6 Nova Pro (Amazon) — output menor
-    "nvidia/llama-3.1-nemotron-70b-instruct": 32_768,  # E7 Nemotron (NVIDIA)
+    "nvidia/llama-3.1-nemotron-70b-instruct": 16_384,  # E7 Nemotron (NVIDIA) — real OpenRouter
     "qwen/qwen2.5-vl-72b-instruct":   32_768,      # legacy
 }
 

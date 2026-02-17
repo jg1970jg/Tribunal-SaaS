@@ -52,7 +52,7 @@ HARDCODED_PRICING = {
     # Amazon
     "amazon/nova-pro-v1": {"input": 0.80, "output": 3.20},              # E6 visual (Amazon)
     # NVIDIA
-    "nvidia/llama-3.1-nemotron-70b-instruct": {"input": 0.10, "output": 0.30},  # E7 texto (NVIDIA)
+    "nvidia/llama-3.1-nemotron-70b-instruct": {"input": 1.20, "output": 1.20},  # E7 texto (NVIDIA) — preço real OpenRouter
     # Default
     "default": {"input": 1.00, "output": 4.00},
 }
