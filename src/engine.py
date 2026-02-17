@@ -58,6 +58,7 @@ from src.config import (
     OPENROUTER_API_KEY,
     OUTPUT_DIR,
 )
+from src.cost_controller import BudgetExceededError
 from src.pipeline.processor import LexForumProcessor, PipelineResult, FaseResult
 from src.document_loader import DocumentLoader, DocumentContent
 from src.llm_client import get_llm_client
@@ -596,6 +597,10 @@ def executar_analise(
         # ── ERRO: Cancelar bloqueio ──
         cancelar_bloqueio(analysis_id)
         raise EngineError(f"Erro de validacao no pipeline: {e}")
+    except BudgetExceededError:
+        # ── BUDGET EXCEDIDO: Cancelar bloqueio e propagar para HTTP 402 ──
+        cancelar_bloqueio(analysis_id)
+        raise  # Propaga até ao handler do FastAPI
     except Exception as e:
         # ── ERRO: Cancelar bloqueio ──
         cancelar_bloqueio(analysis_id)

@@ -40,6 +40,7 @@ from src.engine import (
     EngineError,
     get_wallet_manager,
 )
+from src.cost_controller import BudgetExceededError
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +303,6 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 # CORS - apenas origens autorizadas
 CORS_ORIGINS = [
     "https://lexportal.lovable.app",
-    "https://*.lovable.app",
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:8080",
@@ -525,6 +525,15 @@ async def analyze(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Serviço temporariamente indisponível. Contacte o suporte.",
+        )
+    except BudgetExceededError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": "insufficient_credits",
+                "message": str(e),
+                "detail": "Saldo insuficiente. Recarregue a sua wallet para continuar.",
+            },
         )
     except EngineError as e:
         logger.error(f"Erro do engine: {e}")
