@@ -61,6 +61,9 @@ load_dotenv()
 # Lista de emails de admin (para endpoints de admin)
 ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
 
+# Admin session tokens (from /admin/verify)
+_admin_sessions: dict = {}
+
 
 # ============================================================
 # RATE LIMITING
@@ -496,8 +499,8 @@ async def analyze(
                     tracker = PerformanceTracker.get_instance()
                     if tracker:
                         tracker.link_document_id(result_dict.get("run_id", ""), doc_id)
-                except Exception:
-                    pass  # Non-critical
+                except Exception as e:
+                    logger.warning(f"[PERF] Falha ao ligar document_id: {e}")
         except Exception as e:
             logger.warning(f"[DOCS] Erro ao guardar resultado: {e}")
 
@@ -1514,4 +1517,10 @@ async def admin_verify(request: Request, req: AdminVerifyRequest):
             detail="Password incorrecta.",
         )
 
-    return {"status": "ok", "message": "Acesso autorizado."}
+    # Gerar token de sessão admin (válido 1 hora)
+    admin_token = secrets.token_urlsafe(32)
+    _admin_sessions[admin_token] = {
+        "created_at": datetime.now(),
+        "ip": get_remote_address(request),
+    }
+    return {"status": "ok", "message": "Acesso autorizado.", "admin_token": admin_token}

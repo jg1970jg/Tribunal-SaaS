@@ -361,7 +361,9 @@ OPENROUTER_MODEL_MAPPING = {
     "gpt-5.2-pro": "openai/gpt-5.2-pro",
     "gpt-4o": "openai/gpt-4o",
     "gpt-4o-mini": "openai/gpt-4o-mini",
+    "gpt-4.1": "openai/gpt-4.1",
     "o1-pro": "openai/o1-pro",
+    "deepseek-reasoner": "deepseek/deepseek-reasoner",
     # Google
     "gemini-3-pro-preview": "google/gemini-3-pro-preview",
     "gemini-3-flash-preview": "google/gemini-3-flash-preview",

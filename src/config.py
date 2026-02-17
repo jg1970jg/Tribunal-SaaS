@@ -410,7 +410,6 @@ MODEL_CONTEXT_LIMITS = {
     "anthropic/claude-opus-4.6":        1_000_000,
     "anthropic/claude-sonnet-4.5":      200_000,
     "anthropic/claude-haiku-4.5":       200_000,
-    "anthropic/claude-3-5-sonnet":      200_000,
     "anthropic/claude-3-5-haiku":       200_000,
     "google/gemini-3-pro-preview":      1_049_000,
     "google/gemini-3-flash-preview":    1_049_000,
@@ -433,7 +432,6 @@ MODEL_MAX_OUTPUT = {
     "anthropic/claude-sonnet-4.5":      64_000,
     "anthropic/claude-haiku-4.5":       64_000,
     "anthropic/claude-3-5-haiku":       8_192,
-    "anthropic/claude-3-5-sonnet":      8_192,
     "google/gemini-3-pro-preview":      65_535,
     "google/gemini-3-flash-preview":    65_535,
     "deepseek/deepseek-chat":           163_840,
@@ -501,7 +499,7 @@ VISION_CAPABLE_MODELS = {
     "anthropic/claude-sonnet-4.5",      # MUDANÇA: era opus-4.6
     "google/gemini-3-flash-preview",
     "openai/gpt-4o",
-    "anthropic/claude-3-5-sonnet",
+    "qwen/qwen-2.5-vl-72b-instruct",
 }
 
 DRE_BASE_URL = "https://diariodarepublica.pt"

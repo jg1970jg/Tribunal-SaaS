@@ -238,6 +238,18 @@ def cancelar_bloqueio(analysis_id: str) -> None:
         print(f"[WALLET] Bloqueio cancelado: analysis={analysis_id}")
     except Exception as e:
         logger.error(f"[WALLET] ERRO ao cancelar bloqueio: {e}")
+        # Criar alerta de segurança — créditos ficaram bloqueados
+        try:
+            from auth_service import get_supabase_admin
+            sb = get_supabase_admin()
+            sb.table("security_alerts").insert({
+                "type": "wallet_cancel_failed",
+                "severity": "high",
+                "description": f"Falha ao cancelar bloqueio analysis={analysis_id}: {e}",
+                "resolved": False,
+            }).execute()
+        except Exception:
+            logger.error(f"[WALLET] Também falhou ao criar alerta de segurança")
 
 
 # ============================================================

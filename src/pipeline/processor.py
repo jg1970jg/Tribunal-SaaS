@@ -752,7 +752,7 @@ REVISTO:"""
                     if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
                         logger.error(f"[CUSTO-BLOQUEIO] Limite excedido em rlm_{tipo_fase}: {e}")
                         raise
-                    pass
+                    logger.warning(f"[RLM] Erro ao registar custo rlm_{tipo_fase}: {e}")
             if self._output_dir:
                 self._log_to_file(f"rlm_{tipo_fase}.md", resultado.content if resultado else "ERRO")
             return resultado.content if resultado else texto
@@ -3530,6 +3530,11 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         """
         run_id = self._setup_run()
         timestamp_inicio = datetime.now()
+
+        # Defense-in-depth: sanitize filename to prevent prompt injection
+        import re as _re
+        if hasattr(documento, 'filename') and documento.filename:
+            documento.filename = _re.sub(r'[^a-zA-Z0-9._\-\s]', '_', documento.filename)[:255]
 
         # Parse e validação de perguntas
         perguntas = parse_perguntas(perguntas_raw)

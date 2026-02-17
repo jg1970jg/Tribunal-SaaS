@@ -64,7 +64,7 @@ def _is_retryable_http_error(exception: BaseException) -> bool:
                     )
                     return False
             except Exception:
-                pass
+                pass  # Response body unreadable — treat as normal 429
             return True  # 429 rate_limit normal → retry
         # Retry em erros de servidor (5xx)
         return status >= 500
@@ -141,8 +141,7 @@ logger = logging.getLogger(__name__)
 # Modelos com cache MANUAL (Anthropic - precisa cache_control)
 MODELS_MANUAL_CACHE = {
     "anthropic/claude-sonnet-4.5",
-    "anthropic/claude-3-5-sonnet",
-    "anthropic/claude-3-5-haiku",
+    "anthropic/claude-haiku-4.5",
     "anthropic/claude-opus-4.6",
 }
 

@@ -11,17 +11,13 @@ Validação:
   3. Extrai user_id e email do payload
 
 NOTA TÉCNICA (Fev 2026):
-  O Supabase migrou para ES256 (ECC P-256) mas o kid nos tokens
-  emitidos não corresponde ao kid publicado no JWKS endpoint.
-  Isto é um problema conhecido do Supabase (GitHub issues #36212,
-  #35870, #41691, #4726). Como workaround, fazemos decode local
-  com verificação de expiração e audience (sem verificação de
-  assinatura). A segurança é mantida porque:
-  - O token só é aceite se não estiver expirado
-  - O token só é aceite se tiver audience "authenticated"
-  - Todas as operações de dados passam pelo RLS do Supabase
-  - O token é usado para identificar o utilizador, não para
-    autorizar operações sensíveis no backend
+  O Supabase migrou para ES256 (ECC P-256). Buscamos as chaves
+  JWKS do Supabase e tentamos verificar a assinatura do JWT.
+  Se a verificação falhar (ex: kid mismatch — problema conhecido
+  do Supabase, GitHub issues #36212, #35870, #41691, #4726),
+  fazemos fallback para decode sem verificação de assinatura,
+  com log de warning. As chaves JWKS são cacheadas por 1 hora.
+  A segurança adicional é mantida pelo RLS do Supabase.
 ============================================================
 """
 
@@ -29,7 +25,9 @@ import os
 import hashlib
 import logging
 import time
+import threading
 import jwt as pyjwt
+import httpx
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -50,6 +48,128 @@ _supabase_admin: Client | None = None
 # Formato: {token_hash: {"payload": {...}, "expires": timestamp}}
 _token_cache: dict = {}
 TOKEN_CACHE_TTL = 120  # Cache por 2 minutos
+
+# JWKS cache: chaves públicas do Supabase para verificação de assinatura JWT
+JWKS_CACHE_TTL = 3600  # Cache por 1 hora
+_jwks_cache: dict = {
+    "keys": None,        # Lista de JWK dicts
+    "fetched_at": 0.0,   # Timestamp da última busca
+}
+_jwks_lock = threading.Lock()
+
+
+def _fetch_jwks() -> list[dict] | None:
+    """
+    Busca as chaves JWKS do Supabase e retorna a lista de JWK dicts.
+
+    Tenta dois endpoints:
+      1. {SUPABASE_URL}/auth/v1/.well-known/jwks.json  (padrão Supabase GoTrue)
+      2. {SUPABASE_URL}/auth/v1/keys                   (endpoint alternativo)
+
+    Retorna None se ambos falharem.
+    Resultado é cacheado por JWKS_CACHE_TTL segundos.
+    """
+    now = time.time()
+
+    # Verificar cache (thread-safe)
+    with _jwks_lock:
+        if _jwks_cache["keys"] is not None and (now - _jwks_cache["fetched_at"]) < JWKS_CACHE_TTL:
+            return _jwks_cache["keys"]
+
+    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    if not supabase_url:
+        logger.warning("SUPABASE_URL não definido — impossível buscar JWKS.")
+        return None
+
+    endpoints = [
+        f"{supabase_url}/auth/v1/.well-known/jwks.json",
+        f"{supabase_url}/auth/v1/keys",
+    ]
+
+    for url in endpoints:
+        try:
+            resp = httpx.get(url, timeout=10.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                keys = data.get("keys", [])
+                if keys:
+                    with _jwks_lock:
+                        _jwks_cache["keys"] = keys
+                        _jwks_cache["fetched_at"] = time.time()
+                    logger.info(
+                        f"JWKS carregado com sucesso de {url} "
+                        f"({len(keys)} chave(s))."
+                    )
+                    return keys
+        except Exception as e:
+            logger.debug(f"Falha ao buscar JWKS de {url}: {e}")
+            continue
+
+    logger.warning(
+        "Não foi possível obter JWKS do Supabase — "
+        "fallback para decode sem verificação de assinatura."
+    )
+    return None
+
+
+def _find_signing_key(token: str, jwks: list[dict]):
+    """
+    Procura a chave de assinatura correcta no JWKS para o token dado.
+
+    Tenta:
+      1. Match por kid (key ID) do header do token
+      2. Se não encontrar por kid, tenta a primeira chave com kty/use adequado
+
+    Retorna um objecto pyjwt.algorithms.ECAlgorithm key ou RSAAlgorithm key,
+    ou None se nenhuma chave servir.
+    """
+    try:
+        header = pyjwt.get_unverified_header(token)
+    except Exception:
+        return None, None
+
+    token_kid = header.get("kid")
+    token_alg = header.get("alg", "ES256")
+
+    # Tentar match exacto por kid
+    matched_key = None
+    for jwk in jwks:
+        if jwk.get("kid") == token_kid:
+            matched_key = jwk
+            break
+
+    # Se não encontrou por kid, tentar a primeira chave compatível
+    if matched_key is None:
+        for jwk in jwks:
+            jwk_use = jwk.get("use", "sig")
+            if jwk_use == "sig":
+                matched_key = jwk
+                logger.debug(
+                    f"Kid mismatch: token kid={token_kid}, "
+                    f"usando chave kid={jwk.get('kid')} como fallback."
+                )
+                break
+
+    if matched_key is None:
+        return None, None
+
+    # Construir a chave pública a partir do JWK
+    try:
+        from jwt.algorithms import ECAlgorithm, RSAAlgorithm
+
+        kty = matched_key.get("kty", "")
+        if kty == "EC":
+            public_key = ECAlgorithm.from_jwk(matched_key)
+            return public_key, token_alg
+        elif kty == "RSA":
+            public_key = RSAAlgorithm.from_jwk(matched_key)
+            return public_key, token_alg
+        else:
+            logger.debug(f"Tipo de chave não suportado: kty={kty}")
+            return None, None
+    except Exception as e:
+        logger.debug(f"Erro ao construir chave pública do JWK: {e}")
+        return None, None
 
 
 def get_supabase() -> Client:
@@ -85,51 +205,109 @@ def _get_token_hash(token: str) -> str:
 
 def _decode_and_validate_token(token: str) -> dict | None:
     """
-    Decode do token JWT com verificação de expiração e audience.
+    Decode do token JWT com verificação de expiração, audience e assinatura.
 
-    A assinatura não é verificada localmente devido a incompatibilidade
-    de kid entre tokens emitidos e JWKS publicado pelo Supabase.
-    A segurança é mantida pelo RLS do Supabase em todas as operações
-    de dados.
+    Estratégia:
+      1. Busca as chaves JWKS do Supabase (cacheadas por 1 hora)
+      2. Tenta verificar a assinatura com a chave pública correspondente
+      3. Se a verificação de assinatura falhar (kid mismatch, chave não
+         encontrada, etc.), faz fallback para decode sem verificação de
+         assinatura, mas regista um warning
+      4. Expiração e audience são SEMPRE verificados
 
     Returns:
         dict com {"id": user_id, "email": email} ou None se falhou
     """
+    # --- Tentativa 1: decode COM verificação de assinatura via JWKS ---
+    signature_verified = False
+    payload = None
+
     try:
-        payload = pyjwt.decode(
-            token,
-            options={
-                "verify_signature": False,
-                "verify_exp": True,
-                "verify_aud": True,
-            },
-            audience="authenticated",
-        )
-
-        user_id = payload.get("sub", "")
-        email = payload.get("email", "")
-
-        if not user_id:
-            logger.warning("Token JWT sem campo 'sub'.")
-            return None
-
-        logger.info(
-            f"Utilizador autenticado: {email} ({user_id[:8]}...)"
-        )
-        return {"id": user_id, "email": email}
-
+        jwks = _fetch_jwks()
+        if jwks:
+            public_key, algorithm = _find_signing_key(token, jwks)
+            if public_key is not None and algorithm is not None:
+                payload = pyjwt.decode(
+                    token,
+                    key=public_key,
+                    algorithms=[algorithm],
+                    options={
+                        "verify_signature": True,
+                        "verify_exp": True,
+                        "verify_aud": True,
+                    },
+                    audience="authenticated",
+                )
+                signature_verified = True
+                logger.debug("Token JWT verificado com assinatura JWKS.")
     except pyjwt.ExpiredSignatureError:
+        # Expiração é fatal — não fazer fallback
         logger.info("Token JWT expirado.")
         raise HTTPException(
             status_code=401,
             detail="Token expirado. Faça login novamente.",
         )
     except pyjwt.InvalidAudienceError:
+        # Audience inválida é fatal — não fazer fallback
         logger.warning("Token JWT com audience inválida.")
         return None
+    except pyjwt.InvalidSignatureError:
+        logger.warning(
+            "Verificação de assinatura JWT falhou — "
+            "fallback para decode sem verificação de assinatura."
+        )
+        payload = None
     except Exception as e:
-        logger.warning(f"Token JWT inválido: {type(e).__name__}: {e}")
+        logger.debug(
+            f"Verificação JWKS falhou ({type(e).__name__}: {e}) — "
+            "tentando fallback sem verificação de assinatura."
+        )
+        payload = None
+
+    # --- Tentativa 2 (fallback): decode SEM verificação de assinatura ---
+    if payload is None:
+        try:
+            payload = pyjwt.decode(
+                token,
+                options={
+                    "verify_signature": False,
+                    "verify_exp": True,
+                    "verify_aud": True,
+                },
+                audience="authenticated",
+            )
+            if not signature_verified:
+                logger.warning(
+                    "JWT aceite SEM verificação de assinatura "
+                    "(JWKS indisponível ou kid mismatch). "
+                    "Segurança depende do RLS do Supabase."
+                )
+        except pyjwt.ExpiredSignatureError:
+            logger.info("Token JWT expirado.")
+            raise HTTPException(
+                status_code=401,
+                detail="Token expirado. Faça login novamente.",
+            )
+        except pyjwt.InvalidAudienceError:
+            logger.warning("Token JWT com audience inválida.")
+            return None
+        except Exception as e:
+            logger.warning(f"Token JWT inválido: {type(e).__name__}: {e}")
+            return None
+
+    # --- Extrair dados do utilizador ---
+    user_id = payload.get("sub", "")
+    email = payload.get("email", "")
+
+    if not user_id:
+        logger.warning("Token JWT sem campo 'sub'.")
         return None
+
+    logger.info(
+        f"Utilizador autenticado: {email} ({user_id[:8]}...) "
+        f"[assinatura {'verificada' if signature_verified else 'NÃO verificada'}]"
+    )
+    return {"id": user_id, "email": email}
 
 
 async def get_current_user(
