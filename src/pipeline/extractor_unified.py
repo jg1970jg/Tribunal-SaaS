@@ -165,6 +165,14 @@ def parse_unified_output(
         items = _fallback_extract_with_offsets(chunk, extractor_id, page_mapper)
         return items, unreadable, errors
 
+    # v4.0 Fix: Se json_data é uma lista (E2/E7 devolvem array directamente),
+    # converter para formato esperado {items: [...]}
+    if isinstance(json_data, list):
+        # Filtrar items de controlo (ex: {"status": "to_be_continued"})
+        real_items = [x for x in json_data if isinstance(x, dict) and "status" not in x]
+        json_data = {"items": real_items}
+        logger.info(f"[JSON-ARRAY] {extractor_id}: convertido array ({len(real_items)} items) para formato dict")
+
     # Processar items
     raw_items = json_data.get("items", [])
     for raw_item in raw_items:

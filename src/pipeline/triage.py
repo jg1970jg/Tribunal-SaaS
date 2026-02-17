@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 TRIAGE_MODELS = [
     {"id": "T1", "model": "openai/gpt-4o-mini", "label": "GPT-4o-mini"},
     {"id": "T2", "model": "google/gemini-3-flash-preview", "label": "Gemini Flash"},
-    {"id": "T3", "model": "meta-llama/llama-4-8b-instruct", "label": "Llama 4 8B"},
+    {"id": "T3", "model": "meta-llama/llama-3.1-8b-instruct", "label": "Llama 3.1 8B"},
 ]
 
 TRIAGE_SYSTEM_PROMPT = """You are a legal document classifier. Given a snippet of a document, determine:
