@@ -219,14 +219,16 @@ def _create_evidence_item(
         extractor_id: ID do extrator (E1-E5)
         page_mapper: CharToPageMapper opcional para mapeamento de páginas
     """
-    item_type_str = raw_item.get("item_type", "other")
+    # Normalizar campos: alguns modelos (E2 Gemini, E7 Qwen) usam
+    # "type"/"content" em vez de "item_type"/"value_normalized"
+    item_type_str = raw_item.get("item_type") or raw_item.get("type", "other")
     try:
         item_type = ItemType(item_type_str)
     except ValueError:
         item_type = ItemType.OTHER
 
-    value = raw_item.get("value_normalized", "")
-    raw_text = raw_item.get("raw_text") or value
+    value = raw_item.get("value_normalized") or raw_item.get("content", "")
+    raw_text = raw_item.get("raw_text") or raw_item.get("context") or value
 
     if not value and not raw_text:
         return None
