@@ -629,18 +629,14 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     elements = []
 
     # Título
-    elements.append(Paragraph("Relatório de Análise Jurídica — LexForum", styles["LexForumTitle"]))
+    elements.append(Paragraph("Relatório de Análise — LexForum", styles["LexForumTitle"]))
     elements.append(Spacer(1, 10))
 
-    # Metadados (apenas informação relevante para o utilizador)
-    custos = data.get("custos", {})
-    custo_cobrado = custos.get("custo_cliente_usd") or custos.get("custo_cobrado_usd")
+    # Metadados (sem custos — custos apenas no ecrã, nunca em exportação)
     meta = [
         ["Área de Direito", data.get("area_direito", "N/A")],
         ["Data da Análise", data.get("timestamp_inicio", "N/A")[:10] if data.get("timestamp_inicio") else "N/A"],
     ]
-    if custo_cobrado is not None:
-        meta.append(["Custo", f"${custo_cobrado:.2f}"])
     t = Table(meta, colWidths=[5 * cm, 12 * cm])
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, -1), HexColor("#e8e8e8")),
@@ -654,48 +650,16 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     elements.append(t)
     elements.append(Spacer(1, 16))
 
-    # Parecer Final
+    # Conclusão (veredicto)
     simbolo = data.get("simbolo_final", "")
-    veredicto = data.get("veredicto_final", "Sem parecer")
-    elements.append(Paragraph("Parecer Final", styles["SectionHead"]))
+    veredicto = data.get("veredicto_final", "Sem conclusão")
+    elements.append(Paragraph("Conclusão", styles["SectionHead"]))
     elements.append(Paragraph(f"{simbolo} {veredicto}", styles["BodyText2"]))
     elements.append(Spacer(1, 10))
 
-    # Fase 1
-    elements.append(Paragraph("Fase 1 — Extração", styles["SectionHead"]))
-    f1 = _sanitize_content(data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", ""))
-    for line in (f1 or "Sem dados de extração.").split("\n"):
-        if line.strip():
-            safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            elements.append(Paragraph(safe, styles["BodyText2"]))
-    elements.append(Spacer(1, 10))
-
-    # Fase 2
-    elements.append(Paragraph("Fase 2 — Auditoria", styles["SectionHead"]))
-    f2 = _sanitize_content(data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", ""))
-    for line in (f2 or "Sem dados de auditoria.").split("\n"):
-        if line.strip():
-            safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            elements.append(Paragraph(safe, styles["BodyText2"]))
-    elements.append(Spacer(1, 10))
-
-    # Fase 3
-    elements.append(Paragraph("Fase 3 — Relatoria", styles["SectionHead"]))
-    for p in data.get("fase3_pareceres", []):
-        conteudo = _sanitize_content(p.get("conteudo", "")) if isinstance(p, dict) else ""
-        modelo = p.get("modelo", "") if isinstance(p, dict) else ""
-        if modelo:
-            elements.append(Paragraph(f"<b>{modelo}</b>", styles["BodyText2"]))
-        for line in conteudo.split("\n"):
-            if line.strip():
-                safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                elements.append(Paragraph(safe, styles["BodyText2"]))
-        elements.append(Spacer(1, 6))
-
-    # Fase 4
-    elements.append(Paragraph("Fase 4 — Parecer do Conselheiro-Mor", styles["SectionHead"]))
+    # Relatório Profissional (Curador Sénior — substitui fases técnicas)
     f4 = _sanitize_content(data.get("fase3_presidente", ""))
-    for line in (f4 or "Sem parecer do Conselheiro-Mor.").split("\n"):
+    for line in (f4 or "Sem análise disponível.").split("\n"):
         if line.strip():
             safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             elements.append(Paragraph(safe, styles["BodyText2"]))
@@ -722,17 +686,14 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
     style.font.size = Pt(10)
     style.font.name = "Calibri"
 
-    title = doc.add_heading("Relatório de Análise Jurídica — LexForum", level=0)
+    title = doc.add_heading("Relatório de Análise — LexForum", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    custos_docx = data.get("custos", {})
-    custo_cobrado_docx = custos_docx.get("custo_cliente_usd") or custos_docx.get("custo_cobrado_usd")
+    # Metadados (sem custos — custos apenas no ecrã, nunca em exportação)
     meta_rows = [
         ("Área de Direito", data.get("area_direito", "N/A")),
         ("Data da Análise", data.get("timestamp_inicio", "N/A")[:10] if data.get("timestamp_inicio") else "N/A"),
     ]
-    if custo_cobrado_docx is not None:
-        meta_rows.append(("Custo", f"${custo_cobrado_docx:.2f}"))
     table = doc.add_table(rows=len(meta_rows), cols=2)
     table.style = "Light Grid Accent 1"
     for i, (label, value) in enumerate(meta_rows):
@@ -744,32 +705,15 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
                     run.font.size = Pt(9)
     doc.add_paragraph("")
 
-    doc.add_heading("Parecer Final", level=1)
+    doc.add_heading("Conclusão", level=1)
     simbolo = data.get("simbolo_final", "")
-    veredicto = data.get("veredicto_final", "Sem parecer")
+    veredicto = data.get("veredicto_final", "Sem conclusão")
     p = doc.add_paragraph(f"{simbolo} {veredicto}")
     p.runs[0].bold = True
 
-    doc.add_heading("Fase 1 — Extração", level=1)
-    f1 = _sanitize_content(data.get("fase1_agregado_consolidado") or data.get("fase1_agregado", ""))
-    doc.add_paragraph(f1 or "Sem dados de extração.")
-
-    doc.add_heading("Fase 2 — Auditoria", level=1)
-    f2 = _sanitize_content(data.get("fase2_chefe_consolidado") or data.get("fase2_chefe", ""))
-    doc.add_paragraph(f2 or "Sem dados de auditoria.")
-
-    doc.add_heading("Fase 3 — Relatoria", level=1)
-    for p_data in data.get("fase3_pareceres", []):
-        if isinstance(p_data, dict):
-            modelo = p_data.get("modelo", "")
-            conteudo = _sanitize_content(p_data.get("conteudo", ""))
-            if modelo:
-                doc.add_heading(modelo, level=2)
-            doc.add_paragraph(conteudo)
-
-    doc.add_heading("Fase 4 — Parecer do Conselheiro-Mor", level=1)
+    # Relatório Profissional (Curador Sénior — substitui fases técnicas)
     f4 = _sanitize_content(data.get("fase3_presidente", ""))
-    doc.add_paragraph(f4 or "Sem parecer do Conselheiro-Mor.")
+    doc.add_paragraph(f4 or "Sem análise disponível.")
 
     doc.add_paragraph("")
     footer = doc.add_paragraph(
@@ -870,7 +814,7 @@ def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] =
 
     f4 = data.get("fase3_presidente", "")
     if f4:
-        parts.append(f"PARECER CONSELHEIRO-MOR:\n{f4[:3000]}")
+        parts.append(f"ANÁLISE FINAL:\n{f4[:3000]}")
 
     docs_adicionais = data.get("documentos_adicionais", [])
     if docs_adicionais:

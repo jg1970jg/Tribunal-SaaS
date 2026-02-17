@@ -138,6 +138,7 @@ from prompts_maximos import (
     PROMPT_AUDITOR_SENIOR,
     PROMPT_JUIZ,
     PROMPT_CONSELHEIRO_MOR,
+    PROMPT_CURADOR_SENIOR,
 )
 from src.utils.perguntas import parse_perguntas, validar_perguntas
 from src.utils.metadata_manager import guardar_metadata, gerar_titulo_automatico
@@ -3521,6 +3522,159 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         else:
             return "INCONCLUSIVO", SIMBOLOS_VERIFICACAO["atencao"], "atencao"
 
+    def _quality_gate_curador(self, texto: str) -> List[str]:
+        """Verifica quality gate do Curador Sénior. Retorna lista de falhas."""
+        falhas = []
+
+        # Q3: Zero IDs técnicos
+        if re.search(r'finding_\w+|dp_\w+|nid=|ref_\w+|\bitem_id\b', texto):
+            falhas.append("Q3: IDs técnicos encontrados (finding_*, dp_*, nid=, ref_*, item_id)")
+
+        # Q4: Zero timestamps de sistema (formato ISO)
+        if re.search(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}', texto):
+            falhas.append("Q4: Timestamps de sistema encontrados (formato ISO)")
+
+        # Q5: Zero nomes de modelos de IA
+        if re.search(r'gpt-|claude-|gemini-|llama-|deepseek|\bopus\b|\bsonnet\b|\bhaiku\b', texto, re.IGNORECASE):
+            falhas.append("Q5: Nomes de modelos de IA encontrados")
+
+        # Q6: Zero custos de processamento
+        if re.search(r'\$\d+\.\d+|\bUSD\b|\btokens\b', texto, re.IGNORECASE):
+            falhas.append("Q6: Referências a custos/tokens encontradas")
+
+        # Q7: Zero referências a fases do pipeline
+        if re.search(r'[Ff]ase\s+\d|[Aa]uditor|[Rr]elator|\bpipeline\b|\bagente\b|\bextrat(?:or|ores)\b', texto, re.IGNORECASE):
+            falhas.append("Q7: Referências a fases/papéis do pipeline encontradas")
+
+        # Q10: Sumário ≤ 8 linhas
+        match_sumario = re.search(
+            r'##\s*1\.\s*SUM[ÁA]RIO.*?\n(.*?)(?=##\s*2\.)',
+            texto, re.DOTALL | re.IGNORECASE
+        )
+        if match_sumario:
+            linhas_sumario = [l for l in match_sumario.group(1).strip().split('\n') if l.strip()]
+            if len(linhas_sumario) > 8:
+                falhas.append(f"Q10: Sumário tem {len(linhas_sumario)} linhas (máximo 8)")
+
+        # Q12: Disclaimer presente
+        if not re.search(r'disclaimer|não substitui|nao substitui', texto, re.IGNORECASE):
+            falhas.append("Q12: Disclaimer não encontrado")
+
+        return falhas
+
+    def _fase5_curadoria(
+        self,
+        final_decision,
+        verificacoes: list,
+        area_direito: str,
+        fase0_triage,
+        perguntas: list,
+        documento,
+        presidente_texto: str = "",
+    ) -> str:
+        """
+        Fase 5: Curador Sénior — transforma o output técnico num Parecer Jurídico profissional.
+
+        Returns:
+            str: Markdown do relatório profissional, ou string vazia se falhou.
+        """
+        import json as _json
+
+        # 1. Construir input JSON para o Curador
+        curador_input = {
+            "documento_contexto": {
+                "area_direito": area_direito,
+                "dominio_triage": fase0_triage.domain if fase0_triage else None,
+                "filename": getattr(documento, 'filename', ''),
+                "num_chars": getattr(documento, 'num_chars', 0),
+                "num_pages": getattr(documento, 'num_pages', None),
+            },
+            "perguntas_utilizador": perguntas or [],
+            "verificacoes_legais": [v.to_dict() for v in verificacoes] if verificacoes else [],
+        }
+
+        # Adicionar decisão final estruturada (modo unified)
+        if final_decision:
+            curador_input["decisao_final"] = {
+                "decision_type": final_decision.decision_type.value if hasattr(final_decision.decision_type, 'value') else str(final_decision.decision_type),
+                "confidence": final_decision.confidence,
+                "final_answer": final_decision.final_answer,
+                "decision_points": [dp.to_dict() for dp in final_decision.decision_points_final] if final_decision.decision_points_final else [],
+                "proofs": [p.to_dict() for p in final_decision.proofs] if final_decision.proofs else [],
+                "conflicts_resolved": [c.to_dict() for c in final_decision.conflicts_resolved] if final_decision.conflicts_resolved else [],
+                "conflicts_unresolved": final_decision.conflicts_unresolved or [],
+                "qa_final": final_decision.qa_final or [],
+            }
+
+        # Incluir o texto completo do presidente como base
+        curador_input["relatorio_presidente_markdown"] = presidente_texto
+
+        input_json = _json.dumps(curador_input, ensure_ascii=False, indent=2, default=str)
+
+        # 2. Chamar o LLM (mesmo modelo do presidente)
+        user_prompt = (
+            f"INPUT JSON DO PIPELINE:\n\n{input_json}\n\n"
+            "---\n\n"
+            "Gera o Relatório de Análise Final completo em Markdown, seguindo TODAS as instruções do sistema."
+        )
+
+        resultado = self._call_llm(
+            model=self.presidente_model,
+            prompt=user_prompt,
+            system_prompt=PROMPT_CURADOR_SENIOR,
+            role_name="curador_senior",
+            temperature=0.0,
+            max_tokens=32768,
+        )
+
+        if not resultado.sucesso or not resultado.conteudo.strip():
+            logger.warning("[CURADOR] LLM call falhou ou retornou vazio")
+            return ""
+
+        relatorio = resultado.conteudo
+
+        # 3. Quality Gate — verificações regex pós-geração + até 2 re-iterações
+        max_iteracoes = 2
+        for iteracao in range(max_iteracoes):
+            falhas = self._quality_gate_curador(relatorio)
+            if not falhas:
+                logger.info(f"[CURADOR] Quality gate passed (iteração {iteracao})")
+                break
+
+            logger.warning(f"[CURADOR] Quality gate falhou (iteração {iteracao + 1}/{max_iteracoes}): {falhas}")
+
+            # Re-enviar ao Curador com feedback
+            feedback_prompt = (
+                "O teu relatório falhou nas seguintes verificações:\n"
+                + "\n".join(f"- {f}" for f in falhas)
+                + "\n\nCorrige APENAS estes problemas e devolve o relatório completo corrigido."
+                + f"\n\nRELATÓRIO ACTUAL:\n\n{relatorio}"
+            )
+
+            resultado_corr = self._call_llm(
+                model=self.presidente_model,
+                prompt=feedback_prompt,
+                system_prompt=PROMPT_CURADOR_SENIOR,
+                role_name="curador_senior_correcao",
+                temperature=0.0,
+                max_tokens=32768,
+            )
+
+            if resultado_corr.sucesso and resultado_corr.conteudo.strip():
+                relatorio = resultado_corr.conteudo
+            else:
+                logger.warning("[CURADOR] Correcção falhou, mantendo versão anterior")
+                break
+        else:
+            # Loop completou sem break = todas as iterações usadas
+            falhas_finais = self._quality_gate_curador(relatorio)
+            if falhas_finais:
+                relatorio = "[REVISÃO MANUAL RECOMENDADA]\n\n" + relatorio
+                logger.warning(f"[CURADOR] Quality gate falhou após {max_iteracoes} iterações: {falhas_finais}")
+
+        self._log_to_file("fase5_curador_senior.md", relatorio)
+        return relatorio
+
     def processar(
         self,
         documento: DocumentContent,
@@ -3930,6 +4084,36 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                     "sucesso": len(real_errs) == 0,
                 }
             result.resumo_por_ia = resumo_ia
+
+            # ===== FASE 5: CURADORIA SÉNIOR =====
+            self._reportar_progresso("fase5", 92, "Curador Sénior: redigindo parecer final...")
+            raw_presidente = result.fase3_presidente  # Guardar output bruto do presidente
+            try:
+                relatorio_curador = self._fase5_curadoria(
+                    final_decision=final_decision,
+                    verificacoes=result.verificacoes_legais,
+                    area_direito=area_direito,
+                    fase0_triage=fase0_triage,
+                    perguntas=perguntas,
+                    documento=documento,
+                    presidente_texto=raw_presidente,
+                )
+                if relatorio_curador and relatorio_curador.strip():
+                    result.fase3_presidente = relatorio_curador  # Substituir com relatório profissional
+                    logger.info(f"[CURADOR] Relatório profissional: {len(relatorio_curador)} chars")
+                    resumo_ia["curador_senior"] = {
+                        "tipo": "curador_senior",
+                        "modelo": self.presidente_model,
+                        "sucesso": True,
+                    }
+                else:
+                    logger.warning("[CURADOR] Output vazio, mantendo output do presidente")
+            except Exception as e:
+                logger.warning(f"[CURADOR] Falhou (non-blocking): {e}. Mantendo output do presidente.")
+
+            # Guardar output raw do presidente para debug
+            self._log_to_file("fase4_presidente_raw.md", raw_presidente)
+            self._reportar_progresso("fase5", 95, "Parecer finalizado")
 
             # Calcular totais via CostController (tokens REAIS das APIs)
             if self._cost_controller:
