@@ -252,10 +252,11 @@ OPENAI_MODELS_NO_TEMPERATURE = [
     "o3-pro",
 ]
 
-# v4.0: Modelos reasoning de outros providers (também sem temperature)
+# v4.0: Modelos reasoning de outros providers
+# Nota: DeepSeek R1 suporta temperature no OpenRouter, mas pode ignorá-lo
 REASONING_MODELS_NO_TEMPERATURE = [
-    "deepseek/deepseek-reasoner",
-    "deepseek-reasoner",
+    "deepseek/deepseek-r1",
+    "deepseek-r1",
 ]
 
 
@@ -350,7 +351,7 @@ def supports_temperature(model_name: str) -> bool:
     """
     Verifica se o modelo suporta o parâmetro temperature.
 
-    Modelos de reasoning (pro, o1, o3, deepseek-reasoner) NÃO suportam temperature.
+    Modelos de reasoning (pro, o1, o3, deepseek-r1) NÃO suportam temperature.
     """
     clean_name = model_name.replace("openai/", "").lower()
     for no_temp_model in OPENAI_MODELS_NO_TEMPERATURE:

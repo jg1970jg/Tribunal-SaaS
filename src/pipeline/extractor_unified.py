@@ -987,15 +987,46 @@ def auto_repair_json(text: str) -> Optional[str]:
         json.loads(cleaned)
         return cleaned
     except json.JSONDecodeError:
-        # Last resort: try to fix common issues
         # Remove any control characters
         cleaned = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned)
         try:
             json.loads(cleaned)
             return cleaned
         except json.JSONDecodeError:
-            logger.warning("[JSON-REPAIR] Could not repair JSON after all attempts")
-            return None
+            pass
+
+    # 7. json_repair library fallback (stack-based — handles truncation well)
+    try:
+        from json_repair import repair_json
+        repaired = repair_json(cleaned, return_objects=False)
+        if repaired:
+            json.loads(repaired)  # Verify it's valid
+            logger.info(f"[JSON-REPAIR] json_repair library recuperou {len(repaired)} chars")
+            return repaired
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"[JSON-REPAIR] json_repair library falhou: {e}")
+
+    # 8. Last resort: truncate at last complete item
+    try:
+        last_complete = cleaned.rfind('},')
+        if last_complete == -1:
+            last_complete = cleaned.rfind('}]')
+        if last_complete > 0:
+            # Determine if root is array or object
+            if cleaned.lstrip().startswith('['):
+                truncated = cleaned[:last_complete + 1] + ']'
+            else:
+                truncated = cleaned[:last_complete + 1] + ']}'
+            json.loads(truncated)
+            logger.info(f"[JSON-REPAIR] Truncado no último item completo: {len(truncated)} chars")
+            return truncated
+    except json.JSONDecodeError:
+        pass
+
+    logger.warning("[JSON-REPAIR] Could not repair JSON after all attempts")
+    return None
 
 
 def detect_continuation(json_data: dict) -> Optional[int]:

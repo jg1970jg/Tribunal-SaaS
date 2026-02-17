@@ -12,6 +12,11 @@ import re
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
 
+try:
+    from json_repair import repair_json
+except ImportError:
+    repair_json = None
+
 from src.config import LOG_LEVEL
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
@@ -52,10 +57,25 @@ def _repair_truncated_json(text: str) -> dict | list | None:
     return None
 
 
+def _try_json_repair(text: str) -> dict | list | None:
+    """Tenta reparar JSON usando a biblioteca json_repair como fallback."""
+    if repair_json is None:
+        return None
+    try:
+        repaired = repair_json(text, return_objects=True)
+        if repaired:
+            logger.info(f"[JSON-REPAIR] json_repair recuperou dados ({type(repaired).__name__})")
+            return repaired
+    except Exception as e:
+        logger.debug(f"[JSON-REPAIR] json_repair falhou: {e}")
+    return None
+
+
 def extract_json_from_text(text: str) -> dict | list | None:
     """
     Tenta extrair JSON válido de texto que pode conter markdown,
     texto explicativo antes/depois, etc.
+    Suporta tanto objectos {...} como arrays [...].
     """
     if not text or not text.strip():
         logger.warning(f"[JSON-EXTRACT] Input vazio ou None: {text!r}")
@@ -76,10 +96,16 @@ def extract_json_from_text(text: str) -> dict | list | None:
     # 2. Extrair de bloco markdown ```json ... ```
     md_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
     if md_match:
+        body = md_match.group(1).strip()
         try:
-            return json.loads(md_match.group(1).strip())
+            return json.loads(body)
         except json.JSONDecodeError as e:
             logger.debug(f"[JSON-EXTRACT] Estratégia 2 falhou: {e}")
+            # Tentar json_repair no body do markdown
+            repaired = _try_json_repair(body)
+            if repaired is not None:
+                logger.info(f"[JSON-EXTRACT] Estratégia 2+repair: reparou JSON de markdown")
+                return repaired
     else:
         logger.debug(f"[JSON-EXTRACT] Estratégia 2: nenhum bloco markdown encontrado")
 
@@ -87,12 +113,18 @@ def extract_json_from_text(text: str) -> dict | list | None:
     md_open = re.search(r'```(?:json)?\s*\n?', text)
     if md_open and not md_match:
         json_body = text[md_open.end():]
+        # Tentar repair directo primeiro (funciona com arrays e objectos)
         repaired = _repair_truncated_json(json_body)
         if repaired is not None:
             logger.info(f"[JSON-EXTRACT] Estratégia 2b: reparou JSON truncado de markdown")
             return repaired
+        # Tentar json_repair library
+        repaired = _try_json_repair(json_body)
+        if repaired is not None:
+            logger.info(f"[JSON-EXTRACT] Estratégia 2b+repair: json_repair reparou markdown truncado")
+            return repaired
 
-    # 3. Encontrar primeiro { e último }
+    # 3. Encontrar primeiro { e último } (objectos)
     first_brace = text.find('{')
     last_brace = text.rfind('}')
     if first_brace != -1 and last_brace > first_brace:
@@ -105,13 +137,10 @@ def extract_json_from_text(text: str) -> dict | list | None:
     if first_brace != -1:
         repaired = _repair_truncated_json(text[first_brace:])
         if repaired is not None:
-            logger.info(f"[JSON-EXTRACT] Estratégia 3b: reparou JSON truncado")
+            logger.info(f"[JSON-EXTRACT] Estratégia 3b: reparou JSON truncado (objecto)")
             return repaired
 
-    if first_brace == -1:
-        logger.debug(f"[JSON-EXTRACT] Estratégia 3: nenhum par {{}} encontrado")
-
-    # 4. Encontrar primeiro [ e último ]
+    # 4. Encontrar primeiro [ e último ] (arrays)
     first_bracket = text.find('[')
     last_bracket = text.rfind(']')
     if first_bracket != -1 and last_bracket > first_bracket:
@@ -119,8 +148,16 @@ def extract_json_from_text(text: str) -> dict | list | None:
             return json.loads(text[first_bracket:last_bracket + 1])
         except json.JSONDecodeError as e:
             logger.debug(f"[JSON-EXTRACT] Estratégia 4 falhou: {e}")
-    else:
-        logger.debug(f"[JSON-EXTRACT] Estratégia 4: nenhum par [] encontrado")
+
+    # 4b. Array truncado — [ encontrado mas sem ] final válido
+    if first_bracket != -1:
+        repaired = _repair_truncated_json(text[first_bracket:])
+        if repaired is not None:
+            logger.info(f"[JSON-EXTRACT] Estratégia 4b: reparou JSON truncado (array)")
+            return repaired
+
+    if first_brace == -1 and first_bracket == -1:
+        logger.debug(f"[JSON-EXTRACT] Estratégia 3+4: nenhum par {{}} ou [] encontrado")
 
     # 5. Remover prefixo comum e tentar de novo
     for prefix in ["Here is", "Here's", "Below is", "The following", "json\n", "JSON\n"]:
@@ -132,7 +169,13 @@ def extract_json_from_text(text: str) -> dict | list | None:
             except json.JSONDecodeError as e:
                 logger.debug(f"[JSON-EXTRACT] Estratégia 5 falhou (prefix={prefix!r}): {e}")
 
-    logger.warning(f"[JSON-EXTRACT] TODAS AS 7 ESTRATÉGIAS FALHARAM para input de {len(text)} chars")
+    # 6. Último recurso: json_repair no texto inteiro
+    repaired = _try_json_repair(text)
+    if repaired is not None:
+        logger.info(f"[JSON-EXTRACT] Estratégia 6: json_repair recuperou do texto inteiro")
+        return repaired
+
+    logger.warning(f"[JSON-EXTRACT] TODAS AS ESTRATÉGIAS FALHARAM para input de {len(text)} chars")
     logger.warning(f"[JSON-EXTRACT] Tipo de chars no início: {[c for c in text[:20]]}")
 
     return None

@@ -362,7 +362,7 @@ AUDITOR_MODELS = [
     "openai/gpt-5.2",                  # A1: Prazos e lógica
     "google/gemini-3-pro-preview",      # A2: Visual (carimbos vs texto) — v4.0
     "anthropic/claude-sonnet-4.5",      # A3: Texto + visão complementar — v4.0
-    "meta-llama/llama-4-405b-instruct", # A4: Advogado do Diabo — v4.0 (Grok BANIDO)
+    "meta-llama/llama-3.1-405b-instruct", # A4: Advogado do Diabo — v4.0 (Grok BANIDO)
 ]
 
 AUDITORES = [
@@ -381,7 +381,7 @@ AUDITORES = [
 
 RELATOR_MODELS = [
     "openai/o1-pro",                    # J1: Raciocínio puro — v4.0
-    "deepseek/deepseek-reasoner",       # J2: DeepSeek R1 — v4.0
+    "deepseek/deepseek-r1",             # J2: DeepSeek R1 — v4.0 (OpenRouter ID)
     "anthropic/claude-opus-4.6",        # J3: Doutrina — v4.0
 ]
 
@@ -416,10 +416,10 @@ MODEL_CONTEXT_LIMITS = {
     "google/gemini-3-pro-preview":      1_049_000,
     "google/gemini-3-flash-preview":    1_049_000,
     "deepseek/deepseek-chat":           128_000,
-    "deepseek/deepseek-reasoner":       128_000,     # v4.0: J2 DeepSeek R1
+    "deepseek/deepseek-r1":             128_000,     # v4.0: J2 DeepSeek R1
     "mistralai/mistral-medium-3":       131_072,
-    "meta-llama/llama-4-405b-instruct": 128_000,     # v4.0: A4 Advogado do Diabo
-    "meta-llama/llama-4-8b-instruct":   128_000,     # v4.0: Fase 0
+    "meta-llama/llama-3.1-405b-instruct": 128_000,    # v4.0: A4 Advogado do Diabo
+    "meta-llama/llama-3.1-8b-instruct":  128_000,    # v4.0: Fase 0
     "qwen/qwen-2.5-vl-72b-instruct":   128_000,     # v4.0: E7 OCR
 }
 
@@ -438,10 +438,10 @@ MODEL_MAX_OUTPUT = {
     "google/gemini-3-pro-preview":      65_535,
     "google/gemini-3-flash-preview":    65_535,
     "deepseek/deepseek-chat":           163_840,
-    "deepseek/deepseek-reasoner":       64_000,      # v4.0: J2
+    "deepseek/deepseek-r1":             64_000,      # v4.0: J2
     "mistralai/mistral-medium-3":       32_768,
-    "meta-llama/llama-4-405b-instruct": 32_768,      # v4.0: A4
-    "meta-llama/llama-4-8b-instruct":   32_768,      # v4.0: Fase 0
+    "meta-llama/llama-3.1-405b-instruct": 32_768,     # v4.0: A4
+    "meta-llama/llama-3.1-8b-instruct":  32_768,     # v4.0: Fase 0
     "qwen/qwen-2.5-vl-72b-instruct":   32_768,      # v4.0: E7
 }
 

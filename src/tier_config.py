@@ -339,10 +339,10 @@ OPENROUTER_MODEL_MAPPING = {
     "gemini-3-flash-preview": "google/gemini-3-flash-preview",
     # DeepSeek
     "deepseek": "deepseek/deepseek-chat",
-    "deepseek-r1": "deepseek/deepseek-reasoner",
+    "deepseek-r1": "deepseek/deepseek-r1",
     # Meta
-    "llama-4-405b": "meta-llama/llama-4-405b-instruct",
-    "llama-4-8b": "meta-llama/llama-4-8b-instruct",
+    "llama-3.1-405b": "meta-llama/llama-3.1-405b-instruct",
+    "llama-3.1-8b": "meta-llama/llama-3.1-8b-instruct",
     # Mistral / Qwen
     "mistral-medium-3": "mistralai/mistral-medium-3",
     "qwen-vl-72b": "qwen/qwen-2.5-vl-72b-instruct",
