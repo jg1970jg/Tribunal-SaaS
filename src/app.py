@@ -863,11 +863,14 @@ def executar_pipeline_documentos(documentos: List[DocumentContent], area: str, p
     if perguntas:
         st.info(f"📊 {len(perguntas)} pergunta(s) serão processadas na Fase 3 e 4")
 
-    # ← NOVO: Usar modelos escolhidos pelo utilizador
+    # v4.0 FIX: Calcular modelos localmente, NÃO mutar config global
+    # (engine.py já resolve modelos internamente via tier_models)
     if "model_choices" in st.session_state:
-        import src.config as config_module
-        config_module.CHEFE_MODEL = get_chefe_model(st.session_state.model_choices["chefe"])
-        config_module.PRESIDENTE_MODEL = get_presidente_model(st.session_state.model_choices["presidente"])
+        _local_chefe = get_chefe_model(st.session_state.model_choices["chefe"])
+        _local_presidente = get_presidente_model(st.session_state.model_choices["presidente"])
+    else:
+        _local_chefe = CHEFE_MODEL
+        _local_presidente = PRESIDENTE_MODEL
 
     # Combinar texto de todos os documentos
     textos_combinados = []
@@ -921,7 +924,11 @@ def executar_pipeline_documentos(documentos: List[DocumentContent], area: str, p
     # === Fim da verificacao ===
 
     try:
-        processor = LexForumProcessor(callback_progresso=callback)
+        processor = LexForumProcessor(
+            chefe_model=_local_chefe,
+            presidente_model=_local_presidente,
+            callback_progresso=callback,
+        )
         resultado = processor.processar(documento_combinado, area, perguntas_raw, titulo)  # ← NOVO: passar titulo
         st.session_state.resultado = resultado
 
@@ -949,11 +956,13 @@ def executar_pipeline_texto(texto: str, area: str, perguntas_raw: str = ""):
     if perguntas:
         st.info(f"📊 {len(perguntas)} pergunta(s) serão processadas na Fase 3 e 4")
 
-    # ← NOVO: Usar modelos escolhidos pelo utilizador
+    # v4.0 FIX: Calcular modelos localmente, NÃO mutar config global
     if "model_choices" in st.session_state:
-        import src.config as config_module
-        config_module.CHEFE_MODEL = get_chefe_model(st.session_state.model_choices["chefe"])
-        config_module.PRESIDENTE_MODEL = get_presidente_model(st.session_state.model_choices["presidente"])
+        _local_chefe = get_chefe_model(st.session_state.model_choices["chefe"])
+        _local_presidente = get_presidente_model(st.session_state.model_choices["presidente"])
+    else:
+        _local_chefe = CHEFE_MODEL
+        _local_presidente = PRESIDENTE_MODEL
 
     def callback(fase, progresso, mensagem):
         progress_bar.progress(progresso / 100)
@@ -979,7 +988,11 @@ def executar_pipeline_texto(texto: str, area: str, perguntas_raw: str = ""):
     # === Fim da verificacao ===
 
     try:
-        processor = LexForumProcessor(callback_progresso=callback)
+        processor = LexForumProcessor(
+            chefe_model=_local_chefe,
+            presidente_model=_local_presidente,
+            callback_progresso=callback,
+        )
         resultado = processor.processar_texto(texto, area, perguntas_raw)
         st.session_state.resultado = resultado
 
@@ -1755,14 +1768,12 @@ def pagina_perguntas():
     
     st.markdown("---")
     
-    # Usar modelos escolhidos e modificar config globalmente
-    # (necessário porque módulo perguntas importa CHEFE_MODEL e PRESIDENTE_MODEL do config)
+    # v4.0 FIX: Calcular modelos localmente, NÃO mutar config global
     if "model_choices_perguntas" in st.session_state:
-        import src.config as config_module
-        config_module.CHEFE_MODEL = get_chefe_model(st.session_state.model_choices_perguntas["chefe"])
-        config_module.PRESIDENTE_MODEL = get_presidente_model(st.session_state.model_choices_perguntas["presidente"])
-        presidente_model_escolhido = config_module.PRESIDENTE_MODEL
+        _local_chefe_perguntas = get_chefe_model(st.session_state.model_choices_perguntas["chefe"])
+        presidente_model_escolhido = get_presidente_model(st.session_state.model_choices_perguntas["presidente"])
     else:
+        _local_chefe_perguntas = CHEFE_MODEL
         presidente_model_escolhido = PRESIDENTE_MODEL
     
     tab_perguntas_adicionais(
@@ -1770,7 +1781,8 @@ def pagina_perguntas():
         auditor_models=AUDITOR_MODELS,
         juiz_models=JUIZ_MODELS,
         presidente_model=presidente_model_escolhido,
-        llm_client=get_llm_client()
+        llm_client=get_llm_client(),
+        chefe_model=_local_chefe_perguntas,
     )
 
 

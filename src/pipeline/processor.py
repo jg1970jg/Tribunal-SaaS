@@ -770,16 +770,17 @@ REVISTO:"""
         chefe_model: str = None,
         callback_progresso: Optional[Callable] = None,
     ):
-        self.extrator_models = list(extrator_models or EXTRATOR_MODELS)
-        self.auditor_models = list(auditor_models or AUDITOR_MODELS)
-        self.relator_models = list(relator_models or JUIZ_MODELS)
+        # v4.0 FIX: deepcopy de TODAS as listas de modelos para thread-safety
+        import copy
+        self.extrator_models = list(extrator_models) if extrator_models else list(EXTRATOR_MODELS)
+        self.auditor_models = list(auditor_models) if auditor_models else list(AUDITOR_MODELS)
+        self.relator_models = list(relator_models) if relator_models else list(JUIZ_MODELS)
         self.presidente_model = presidente_model or PRESIDENTE_MODEL
         self.agregador_model = agregador_model or AGREGADOR_MODEL
         self.chefe_model = chefe_model or CHEFE_MODEL
         self.callback_progresso = callback_progresso
 
         # FIX 2026-02-14: Cópia local de LLM_CONFIGS para thread-safety
-        import copy
         self._llm_configs = copy.deepcopy(LLM_CONFIGS)
 
         self.llm_client = get_llm_client()
@@ -1335,7 +1336,7 @@ REVISTO:"""
             model = cfg["model"]
             role = cfg["role"]
             instructions = cfg["instructions"]
-            temperature = cfg.get("temperature", 0.1)
+            temperature = cfg.get("temperature", 0.0)
 
             run = ExtractionRun(
                 run_id=f"run_{extractor_id}_{doc_id}",
@@ -1795,7 +1796,7 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
             model = cfg["model"]
             role = cfg["role"]
             instructions = cfg["instructions"]
-            temperature = cfg.get("temperature", 0.1)
+            temperature = cfg.get("temperature", 0.0)
             
             # NOVO: Processar cada chunk deste extrator
             conteudos_chunks = []
@@ -2036,7 +2037,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
             model = cfg["model"]
             role = cfg["role"]
             instructions = cfg["instructions"]
-            temperature = cfg.get("temperature", 0.1)
+            temperature = cfg.get("temperature", 0.0)
 
             self._reportar_progresso("fase1", 10 + i * 4, f"Extrator {extractor_id} ({role}): {model} ({len(batches)} batches)")
             logger.info(f"=== Extrator {extractor_id}: {role} - {model} ===")

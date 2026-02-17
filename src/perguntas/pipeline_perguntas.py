@@ -260,7 +260,8 @@ def executar_fase2_auditores(
     auditor_models: List[Dict],
     llm_client,
     historico_perguntas: List[Dict] = None,  # ← NOVO!
-    documentos_anexados: Dict[str, str] = None  # ← NOVO!
+    documentos_anexados: Dict[str, str] = None,  # ← NOVO!
+    chefe_model: str = None,  # v4.0 FIX: receber modelo como parâmetro
 ) -> Tuple[List[ResultadoAuditor], str]:
     """
     Executa Fase 2: 3 Auditores + Chefe consolidador.
@@ -412,8 +413,11 @@ IMPORTANTE: Considere TODO o contexto acumulado (análise + histórico + documen
     # Chefe consolida
     logger.info("Chefe consolidando auditorias...")
     
-    from src.config import CHEFE_MODEL
-    
+    # v4.0 FIX: usar parâmetro em vez de importar global mutável
+    if chefe_model is None:
+        from src.config import CHEFE_MODEL
+        chefe_model = CHEFE_MODEL
+
     prompt_chefe = f"""Você é o CHEFE DOS AUDITORES.
 
 Recebeu 3 auditorias sobre a seguinte pergunta:
@@ -470,7 +474,7 @@ SÍNTESE CONSOLIDADA:
     
     try:
         resposta_chefe = llm_client.chat_simple(
-            model=CHEFE_MODEL,
+            model=chefe_model,
             prompt=prompt_chefe,
             temperature=0.2,
             max_tokens=3000
@@ -747,7 +751,8 @@ def processar_pergunta_adicional(
     juiz_models: List[Dict],
     presidente_model: str,
     llm_client,
-    documentos_novos: List[Tuple[str, str]] = None  # ← NOVO! [(nome, texto), ...]
+    documentos_novos: List[Tuple[str, str]] = None,  # ← NOVO! [(nome, texto), ...]
+    chefe_model: str = None,  # v4.0 FIX: receber modelo como parâmetro
 ) -> RespostaPergunta:
     """
     Processa pergunta adicional sobre análise existente.
@@ -817,7 +822,8 @@ def processar_pergunta_adicional(
             auditor_models=auditor_models,
             llm_client=llm_client,
             historico_perguntas=historico_perguntas,  # ← NOVO!
-            documentos_anexados=documentos_anexados  # ← NOVO!
+            documentos_anexados=documentos_anexados,  # ← NOVO!
+            chefe_model=chefe_model,  # v4.0 FIX: passar modelo explicitamente
         )
         
         logger.info(f"✓ Fase 2 concluída ({len(auditoria_consolidada):,} chars)")

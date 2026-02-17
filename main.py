@@ -785,11 +785,7 @@ async def export_docx(request: Request, req: ExportRequest, user: dict = Depends
 # PERGUNTAS PÓS-ANÁLISE (POST /ask)
 # ============================================================
 
-ASK_MODELS = [
-    "openai/gpt-5.2",
-    "anthropic/claude-opus-4.5",
-    "google/gemini-3-pro-preview",
-]
+from src.config import ASK_MODELS
 
 ASK_SYSTEM_PROMPT = (
     "És um jurista especializado em Direito Português. "

@@ -1527,7 +1527,7 @@ _global_client: Optional[UnifiedLLMClient] = None
 def get_llm_client() -> UnifiedLLMClient:
     """
     Retorna o cliente LLM global unificado.
-    
+
     IMPORTANTE: Este é o cliente usado por todo o programa!
     """
     global _global_client
@@ -1538,6 +1538,20 @@ def get_llm_client() -> UnifiedLLMClient:
             enable_fallback=True,
         )
     return _global_client
+
+
+def reset_llm_client():
+    """
+    Reset do cliente LLM global (ex: quando API keys mudam).
+    Thread-safe: fecha o cliente antigo antes de limpar.
+    """
+    global _global_client
+    if _global_client is not None:
+        try:
+            _global_client.close()
+        except Exception:
+            pass
+    _global_client = None
 
 
 def call_llm(

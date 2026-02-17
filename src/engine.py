@@ -479,8 +479,9 @@ def executar_analise(
     )
     import src.config as config_module
 
-    config_module.CHEFE_MODEL = get_chefe_model(consolidador_model_key)
-    config_module.PRESIDENTE_MODEL = get_presidente_model(conselheiro_model_key)
+    # v4.0 FIX: NÃO mutar config global — calcular localmente e passar como parâmetro
+    chefe_model_for_run = get_chefe_model(consolidador_model_key)
+    presidente_model_for_run = get_presidente_model(conselheiro_model_key)
 
     # v4.0: Modelos dos auditores A1-A4 já estão definidos em config.py
     # Não sobrescrever — garante diversidade de modelos na auditoria
@@ -497,7 +498,7 @@ def executar_analise(
     print(
         f"[ENGINE] Modelos ({tier_level.value}): "
         f"{extrator_summary}, "
-        f"Consolidador={config_module.CHEFE_MODEL}, Conselheiro={config_module.PRESIDENTE_MODEL}, "
+        f"Consolidador={chefe_model_for_run}, Conselheiro={presidente_model_for_run}, "
         f"{auditor_summary}, {juiz_summary}"
     )
 
@@ -565,8 +566,7 @@ def executar_analise(
         # v4.0: Selecção de modelos por tier
         auditor_models_for_run = list(config_module.AUDITOR_MODELS)
 
-        # v4.0: Presidente (Conselheiro-Mor) por tier
-        presidente_model_for_run = config_module.PRESIDENTE_MODEL
+        # v4.0: Presidente (Conselheiro-Mor) por tier — usar OpenRouter ID
         from src.tier_config import get_openrouter_model
         president_key = tier_models.get("president", "gpt-5.2")
         presidente_model_for_run = get_openrouter_model(president_key)
@@ -581,7 +581,7 @@ def executar_analise(
             extrator_models=list(config_module.EXTRATOR_MODELS),
             auditor_models=auditor_models_for_run,
             relator_models=list(config_module.JUIZ_MODELS),
-            chefe_model=config_module.CHEFE_MODEL,
+            chefe_model=chefe_model_for_run,
             presidente_model=presidente_model_for_run,
             callback_progresso=callback,
         )

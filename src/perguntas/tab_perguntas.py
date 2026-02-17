@@ -405,15 +405,16 @@ def processar_pergunta_pipeline_completo(
     juiz_models: List,
     presidente_model: str,
     llm_client,
-    documentos_novos: List[Tuple[str, str]] = None  # ← NOVO!
+    documentos_novos: List[Tuple[str, str]] = None,  # ← NOVO!
+    chefe_model: str = None,  # v4.0 FIX: receber modelo como parâmetro
 ):
     """
     Processa pergunta usando pipeline completo.
-    
+
     ← MODIFICADO: Agora aceita documentos_novos!
     """
     from src.perguntas.pipeline_perguntas import processar_pergunta_adicional
-    
+
     return processar_pergunta_adicional(
         run_id=run_id,
         output_dir=output_dir,
@@ -422,7 +423,8 @@ def processar_pergunta_pipeline_completo(
         juiz_models=juiz_models,
         presidente_model=presidente_model,
         llm_client=llm_client,
-        documentos_novos=documentos_novos  # ← NOVO!
+        documentos_novos=documentos_novos,  # ← NOVO!
+        chefe_model=chefe_model,  # v4.0 FIX: passar modelo explicitamente
     )
 
 
@@ -435,7 +437,8 @@ def tab_perguntas_adicionais(
     auditor_models: List,
     juiz_models: List,
     presidente_model: str,
-    llm_client
+    llm_client,
+    chefe_model: str = None,
 ):
     """
     Interface principal - Perguntas Adicionais.
@@ -684,7 +687,8 @@ def tab_perguntas_adicionais(
                 juiz_models=juiz_models,
                 presidente_model=presidente_model,
                 llm_client=llm_client,
-                documentos_novos=documentos_novos_lista  # ← NOVO!
+                documentos_novos=documentos_novos_lista,  # ← NOVO!
+                chefe_model=chefe_model,  # v4.0 FIX: passar modelo explicitamente
             )
             
             progress_bar.progress(100)

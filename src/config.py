@@ -347,7 +347,6 @@ LLM_CONFIGS = [
 ]
 
 EXTRATOR_MODELS = [cfg["model"] for cfg in LLM_CONFIGS]
-EXTRATOR_MODELS_NEW = EXTRATOR_MODELS
 
 # =============================================================================
 # AUDITORES — v4.0 HANDOVER
@@ -457,6 +456,16 @@ FALLBACK_MODEL_NIVEL3 = "google/gemini-3-pro-preview"  # v4.0: Grok BANIDO → G
 LIMITE_NIVEL1_CHARS = 1_120_000     # ~400K tokens x 4 x 0.70 = docs até ~280 páginas
 LIMITE_NIVEL2_CHARS = 2_930_000     # ~1.048K tokens x 4 x 0.70 = docs até ~730 páginas
 LIMITE_NIVEL3_CHARS = 5_600_000     # ~2.000K tokens x 4 x 0.70 = docs até ~2.500 páginas
+
+# =============================================================================
+# MODELOS PARA ENDPOINT /ASK (Perguntas pós-análise)
+# =============================================================================
+
+ASK_MODELS = [
+    "openai/gpt-5.2",
+    "anthropic/claude-opus-4.6",
+    "google/gemini-3-pro-preview",
+]
 
 # =============================================================================
 # PROMPTS SISTEMA

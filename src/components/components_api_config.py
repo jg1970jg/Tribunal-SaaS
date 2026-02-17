@@ -272,14 +272,9 @@ def pagina_api_keys():
     
     # Botão reiniciar cliente (força recarregar keys)
     if st.button("🔄 Reiniciar Cliente LLM", use_container_width=True):
-        # Limpar cache do cliente
-        from src.llm_client import _global_client
-        if _global_client:
-            _global_client.close()
-        
-        # Forçar recriação na próxima chamada
-        import src.llm_client as llm_module
-        llm_module._global_client = None
-        
+        # v4.0 FIX: usar função dedicada em vez de mutar global diretamente
+        from src.llm_client import reset_llm_client
+        reset_llm_client()
+
         st.success("✅ Cliente reiniciado! Keys recarregadas.")
         st.rerun()
