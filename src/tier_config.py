@@ -4,7 +4,7 @@ TIER CONFIGURATION - Sistema Bronze/Prata/Ouro
 ==================================================
 Define os tiers disponíveis, modelos associados e preços.
 Margem de lucro: 100%
-Margem de segurança: 25%
+Margem de segurança: 50% (calibrado 15-Fev-2026)
 
 PALAVRAS VETADAS (NUNCA usar):
   ❌ "advogado sénior" / "nível de advogado"
@@ -87,12 +87,12 @@ TIER_CONFIG = {
         },
 
         "estimated_costs": {
-            "triage": 0.05,          # Fase 0
-            "extraction": 2.00,      # Fase 1 (7 IAs)
-            "aggregation": 0.50,     # Fase 2
-            "audit": 1.50,           # Fase 3 (4 IAs)
-            "judgment": 2.00,        # Fase 4 (3 IAs reasoning)
-            "president": 0.50,       # Fase 5
+            "triage": 0.10,          # Fase 0 (3 IAs baratas)
+            "extraction": 3.00,      # Fase 1 (7 IAs incl. GPT-5.2, Gemini Pro)
+            "aggregation": 0.80,     # Fase 2 (agregador dedup)
+            "audit": 2.00,           # Fase 3 (4 IAs: GPT-5.2, Gemini Pro, Sonnet, Llama)
+            "judgment": 3.50,        # Fase 4 (3 IAs reasoning: o1-pro $150/$600, R1, Opus)
+            "president": 0.60,       # Fase 5 (GPT-5.2)
         },
 
         "features": [
@@ -134,12 +134,12 @@ TIER_CONFIG = {
         },
 
         "estimated_costs": {
-            "triage": 0.05,
-            "extraction": 2.00,
-            "aggregation": 0.50,
-            "audit": 1.50,
-            "judgment": 2.00,
-            "president": 2.00,       # Opus mais caro
+            "triage": 0.10,
+            "extraction": 3.00,
+            "aggregation": 0.80,
+            "audit": 2.00,
+            "judgment": 3.50,
+            "president": 2.50,       # Opus 4.6 ($15/$75 per M tokens)
         },
 
         "features": [
@@ -181,12 +181,12 @@ TIER_CONFIG = {
         },
 
         "estimated_costs": {
-            "triage": 0.05,
-            "extraction": 2.00,
-            "aggregation": 0.50,
-            "audit": 3.00,           # +A5 Opus
-            "judgment": 2.00,
-            "president": 3.00,       # GPT-5.2-Pro
+            "triage": 0.10,
+            "extraction": 3.00,
+            "aggregation": 0.80,
+            "audit": 4.00,           # +A5 Opus ($15/$75 per M tokens)
+            "judgment": 3.50,
+            "president": 3.50,       # GPT-5.2-Pro ($21/$168 per M tokens)
         },
 
         "features": [
@@ -243,8 +243,8 @@ def calculate_tier_cost(tier: TierLevel, document_tokens: int = 0) -> Dict[str, 
     # Margem de lucro: 100% (custo × 2)
     custo_cliente = total_real_cost * 2
 
-    # Margem de segurança: +25% para bloqueio
-    bloqueio = custo_cliente * 1.25
+    # Margem de segurança: +50% para bloqueio (alinhado com wallet_manager.SAFETY_MARGIN=1.50)
+    bloqueio = custo_cliente * 1.50
 
     return {
         "custo_real": round(total_real_cost, 4),
@@ -257,6 +257,35 @@ def calculate_tier_cost(tier: TierLevel, document_tokens: int = 0) -> Dict[str, 
 def get_tier_models(tier: TierLevel) -> Dict[str, str]:
     """Retorna os modelos associados a um tier."""
     return TIER_CONFIG[tier]["models"].copy()
+
+
+def _get_models_per_phase(tier_level: TierLevel) -> Dict[str, Any]:
+    """Retorna modelos detalhados por fase para um tier."""
+    try:
+        from src.config import LLM_CONFIGS, AUDITOR_MODELS, RELATOR_MODELS
+    except ImportError:
+        return {}
+
+    config = TIER_CONFIG[tier_level]
+    president_key = config["models"].get("president", "gpt-5.2")
+    president_model = get_openrouter_model(president_key)
+
+    return {
+        "extractors": [
+            {"id": cfg["id"], "model": cfg["model"], "role": cfg["role"]}
+            for cfg in LLM_CONFIGS
+        ],
+        "auditors": [
+            {"id": f"A{i+1}", "model": m}
+            for i, m in enumerate(AUDITOR_MODELS)
+        ],
+        "judges": [
+            {"id": f"J{i+1}", "model": m}
+            for i, m in enumerate(RELATOR_MODELS)
+        ],
+        "president": president_model,
+        "a5_opus": config["models"].get("audit_a5_opus", False),
+    }
 
 
 def get_all_tiers_info() -> List[Dict[str, Any]]:
@@ -282,6 +311,7 @@ def get_all_tiers_info() -> List[Dict[str, Any]]:
             "custo_real": costs["custo_real"],
             "custo_cliente": costs["custo_cliente"],
             "bloqueio": costs["bloqueio"],
+            "models_per_phase": _get_models_per_phase(tier_level),
         })
 
     return result

@@ -381,13 +381,33 @@ class TokenLimitExceededError(Exception):
         super().__init__(message)
 
 
+# v4.0: Limites de orçamento POR FASE (em USD, custo real)
+PHASE_BUDGET = {
+    "phase0": 0.20,    # Triage (3 IAs baratas)
+    "phase1": 5.00,    # Extração (7 IAs)
+    "phase2": 2.00,    # Agregação
+    "phase3": 5.00,    # Auditoria (4-5 IAs)
+    "phase4": 6.00,    # Julgamento (3 IAs reasoning: o1-pro caro)
+    "phase5": 4.00,    # Síntese (Opus ou GPT-5.2-Pro)
+}
+
+# Limites TOTAIS por tier (em USD, custo real)
+TOTAL_MAX_BUDGET = {
+    "standard": 15.00,
+    "premium": 18.00,
+    "elite": 22.00,
+}
+
+
 class CostController:
     """
     Controlador de custos para o pipeline.
     Usa DynamicPricing para preços reais via OpenRouter API.
 
+    v4.0: Bloqueia se budget total excedido. Tokens são apenas métrica.
+
     Uso:
-        controller = CostController(run_id="xxx", budget_limit=5.0)
+        controller = CostController(run_id="xxx", budget_limit=15.0)
         controller.register_usage("fase1_E1", "openai/gpt-4o", 1000, 500)
         if controller.can_continue():
             # continuar processamento
@@ -509,25 +529,37 @@ class CostController:
             )
 
     def _check_limits(self):
-        """Verifica limites — apenas loga WARNING, NUNCA bloqueia o pipeline."""
+        """
+        Verifica limites de budget — BLOQUEIA se budget total excedido.
+        Tokens são apenas métrica (nunca bloqueiam).
+        """
         if self.usage.total_cost_usd > self.budget_limit and not self.usage.blocked:
-            logger.warning(
-                f"[CUSTO-ALERTA] Budget ultrapassado: "
+            self.usage.blocked = True
+            self.usage.block_reason = (
+                f"Budget excedido: ${self.usage.total_cost_usd:.4f} > ${self.budget_limit:.2f}"
+            )
+            logger.error(
+                f"[CUSTO-BLOCK] Budget excedido: "
                 f"${self.usage.total_cost_usd:.4f} > ${self.budget_limit:.2f} "
-                f"(run={self.run_id}) — pipeline continua"
+                f"(run={self.run_id}) — BLOQUEANDO pipeline"
+            )
+            raise BudgetExceededError(
+                message=self.usage.block_reason,
+                current_cost=self.usage.total_cost_usd,
+                budget_limit=self.budget_limit,
             )
 
-        # FIX v4.0: Tokens são métrica/log, NÃO bloqueiam
+        # v4.0: Tokens são métrica/log, NÃO bloqueiam
         if self.usage.total_tokens > self.token_limit:
-            logger.warning(
+            logger.info(
                 f"[CUSTO-INFO] Tokens acima do indicativo: "
                 f"{self.usage.total_tokens:,} > {self.token_limit:,} "
                 f"(run={self.run_id}) — NÃO bloqueia, apenas log"
             )
 
     def can_continue(self) -> bool:
-        """Retorna sempre True — pipeline nunca pára por custos."""
-        return True
+        """Verifica se o pipeline pode continuar (budget não excedido)."""
+        return self.usage.total_cost_usd <= self.budget_limit
 
     def get_remaining_budget(self) -> float:
         """Retorna budget restante em USD."""
