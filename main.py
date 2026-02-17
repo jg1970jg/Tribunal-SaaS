@@ -302,6 +302,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 
 # CORS - apenas origens autorizadas
 CORS_ORIGINS = [
+    "https://lexforum.eu",
+    "https://www.lexforum.eu",
     "https://lexportal.lovable.app",
     "http://localhost:3000",
     "http://localhost:5173",
