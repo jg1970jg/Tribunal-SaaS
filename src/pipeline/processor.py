@@ -960,7 +960,7 @@ REVISTO:"""
                         if "Limit" in type(e).__name__ or "Budget" in type(e).__name__:
                             logger.error(f"[CUSTO-BLOQUEIO] Limite excedido em {role_name}_retry{retry_num}: {e}")
                             raise
-                        pass
+                        logger.warning(f"[CUSTO] Falha ao registar custo de retry {role_name}: {e}")
 
             # Construir prompt melhorado para retry
             retry_system, retry_temp = build_retry_prompt(

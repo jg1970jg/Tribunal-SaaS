@@ -226,7 +226,7 @@ def _create_evidence_item(
         item_type = ItemType.OTHER
 
     value = raw_item.get("value_normalized", "")
-    raw_text = raw_item.get("raw_text", value)
+    raw_text = raw_item.get("raw_text") or value
 
     if not value and not raw_text:
         return None

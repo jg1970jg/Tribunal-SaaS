@@ -143,8 +143,8 @@ class TriageProcessor:
                             prompt_tokens=pt,
                             completion_tokens=ct,
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"[TRIAGE] Falha ao registar custo {tid}: {e}")
 
                 # Parse JSON response
                 import json

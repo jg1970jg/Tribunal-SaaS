@@ -1,25 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-CONFIGURAÇÃO LEXFORUM - DUAL API SYSTEM
+CONFIGURAÇÃO LEXFORUM - PIPELINE v4.0
 ═══════════════════════════════════════════════════════════════════════════
 
-NOVIDADES:
-- Suporte API OpenAI directa (usa teu saldo OpenAI!)
-- Fallback automático OpenRouter
-- Escolha modelos premium (5.2 vs 5.2-pro)
-- Gestão API keys na interface
+PIPELINE 6 FASES:
+  Fase 0: Triagem (3 IAs baratas: GPT-4o-mini, Gemini Flash, Llama 8B)
+  Fase 1: Extração (7 IAs: Haiku, Gemini Pro, GPT-5.2, Sonnet, DeepSeek, Mistral, Qwen VL)
+  Fase 2: Agregação com deduplicação semântica
+  Fase 3: Auditoria (4 IAs: GPT-5.2, Gemini Pro, Sonnet 4.5, Llama 405B) + A5 Opus (Elite)
+  Fase 4: Julgamento (3 IAs reasoning: o1-pro, DeepSeek R1, Opus 4.6)
+  Fase 5: Síntese (GPT-5.2 Standard / Opus 4.6 Premium / GPT-5.2-Pro Elite)
 
-CONFIGURAÇÃO ACTUAL:
-- 5 Extratores com PROMPT UNIVERSAL
-- Auditores: A2=Sonnet 4.5, A3=Gemini 3 Pro
-- Relatores: J3=Gemini 3 Pro
-- Consolidador: Configurável (5.2 ou 5.2-pro)
-- Conselheiro-Mor: Configurável (5.2 ou 5.2-pro)
-- NOVO: Failover GPT-5.2 → GPT-4.1 → Grok (3 níveis)
-- NOVO: max_tokens dinâmico por tamanho de documento
-- NOVO: max_tokens por FASE (consolidadores recebem mais)
-- NOVO: Opus → Sonnet 4.5 (poupança ~60% budget Anthropic)
-- NOVO: Opção Opus 4.6 premium para Auditor A2 e Juiz J2
+TIERS: Standard (Bronze) / Premium (Silver) / Elite (Gold)
+FAILOVER: GPT-5.2 → GPT-4.1 → Gemini 3 Pro (3 níveis)
 ═══════════════════════════════════════════════════════════════════════════
 """
 
@@ -454,10 +447,10 @@ VISION_OCR_TEMPERATURE = 0.0
 
 # Modelos com capacidade de visão (podem receber imagens)
 VISION_CAPABLE_MODELS = {
-    "anthropic/claude-sonnet-4.5",      # MUDANÇA: era opus-4.6
-    "google/gemini-3-flash-preview",
+    "anthropic/claude-sonnet-4.5",      # E4
+    "google/gemini-3-pro-preview",      # E2 (visual extractor)
     "openai/gpt-4o",
-    "qwen/qwen2.5-vl-72b-instruct",
+    "qwen/qwen2.5-vl-72b-instruct",    # E7 (visual extractor)
 }
 
 DRE_BASE_URL = "https://diariodarepublica.pt"

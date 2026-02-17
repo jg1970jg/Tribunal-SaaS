@@ -37,6 +37,7 @@ from tenacity import (
 )
 
 import os
+import threading
 
 
 def _is_retryable_http_error(exception: BaseException) -> bool:
@@ -1521,8 +1522,9 @@ class UnifiedLLMClient:
         self.close()
 
 
-# Cliente global singleton
+# Cliente global singleton (thread-safe)
 _global_client: Optional[UnifiedLLMClient] = None
+_client_lock = threading.Lock()
 
 
 def get_llm_client() -> UnifiedLLMClient:
@@ -1530,14 +1532,17 @@ def get_llm_client() -> UnifiedLLMClient:
     Retorna o cliente LLM global unificado.
 
     IMPORTANTE: Este é o cliente usado por todo o programa!
+    Thread-safe via double-checked locking.
     """
     global _global_client
     if _global_client is None:
-        _global_client = UnifiedLLMClient(
-            openai_api_key=(os.getenv("OPENAI_API_KEY") or "").strip(),
-            openrouter_api_key=(os.getenv("OPENROUTER_API_KEY") or "").strip(),
-            enable_fallback=True,
-        )
+        with _client_lock:
+            if _global_client is None:
+                _global_client = UnifiedLLMClient(
+                    openai_api_key=(os.getenv("OPENAI_API_KEY") or "").strip(),
+                    openrouter_api_key=(os.getenv("OPENROUTER_API_KEY") or "").strip(),
+                    enable_fallback=True,
+                )
     return _global_client
 
 
@@ -1547,12 +1552,13 @@ def reset_llm_client():
     Thread-safe: fecha o cliente antigo antes de limpar.
     """
     global _global_client
-    if _global_client is not None:
-        try:
-            _global_client.close()
-        except Exception:
-            pass
-    _global_client = None
+    with _client_lock:
+        if _global_client is not None:
+            try:
+                _global_client.close()
+            except Exception:
+                pass
+        _global_client = None
 
 
 def call_llm(

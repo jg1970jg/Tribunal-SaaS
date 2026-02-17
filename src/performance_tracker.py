@@ -116,6 +116,7 @@ class PerformanceTracker:
     def __init__(self, supabase_client):
         self.sb = supabase_client
         self._hints_cache: Dict[Tuple[str, str], ModelHints] = {}
+        self._cache_lock = Lock()
         self._cache_loaded_at: float = 0
         self._summary_cache: List[Dict] = []
 
@@ -253,10 +254,11 @@ class PerformanceTracker:
         key = (model, role)
         now = time.time()
 
-        if key in self._hints_cache:
-            cached = self._hints_cache[key]
-            if now - cached.loaded_at < CACHE_TTL:
-                return cached
+        with self._cache_lock:
+            if key in self._hints_cache:
+                cached = self._hints_cache[key]
+                if now - cached.loaded_at < CACHE_TTL:
+                    return cached
 
         # Cache miss - retorna vazio (nao bloqueia)
         return ModelHints(model=model, role=role, loaded_at=now)
@@ -354,7 +356,8 @@ class PerformanceTracker:
                     loaded_at=now,
                 )
 
-            self._hints_cache = new_cache
+            with self._cache_lock:
+                self._hints_cache = new_cache
             self._summary_cache = [
                 {
                     "model": model,
