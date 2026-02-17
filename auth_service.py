@@ -76,14 +76,18 @@ def _fetch_jwks() -> list[dict] | None:
         if _jwks_cache["keys"] is not None and (now - _jwks_cache["fetched_at"]) < JWKS_CACHE_TTL:
             return _jwks_cache["keys"]
 
-    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    if not supabase_url:
-        logger.warning("SUPABASE_URL não definido — impossível buscar JWKS.")
+    # SUPABASE_AUTH_URL = URL do Supabase onde os users se autenticam (frontend/Lovable)
+    # Pode ser diferente do SUPABASE_URL (onde o backend guarda dados)
+    auth_url = os.environ.get("SUPABASE_AUTH_URL", "").rstrip("/")
+    if not auth_url:
+        auth_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    if not auth_url:
+        logger.warning("SUPABASE_AUTH_URL/SUPABASE_URL não definido — impossível buscar JWKS.")
         return None
 
     endpoints = [
-        f"{supabase_url}/auth/v1/.well-known/jwks.json",
-        f"{supabase_url}/auth/v1/keys",
+        f"{auth_url}/auth/v1/.well-known/jwks.json",
+        f"{auth_url}/auth/v1/keys",
     ]
 
     for url in endpoints:
