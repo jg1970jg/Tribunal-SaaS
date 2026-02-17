@@ -1244,20 +1244,25 @@ async def admin_list_users(
 
         # Buscar todos os profiles com saldo
         profiles_resp = sb.table("profiles").select(
-            "id, email, full_name, credits_balance, credits_blocked"
+            "id, email, full_name, credits_balance, credits_blocked, created_at"
         ).order("credits_balance", desc=True).limit(500).execute()
 
         users = []
         for p in (profiles_resp.data or []):
+            email = (p.get("email") or "").strip()
+            # Ignorar perfis sem email (utilizadores de teste antigos)
+            if not email:
+                continue
             total = float(p.get("credits_balance") or 0)
             blocked = float(p.get("credits_blocked") or 0)
             users.append({
                 "user_id": p["id"],
-                "email": p.get("email", ""),
+                "email": email,
                 "full_name": p.get("full_name", ""),
                 "balance_usd": total,
                 "blocked_usd": blocked,
                 "available_usd": total - blocked,
+                "created_at": p.get("created_at", ""),
             })
 
         return {"users": users, "total": len(users)}
