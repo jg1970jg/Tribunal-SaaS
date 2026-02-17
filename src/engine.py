@@ -493,29 +493,9 @@ def executar_analise(
         config_module.JUIZ_MODELS[1] = relator_model
         config_module.JUIZES[1]["model"] = relator_model
 
-    # Aplicar modelo de extracção do tier ao E1 (Claude)
+    # v4.0: Modelos dos extractores E1-E7 já estão definidos em config.py
+    # Não sobrescrever — todos os tiers usam os mesmos 7 extractores
     from src.tier_config import get_openrouter_model
-    extraction_openrouter = get_openrouter_model(extraction_model)
-    if len(config_module.LLM_CONFIGS) > 0:
-        config_module.LLM_CONFIGS[0]["model"] = extraction_openrouter
-        config_module.EXTRATOR_MODELS[0] = extraction_openrouter
-        config_module.EXTRATOR_MODELS_NEW[0] = extraction_openrouter
-
-    # Aplicar modelo de extracção E3 do tier (se definido)
-    extraction_e3_key = tier_models.get("extraction_e3")
-    if extraction_e3_key and len(config_module.LLM_CONFIGS) > 2:
-        e3_openrouter = get_openrouter_model(extraction_e3_key)
-        config_module.LLM_CONFIGS[2]["model"] = e3_openrouter
-        config_module.EXTRATOR_MODELS[2] = e3_openrouter
-        config_module.EXTRATOR_MODELS_NEW[2] = e3_openrouter
-
-    # Aplicar modelo de extracção E4 do tier (se definido)
-    extraction_e4_key = tier_models.get("extraction_e4")
-    if extraction_e4_key and len(config_module.LLM_CONFIGS) > 3:
-        e4_openrouter = get_openrouter_model(extraction_e4_key)
-        config_module.LLM_CONFIGS[3]["model"] = e4_openrouter
-        config_module.EXTRATOR_MODELS[3] = e4_openrouter
-        config_module.EXTRATOR_MODELS_NEW[3] = e4_openrouter
 
     extrator_summary = ", ".join(f"{cfg['id']}={cfg['model'].split('/')[-1]}" for cfg in config_module.LLM_CONFIGS)
     print(
