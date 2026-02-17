@@ -19,3 +19,17 @@ desktop.ini
 # IDE
 .vscode/
 .idea/
+
+# Backups locais
+_backup_lovable/
+_backup_lovable_source/
+_backup_render/
+_backup_supabase/
+
+# Supabase local/temp
+supabase/.temp/
+
+# Temp files
+temp_analysis.json
+test_e2e_result.json
+monitor_logs.py

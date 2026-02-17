@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "postToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "command": "python -m py_compile $CLAUDE_FILE_PATH 2>&1 || echo 'SYNTAX ERROR in $CLAUDE_FILE_PATH'"
+      }
+    ]
+  }
+}
