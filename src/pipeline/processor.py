@@ -1570,16 +1570,27 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                             raise  # Re-raise budget/limit errors immediately
                         logger.error(f"[PARALELO] {eid} excepção: {exc}")
             except TimeoutError:
-                # NUNCA avançar sem 100% — abortar análise
+                # v4.1: Continuar se ≥5 extractores terminaram (71%+)
                 timed_out = [eid for f, eid in futures.items() if not f.done()]
                 for f in futures:
                     if not f.done():
                         f.cancel()
-                raise Exception(
-                    f"TIMEOUT CRÍTICO: {len(timed_out)} extratores não acabaram em "
-                    f"{EXTRACTOR_TIMEOUT_SECONDS}s: {timed_out}. "
-                    f"Análise ABORTADA — 100% de cobertura é obrigatório."
-                )
+                completed_count = len(items_by_extractor)
+                total_count = len(futures)
+                min_required = max(2, total_count - 2)  # Permitir até 2 falhas
+                if completed_count >= min_required:
+                    logger.warning(
+                        f"TIMEOUT: {len(timed_out)} extratores não acabaram em "
+                        f"{EXTRACTOR_TIMEOUT_SECONDS}s: {timed_out}. "
+                        f"Continuando com {completed_count}/{total_count} extractores."
+                    )
+                else:
+                    raise Exception(
+                        f"TIMEOUT CRÍTICO: {len(timed_out)} extratores não acabaram em "
+                        f"{EXTRACTOR_TIMEOUT_SECONDS}s: {timed_out}. "
+                        f"Apenas {completed_count}/{total_count} completaram "
+                        f"(mínimo {min_required})."
+                    )
 
         if len(items_by_extractor) < 2:
             raise Exception(
