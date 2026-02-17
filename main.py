@@ -304,6 +304,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 CORS_ORIGINS = [
     "https://lexforum.eu",
     "https://www.lexforum.eu",
+    "https://lovable.dev",
     "https://lexportal.lovable.app",
     "http://localhost:3000",
     "http://localhost:5173",
@@ -312,6 +313,7 @@ CORS_ORIGINS = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"https://.*\.lovable\.app",
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
