@@ -184,7 +184,7 @@ def listar_analises_com_titulos(output_dir: Path) -> List[Tuple[str, str, str]]:
             try:
                 data_obj = datetime.strptime(data, "%Y-%m-%d %H:%M:%S")
                 data_display = data_obj.strftime("%d/%m/%Y")
-            except:
+            except Exception:
                 data_display = run_id[:8]  # Fallback para data do run_id
                 data_obj = datetime.strptime(run_id[:8], "%Y%m%d")
             
@@ -198,7 +198,7 @@ def listar_analises_com_titulos(output_dir: Path) -> List[Tuple[str, str, str]]:
                 data_obj = datetime.strptime(data_str, "%Y%m%d")
                 data_display = data_obj.strftime("%d/%m/%Y")
                 titulo_display = f"[Sem título] {run_id[:15]}... ({data_display})"
-            except:
+            except Exception:
                 titulo_display = run_id
                 data_obj = datetime.now()
         

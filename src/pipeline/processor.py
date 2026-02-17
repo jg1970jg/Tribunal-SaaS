@@ -876,6 +876,16 @@ REVISTO:"""
 
         # === CHAMADA LLM ===
         effective_temp = temperature
+
+        # v4.0: Reasoning models (o1-pro, o1, o3) don't support system_prompt or temperature
+        REASONING_MODELS = {"openai/o1-pro", "openai/o1", "openai/o3-pro", "openai/o3-mini", "deepseek/deepseek-reasoner"}
+        if modelo_final in REASONING_MODELS:
+            # Embed system prompt into user prompt for reasoning models
+            if effective_system:
+                prompt = f"{effective_system}\n\n---\n\n{prompt}"
+                effective_system = None
+            effective_temp = None  # Reasoning models don't accept temperature
+
         response = self.llm_client.chat_simple(
             model=modelo_final,
             prompt=prompt,
@@ -892,10 +902,9 @@ REVISTO:"""
         # v4.0: Retries controlados por modelo (Opus=0, o1-pro=1, default=2)
         MODEL_MAX_RETRIES = {
             "anthropic/claude-opus-4.6": 0,
-            "anthropic/claude-opus-4.5": 0,
             "openai/o1-pro": 1,
             "openai/gpt-5.2-pro": 1,
-            "x-ai/grok-4": 0,  # BANIDO
+            "deepseek/deepseek-reasoner": 1,
         }
         MAX_RETRIES = MODEL_MAX_RETRIES.get(modelo_final, 2)
         for retry_num in range(1, MAX_RETRIES + 1):
@@ -1556,6 +1565,8 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                         else:
                             logger.warning(f"[PARALELO] {eid} retornou None - ignorado")
                     except Exception as exc:
+                        if "Budget" in type(exc).__name__ or "Limit" in type(exc).__name__:
+                            raise  # Re-raise budget/limit errors immediately
                         logger.error(f"[PARALELO] {eid} excepção: {exc}")
             except TimeoutError:
                 # NUNCA avançar sem 100% — abortar análise
@@ -2662,6 +2673,8 @@ OUTPUT: Same JSON format as other auditors, plus include a "devils_advocate_conc
                     else:
                         logger.warning(f"[PARALELO] {aid} falhou - ignorado")
                 except Exception as exc:
+                    if "Budget" in type(exc).__name__ or "Limit" in type(exc).__name__:
+                        raise  # Re-raise budget/limit errors immediately
                     logger.error(f"[PARALELO] {aid} excepção: {exc}")
 
         # Ordenar por índice original para manter ordem determinística
@@ -2738,6 +2751,8 @@ You are the final quality gate before the Judges."""
                 else:
                     logger.warning("[ELITE] A5 Opus retornou vazio — ignorado")
             except Exception as e:
+                if "Budget" in type(e).__name__ or "Limit" in type(e).__name__:
+                    raise  # Re-raise budget/limit errors immediately
                 logger.error(f"[ELITE] A5 Opus falhou: {e} — continuando sem A5")
 
         bruto = "\n".join(bruto_parts)

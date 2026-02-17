@@ -15,6 +15,7 @@ import asyncio
 import io
 import os
 import logging
+import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -23,7 +24,7 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, Request, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -42,6 +43,17 @@ from src.engine import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Sanitize filename to prevent path traversal and prompt injection."""
+    if not filename:
+        return "documento"
+    # Remove path separators and keep only safe chars
+    name = os.path.basename(filename)
+    name = re.sub(r'[^a-zA-Z0-9._\-\s]', '_', name)
+    return name[:255] if name else "documento"
+
 
 # FIX 2026-02-14: Carregar .env ANTES de ler ADMIN_EMAILS
 load_dotenv()
@@ -154,6 +166,7 @@ def _register_security_alert(request: Request, limit_detail: str):
 
 # Cache local (recarregado a cada 60s para não consultar DB a cada request)
 _blacklist_cache: dict = {"emails": set(), "ips": set(), "domains": set(), "loaded_at": 0}
+_blacklist_lock = __import__("threading").Lock()  # Thread-safe access to _blacklist_cache
 BLACKLIST_CACHE_TTL = 60  # Recarregar a cada 60 segundos
 
 
@@ -164,26 +177,31 @@ def _load_blacklist():
     if now - _blacklist_cache["loaded_at"] < BLACKLIST_CACHE_TTL:
         return  # Cache ainda válido
 
-    try:
-        from auth_service import get_supabase_admin
-        sb = get_supabase_admin()
-        result = sb.table("blacklist").select("type, value").execute()
-        emails, ips, domains = set(), set(), set()
-        for row in (result.data or []):
-            val = (row.get("value") or "").lower().strip()
-            t = row.get("type", "")
-            if t == "email":
-                emails.add(val)
-            elif t == "ip":
-                ips.add(val)
-            elif t == "domain":
-                domains.add(val)
-        _blacklist_cache["emails"] = emails
-        _blacklist_cache["ips"] = ips
-        _blacklist_cache["domains"] = domains
-        _blacklist_cache["loaded_at"] = now
-    except Exception as e:
-        logger.warning(f"Erro ao carregar blacklist (ignorado): {e}")
+    with _blacklist_lock:
+        # Double-check after acquiring lock
+        if now - _blacklist_cache["loaded_at"] < BLACKLIST_CACHE_TTL:
+            return
+
+        try:
+            from auth_service import get_supabase_admin
+            sb = get_supabase_admin()
+            result = sb.table("blacklist").select("type, value").execute()
+            emails, ips, domains = set(), set(), set()
+            for row in (result.data or []):
+                val = (row.get("value") or "").lower().strip()
+                t = row.get("type", "")
+                if t == "email":
+                    emails.add(val)
+                elif t == "ip":
+                    ips.add(val)
+                elif t == "domain":
+                    domains.add(val)
+            _blacklist_cache["emails"] = emails
+            _blacklist_cache["ips"] = ips
+            _blacklist_cache["domains"] = domains
+            _blacklist_cache["loaded_at"] = now
+        except Exception as e:
+            logger.warning(f"Erro ao carregar blacklist (ignorado): {e}")
 
 
 def _check_blacklist(request: Request, user: dict = None):
@@ -219,7 +237,7 @@ def _check_blacklist(request: Request, user: dict = None):
 
     if email:
         if email in _blacklist_cache["emails"]:
-            logger.warning(f"[BLACKLIST] Email bloqueado: {email}")
+            logger.warning(f"[BLACKLIST] Email bloqueado: {email[:3]}***")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Conta bloqueada. Contacte o administrador.",
@@ -227,7 +245,7 @@ def _check_blacklist(request: Request, user: dict = None):
 
         domain = email.split("@")[-1] if "@" in email else ""
         if domain in _blacklist_cache["domains"]:
-            logger.warning(f"[BLACKLIST] Domínio bloqueado: {domain} (email: {email})")
+            logger.warning(f"[BLACKLIST] Domínio bloqueado: {domain}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Domínio de email bloqueado. Contacte o administrador.",
@@ -279,13 +297,20 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 
-# CORS - permitir frontend Lovable e localhost para dev
+# CORS - apenas origens autorizadas
+CORS_ORIGINS = [
+    "https://lexportal.lovable.app",
+    "https://*.lovable.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8080",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -320,7 +345,7 @@ async def security_middleware(request: Request, call_next):
 @app.get("/health")
 async def health():
     """Rota de saúde - verifica se o servidor está online."""
-    return {"status": "online", "version": "2026-02-14e"}
+    return {"status": "online"}
 
 
 # ============================================================
@@ -395,7 +420,9 @@ async def analyze(
                 detail="Ficheiro demasiado grande. Máximo: 50MB.",
             )
 
-        ext = os.path.splitext(file.filename or "")[1].lower()
+        # Sanitize filename to prevent path traversal and prompt injection
+        safe_filename = _sanitize_filename(file.filename)
+        ext = os.path.splitext(safe_filename)[1].lower()
         if ext not in ALLOWED_EXTENSIONS:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -423,7 +450,7 @@ async def analyze(
             executar_analise_documento,
             user_id=user["id"],
             file_bytes=file_bytes,
-            filename=file.filename,
+            filename=safe_filename,
             area_direito=area_direito,
             perguntas_raw=perguntas_raw,
             titulo=titulo,
@@ -451,7 +478,7 @@ async def analyze(
                 "tier": tier,
                 "area_direito": area_direito,
                 "run_id": result_dict.get("run_id", ""),
-                "filename": file.filename,
+                "filename": safe_filename,
                 "file_size_bytes": len(file_bytes),
                 "total_tokens": result_dict.get("total_tokens", 0),
                 "custo_real_usd": float(custo_real) if custo_real else 0.0,
@@ -521,9 +548,6 @@ async def analyze(
 
 class ExportRequest(BaseModel):
     analysis_result: Dict[str, Any]
-
-
-import re
 
 _INTERNAL_PATTERNS = [
     re.compile(r"^\s*-?\s*Fontes:\s*\[.*?\]\s*$", re.MULTILINE),
@@ -937,7 +961,7 @@ Consolida estas respostas numa única resposta final coerente."""
     if req.document_id:
         try:
             sb = get_supabase_admin()
-            doc_resp = sb.table("documents").select("analysis_result").eq("id", req.document_id).single().execute()
+            doc_resp = sb.table("documents").select("analysis_result").eq("id", req.document_id).eq("user_id", user["id"]).single().execute()
             current_result = doc_resp.data.get("analysis_result") or {}
             qa_history = current_result.get("qa_history", [])
             qa_history.append({
@@ -980,7 +1004,14 @@ async def add_document_to_project(
     from src.engine import carregar_documento_de_bytes
 
     file_bytes = await file.read()
-    filename = file.filename or "documento"
+    filename = _sanitize_filename(file.filename)
+
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Ficheiro demasiado grande. Máximo: 50MB.",
+        )
 
     if len(file_bytes) == 0:
         raise HTTPException(status_code=422, detail="Ficheiro vazio.")
@@ -999,7 +1030,7 @@ async def add_document_to_project(
 
     try:
         sb = get_supabase_admin()
-        doc_resp = sb.table("documents").select("analysis_result, user_id").eq("id", document_id).single().execute()
+        doc_resp = sb.table("documents").select("analysis_result, user_id").eq("id", document_id).eq("user_id", user["id"]).single().execute()
     except Exception as e:
         raise HTTPException(status_code=404, detail="Documento não encontrado.")
 

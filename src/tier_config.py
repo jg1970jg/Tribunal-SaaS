@@ -34,33 +34,31 @@ class TierLevel(str, Enum):
 # Baseado em análise com cache ativo (47% savings)
 
 MODEL_COSTS = {
-    # Extratores (Fase 1)
-    "gemini-3-flash-preview": 0.08,
-    "gpt-4o": 0.09,
-    "sonnet-3.5": 0.08,
-    "sonnet-4.5": 0.08,
-    "deepseek": 0.06,
-    "claude-opus-4": 0.21,  # Com cache
-    "llama-4-maverick": 0.04,
-    "mistral-medium-3": 0.06,
+    # Extratores (Fase 1) — v4.0
+    "haiku-4.5": 0.04,           # E1
+    "gemini-3-pro": 0.12,        # E2
+    "gpt-5.2": 0.12,             # E3
+    "sonnet-4.5": 0.08,          # E4
+    "deepseek": 0.04,            # E5
+    "mistral-medium-3": 0.06,    # E6
+    "qwen-vl-72b": 0.05,         # E7
 
-    # Auditores (Fase 2)
-    "gpt-5.2": 0.12,
-    "gemini-3-pro-preview": 0.15,
-    "grok-4.1": 0.13,
-    "claude-sonnet-4.5": 0.10,  # Com cache
-    "claude-opus-4-audit": 0.40,  # Com cache
-    "gpt-5.2-pro": 0.60,
+    # Auditores (Fase 3) — v4.0
+    "gpt-5.2-audit": 0.15,       # A1
+    "gemini-3-pro-audit": 0.15,  # A2
+    "claude-sonnet-4.5-audit": 0.10,  # A3
+    "llama-405b-audit": 0.08,    # A4
+    "claude-opus-4-audit": 0.40, # A5 (Elite only)
 
-    # Relatores (Fase 3)
-    "gpt-5.2-judge": 0.10,
-    "gemini-3-pro-judge": 0.14,
-    "claude-sonnet-4.5-judge": 0.10,  # Com cache
-    "claude-opus-4-judge": 0.38,  # Com cache
+    # Juízes (Fase 4) — v4.0
+    "o1-pro-judge": 2.50,        # J1 (reasoning, expensive)
+    "deepseek-r1-judge": 0.15,   # J2 (reasoning)
+    "claude-opus-4-judge": 0.45, # J3
 
-    # Conselheiro-Mor (Fase 4)
+    # Conselheiro-Mor (Fase 5)
     "gpt-5.2-presidente": 0.30,
-    "gpt-5.2-pro-presidente": 0.60,
+    "claude-opus-4-presidente": 0.50,
+    "gpt-5.2-pro-presidente": 0.80,
 }
 
 

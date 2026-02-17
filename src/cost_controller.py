@@ -29,10 +29,9 @@ HARDCODED_PRICING = {
     "openai/gpt-4.1": {"input": 2.00, "output": 8.00},
     "openai/gpt-5.2": {"input": 1.75, "output": 14.00},
     "openai/gpt-5.2-pro": {"input": 21.00, "output": 168.00},
-    "openai/o1-pro": {"input": 10.00, "output": 30.00},           # v4.0: J1 reasoning
+    "openai/o1-pro": {"input": 150.00, "output": 600.00},         # v4.0: J1 reasoning (real pricing)
     # Anthropic
     "anthropic/claude-opus-4.6": {"input": 15.00, "output": 75.00},  # v4.0: preço corrigido
-    "anthropic/claude-opus-4.5": {"input": 5.00, "output": 25.00},
     "anthropic/claude-sonnet-4.5": {"input": 3.00, "output": 15.00},
     "anthropic/claude-haiku-4.5": {"input": 0.80, "output": 4.00},   # v4.0: preço corrigido
     "anthropic/claude-3-5-sonnet": {"input": 6.00, "output": 30.00},
@@ -46,14 +45,9 @@ HARDCODED_PRICING = {
     # Meta
     "meta-llama/llama-3.1-405b-instruct": {"input": 2.00, "output": 6.00},  # v4.0: A4
     "meta-llama/llama-3.1-8b-instruct": {"input": 0.05, "output": 0.08},   # v4.0: Fase 0
-    "meta-llama/llama-4-maverick": {"input": 0.20, "output": 0.60},
     # Mistral / Qwen
     "mistralai/mistral-medium-3": {"input": 0.40, "output": 2.00},        # v4.0: preço corrigido
     "qwen/qwen-2.5-vl-72b-instruct": {"input": 0.30, "output": 1.20},    # v4.0: E7 OCR
-    # Grok (mantido para histórico mas BANIDO)
-    "x-ai/grok-4": {"input": 3.00, "output": 15.00},
-    "x-ai/grok-4.1-fast": {"input": 0.20, "output": 0.50},
-    "x-ai/grok-4.1": {"input": 0.20, "output": 0.50},
     # Default
     "default": {"input": 1.00, "output": 4.00},
 }
@@ -258,16 +252,18 @@ class DynamicPricing:
     @classmethod
     def _track_model(cls, model: str, pricing: Dict):
         """Guarda pricing usado para cada modelo (para relatório final)."""
-        cls._models_used[model] = {
-            "input": pricing["input"],
-            "output": pricing["output"],
-            "fonte": pricing["fonte"],
-        }
+        with cls._cache_lock:
+            cls._models_used[model] = {
+                "input": pricing["input"],
+                "output": pricing["output"],
+                "fonte": pricing["fonte"],
+            }
 
     @classmethod
     def get_models_used(cls) -> Dict[str, Dict]:
         """Retorna preços usados por modelo neste run."""
-        return dict(cls._models_used)
+        with cls._cache_lock:
+            return dict(cls._models_used)
 
     @classmethod
     def get_pricing_source(cls) -> str:

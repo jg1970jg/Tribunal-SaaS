@@ -604,8 +604,13 @@ def executar_analise(
         custo_real_usd = float(resultado.custos["custo_total_usd"])
 
     wallet_settlement = None
-    if custo_real_usd > 0:
+    if custo_real_usd > 0 and resultado.sucesso:
         wallet_settlement = liquidar_creditos(analysis_id, custo_real_usd)
+    elif not resultado.sucesso:
+        # Pipeline falhou — cancelar bloqueio, NÃO cobrar
+        logger.warning(f"[ENGINE] Pipeline falhou — cancelando bloqueio (custo parcial: ${custo_real_usd:.4f})")
+        cancelar_bloqueio(analysis_id)
+        wallet_settlement = {"status": "cancelled_pipeline_failed", "real_cost": custo_real_usd}
     else:
         # Custo = 0, cancelar bloqueio
         logger.warning("[ENGINE] Custo real = $0.00 — cancelando bloqueio")

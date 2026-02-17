@@ -42,9 +42,8 @@ from src.pipeline.constants import (
     has_flags_bloqueantes,
     precisa_reparacao,
 )
-from src.document_loader import DocumentLoader, DocumentContent, get_supported_extensions
+from src.document_loader import DocumentLoader, DocumentContent
 from src.llm_client import get_llm_client
-from src.legal_verifier import get_legal_verifier
 from src.utils.perguntas import parse_perguntas, validar_perguntas
 from src.legal_verifier import VerificacaoLegal, CitacaoLegal
 import logging

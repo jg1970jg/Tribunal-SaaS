@@ -144,10 +144,9 @@ MODELS_MANUAL_CACHE = {
     "anthropic/claude-3-5-sonnet",
     "anthropic/claude-3-5-haiku",
     "anthropic/claude-opus-4.6",
-    "anthropic/claude-opus-4.5",
 }
 
-# Modelos com cache AUTOMÁTICO (OpenAI, Gemini, Grok)
+# Modelos com cache AUTOMÁTICO (OpenAI, Gemini)
 MODELS_AUTO_CACHE = {
     "openai/gpt-5.2",
     "openai/gpt-5.2-pro",
@@ -155,7 +154,6 @@ MODELS_AUTO_CACHE = {
     "openai/gpt-4.1",
     "google/gemini-3-flash-preview",
     "google/gemini-3-pro-preview",
-    "x-ai/grok-4.1-fast",
 }
 
 
@@ -517,8 +515,12 @@ class OpenAIClient:
             payload["temperature"] = temperature
 
         # Adicionar instructions (system prompt) se fornecido
-        if instructions:
+        # Reasoning models (o1-pro, o3-pro, etc.) don't support instructions
+        if instructions and supports_temperature(model):
             payload["instructions"] = instructions
+        elif instructions:
+            # Embed instructions into input for reasoning models
+            payload["input"] = f"{instructions}\n\n---\n\n{input_text}"
 
         logger.debug(f"OpenAI Responses Request para {clean_model}: {len(input_text)} chars")
 
