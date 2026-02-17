@@ -238,6 +238,12 @@ OPENAI_MODELS_USE_RESPONSES_API = [
     "gpt-5.2-pro",
     "gpt-5.2-2025-12-11",
     "gpt-5.2-pro-2025-12-11",
+    # o-series reasoning models also use Responses API
+    "o1",
+    "o1-pro",
+    "o3",
+    "o3-pro",
+    "o3-mini",
 ]
 
 # Modelos de reasoning que NÃO suportam o parâmetro temperature

@@ -255,7 +255,7 @@ class PipelineResult:
             # v4.0: Fase 0 Triagem
             "fase0_triage": self.fase0_triage,
             # Metadados do documento
-            "documento_texto": self.documento.text[:50000] if self.documento and self.documento.text else "",
+            "documento_texto": self.documento.text if self.documento and self.documento.text else "",
             "documento_filename": self.documento.filename if self.documento else "",
             "documento_chars": self.documento.num_chars if self.documento else 0,
             "documento_palavras": self.documento.num_words if self.documento else 0,
