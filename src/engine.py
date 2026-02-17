@@ -53,8 +53,6 @@ from src.tier_config import (
     TIER_CONFIG,
 )
 
-from dataclasses import dataclass
-
 from src.config import (
     AREAS_DIREITO,
     OPENROUTER_API_KEY,
@@ -433,8 +431,7 @@ def executar_analise(
     try:
         tier_level = TierLevel(tier.lower())
     except ValueError:
-        tier_level = TierLevel.BRONZE
-        print(f"[ENGINE] Tier '{tier}' invalido, usando BRONZE")
+        raise EngineError(f"Tier '{tier}' inválido. Opções: bronze, silver, gold")
 
     tier_models = get_tier_models(tier_level)
     print(f"[ENGINE] Tier: {tier_level.value} | Analysis ID: {analysis_id}")

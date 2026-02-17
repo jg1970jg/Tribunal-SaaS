@@ -29,7 +29,6 @@ from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-import hashlib
 import threading
 
 from auth_service import get_current_user, get_supabase, get_supabase_admin
@@ -61,7 +60,7 @@ load_dotenv()
 # Lista de emails de admin (para endpoints de admin)
 ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
 
-# Admin session tokens (from /admin/verify)
+# Admin session tokens (from /admin/verify) — with 1h expiry
 _admin_sessions: dict = {}
 
 
@@ -1519,8 +1518,14 @@ async def admin_verify(request: Request, req: AdminVerifyRequest):
 
     # Gerar token de sessão admin (válido 1 hora)
     admin_token = secrets.token_urlsafe(32)
+    now = datetime.now()
     _admin_sessions[admin_token] = {
-        "created_at": datetime.now(),
+        "created_at": now,
         "ip": get_remote_address(request),
     }
+    # Cleanup expired sessions (older than 1 hour)
+    expired = [k for k, v in _admin_sessions.items()
+               if (now - v["created_at"]).total_seconds() > 3600]
+    for k in expired:
+        del _admin_sessions[k]
     return {"status": "ok", "message": "Acesso autorizado.", "admin_token": admin_token}
