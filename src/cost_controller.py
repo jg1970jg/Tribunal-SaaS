@@ -42,10 +42,10 @@ HARDCODED_PRICING = {
     "google/gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
     # DeepSeek
     "deepseek/deepseek-chat": {"input": 0.25, "output": 0.38},
-    "deepseek/deepseek-reasoner": {"input": 2.00, "output": 8.00},    # v4.0: J2 R1
+    "deepseek/deepseek-r1": {"input": 0.70, "output": 2.50},          # v4.0: J2 R1 (OpenRouter pricing)
     # Meta
-    "meta-llama/llama-4-405b-instruct": {"input": 2.00, "output": 6.00},  # v4.0: A4
-    "meta-llama/llama-4-8b-instruct": {"input": 0.05, "output": 0.08},    # v4.0: Fase 0
+    "meta-llama/llama-3.1-405b-instruct": {"input": 2.00, "output": 6.00},  # v4.0: A4
+    "meta-llama/llama-3.1-8b-instruct": {"input": 0.05, "output": 0.08},   # v4.0: Fase 0
     "meta-llama/llama-4-maverick": {"input": 0.20, "output": 0.60},
     # Mistral / Qwen
     "mistralai/mistral-medium-3": {"input": 0.40, "output": 2.00},        # v4.0: preço corrigido

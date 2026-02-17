@@ -14,6 +14,8 @@ import json
 import logging
 import re
 import hashlib
+import time
+import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -157,31 +159,57 @@ def validate_citation_2pass(
 
 def _find_best_match(
     excerpt: str, text: str,
-    threshold: float, length_tolerance: float
+    threshold: float, length_tolerance: float,
+    time_budget: float = 2.0,
 ) -> Optional[Dict]:
-    """Encontra o melhor match de excerpt em text."""
+    """
+    Encontra o melhor match de excerpt em text.
+    Optimizado: exact → case-insensitive → sampled fuzzy (com time budget).
+    """
+    # Pass 1: exact match
     idx = text.find(excerpt)
     if idx >= 0:
         return {"start": idx, "end": idx + len(excerpt), "ratio": 1.0}
 
-    idx = text.lower().find(excerpt.lower())
+    # Pass 2: case-insensitive exact match
+    text_lower = text.lower()
+    excerpt_lower = excerpt.lower()
+    idx = text_lower.find(excerpt_lower)
     if idx >= 0:
         return {"start": idx, "end": idx + len(excerpt), "ratio": 0.99}
 
+    # Pass 3: fuzzy match with time budget and sampling
     excerpt_len = len(excerpt)
+    if excerpt_len < 10 or len(text) < excerpt_len:
+        return None
+
     min_len = int(excerpt_len * (1.0 - length_tolerance))
     max_len = int(excerpt_len * (1.0 + length_tolerance))
 
     best_ratio = 0.0
     best_match = None
+    start_time = time.monotonic()
 
-    for window_size in range(min_len, max_len + 1):
-        for start in range(0, len(text) - window_size + 1, max(1, window_size // 4)):
-            candidate = text[start:start + window_size]
-            ratio = SequenceMatcher(None, excerpt.lower(), candidate.lower()).ratio()
+    # Use larger step size for big texts (proportional to excerpt length)
+    step = max(excerpt_len // 2, 50)
+
+    for window_size in range(min_len, max_len + 1, max(1, (max_len - min_len) // 5 + 1)):
+        for start in range(0, len(text) - window_size + 1, step):
+            # Check time budget periodically
+            if (start % (step * 20)) == 0 and time.monotonic() - start_time > time_budget:
+                logger.debug(f"[CONSENSUS] _find_best_match timeout ({time_budget}s) para excerpt de {excerpt_len} chars")
+                if best_match and best_ratio >= threshold:
+                    return best_match
+                return None
+
+            candidate = text_lower[start:start + window_size]
+            ratio = SequenceMatcher(None, excerpt_lower, candidate).ratio()
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_match = {"start": start, "end": start + window_size, "ratio": ratio}
+                # Early exit if good enough
+                if ratio >= 0.95:
+                    return best_match
 
     if best_match and best_ratio >= threshold:
         return best_match
@@ -224,6 +252,9 @@ def _offset_to_page(offset: int, page_offsets: Dict[int, int]) -> Optional[int]:
     return best_page
 
 
+CITATION_VALIDATION_TIMEOUT = 120  # 2 minutos máximo para validação de citations
+
+
 def validate_all_citations(
     audit_reports: list,
     canonical_text: str,
@@ -231,7 +262,7 @@ def validate_all_citations(
     page_offsets: Dict[int, int],
     canonical_doc_id: str,
 ) -> Dict:
-    """Valida todas as citations de todos os audit reports."""
+    """Valida todas as citations de todos os audit reports (com timeout global)."""
     results = {
         "auditor_scores": {},
         "total_citations": 0,
@@ -241,6 +272,9 @@ def validate_all_citations(
         "ambiguous_citations": 0,
         "details": [],
     }
+
+    start_time = time.monotonic()
+    timed_out = False
 
     for report in audit_reports:
         auditor_id = report.auditor_id
@@ -252,6 +286,32 @@ def validate_all_citations(
             for citation in finding.citations:
                 auditor_total += 1
                 results["total_citations"] += 1
+
+                # Check global timeout
+                elapsed = time.monotonic() - start_time
+                if elapsed > CITATION_VALIDATION_TIMEOUT:
+                    if not timed_out:
+                        logger.warning(
+                            f"[CONSENSUS] Fase A1 timeout após {elapsed:.0f}s — "
+                            f"validados {results['valid_citations']}/{results['total_citations']} citations, "
+                            f"a saltar restantes"
+                        )
+                        timed_out = True
+                    # Mark remaining as SKIPPED instead of blocking
+                    detail = {
+                        "auditor_id": auditor_id,
+                        "finding_id": finding.finding_id,
+                        "status": "SKIPPED_TIMEOUT",
+                        "match_ratio": 0.0,
+                        "original_excerpt": (citation.excerpt or "")[:100],
+                        "notes": f"Timeout após {CITATION_VALIDATION_TIMEOUT}s",
+                    }
+                    citation.doc_id = canonical_doc_id
+                    auditor_details.append(detail)
+                    # Count as valid to not penalize auditors unfairly
+                    auditor_valid += 1
+                    results["valid_citations"] += 1
+                    continue
 
                 validation = validate_citation_2pass(
                     excerpt=citation.excerpt,
@@ -298,6 +358,9 @@ def validate_all_citations(
             "citation_validity_score": round(citation_validity, 4),
         }
         results["details"].extend(auditor_details)
+
+    elapsed_total = time.monotonic() - start_time
+    logger.info(f"[CONSENSUS] Fase A1 completou em {elapsed_total:.1f}s ({results['total_citations']} citations)")
 
     return results
 

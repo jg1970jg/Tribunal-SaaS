@@ -482,27 +482,23 @@ def executar_analise(
     config_module.CHEFE_MODEL = get_chefe_model(consolidador_model_key)
     config_module.PRESIDENTE_MODEL = get_presidente_model(conselheiro_model_key)
 
-    auditor_model = get_auditor_claude_model(auditor_claude_model)
-    relator_model = get_juiz_claude_model(relator_claude_model)
+    # v4.0: Modelos dos auditores A1-A4 já estão definidos em config.py
+    # Não sobrescrever — garante diversidade de modelos na auditoria
 
-    if len(config_module.AUDITOR_MODELS) > 1:
-        config_module.AUDITOR_MODELS[1] = auditor_model
-        config_module.AUDITORES[1]["model"] = auditor_model
-
-    if len(config_module.JUIZ_MODELS) > 1:
-        config_module.JUIZ_MODELS[1] = relator_model
-        config_module.JUIZES[1]["model"] = relator_model
+    # v4.0: Modelos dos juízes J1-J3 já estão definidos em config.py
+    # Não sobrescrever — garante diversidade de modelos no julgamento
 
     # v4.0: Modelos dos extractores E1-E7 já estão definidos em config.py
     # Não sobrescrever — todos os tiers usam os mesmos 7 extractores
-    from src.tier_config import get_openrouter_model
 
     extrator_summary = ", ".join(f"{cfg['id']}={cfg['model'].split('/')[-1]}" for cfg in config_module.LLM_CONFIGS)
+    auditor_summary = ", ".join(f"A{i+1}={m.split('/')[-1]}" for i, m in enumerate(config_module.AUDITOR_MODELS))
+    juiz_summary = ", ".join(f"J{i+1}={m.split('/')[-1]}" for i, m in enumerate(config_module.JUIZ_MODELS))
     print(
         f"[ENGINE] Modelos ({tier_level.value}): "
         f"{extrator_summary}, "
         f"Consolidador={config_module.CHEFE_MODEL}, Conselheiro={config_module.PRESIDENTE_MODEL}, "
-        f"A2={auditor_model}, J2={relator_model}"
+        f"{auditor_summary}, {juiz_summary}"
     )
 
     # ── 6. Carregar documento ou criar a partir de texto ──
