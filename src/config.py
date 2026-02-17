@@ -110,54 +110,12 @@ CONSELHEIRO_MODEL_OPTIONS = {
 # Alias de compatibilidade
 PRESIDENTE_MODEL_OPTIONS = CONSELHEIRO_MODEL_OPTIONS
 
-# Opções para Auditor Claude (A2)
-AUDITOR_CLAUDE_OPTIONS = {
-    "sonnet-4.5": {
-        "model": "anthropic/claude-sonnet-4.5",
-        "display_name": "Sonnet 4.5 (económico) — Recomendado",
-        "cost_per_analysis": 0.14,
-        "description": "Bom equilíbrio custo/qualidade",
-        "recommended": True,
-    },
-    "claude-opus-4": {
-        "model": "anthropic/claude-opus-4.6",
-        "display_name": "Opus 4.6 (premium)",
-        "cost_per_analysis": 0.50,
-        "description": "Máxima profundidade de análise, custo elevado",
-        "recommended": False,
-    },
-}
-
-# Opções para Relator Claude (J2)
-RELATOR_CLAUDE_OPTIONS = {
-    "sonnet-4.5": {
-        "model": "anthropic/claude-sonnet-4.5",
-        "display_name": "Sonnet 4.5 (económico) — Recomendado",
-        "cost_per_analysis": 0.14,
-        "description": "Bom equilíbrio custo/qualidade",
-        "recommended": True,
-    },
-    "claude-opus-4": {
-        "model": "anthropic/claude-opus-4.6",
-        "display_name": "Opus 4.6 (premium)",
-        "cost_per_analysis": 0.50,
-        "description": "Máxima profundidade de análise, custo elevado",
-        "recommended": False,
-    },
-}
-
-# Alias de compatibilidade
-JUIZ_CLAUDE_OPTIONS = RELATOR_CLAUDE_OPTIONS
-
 # Defaults (podem ser alterados pelo utilizador na interface)
 CHEFE_MODEL_DEFAULT = "gpt-5.2"            # económico por defeito
 CONSELHEIRO_MODEL_DEFAULT = "gpt-5.2"      # económico por defeito
-AUDITOR_CLAUDE_DEFAULT = "sonnet-4.5"      # económico por defeito
-RELATOR_CLAUDE_DEFAULT = "sonnet-4.5"      # económico por defeito
 
-# Aliases de compatibilidade (engine.py e app.py importam estes nomes)
+# Alias de compatibilidade (components_model_selector.py)
 PRESIDENTE_MODEL_DEFAULT = CONSELHEIRO_MODEL_DEFAULT
-JUIZ_CLAUDE_DEFAULT = RELATOR_CLAUDE_DEFAULT
 
 # =============================================================================
 # MODELOS ACTUAIS (usados se não houver escolha do utilizador)
@@ -554,21 +512,6 @@ def get_conselheiro_model(choice: str = None) -> str:
 get_presidente_model = get_conselheiro_model
 
 
-def get_auditor_claude_model(choice: str = None) -> str:
-    """Retorna modelo Claude para Auditor A2."""
-    if choice is None:
-        choice = AUDITOR_CLAUDE_DEFAULT
-    return AUDITOR_CLAUDE_OPTIONS.get(choice, AUDITOR_CLAUDE_OPTIONS[AUDITOR_CLAUDE_DEFAULT])["model"]
-
-
-def get_relator_claude_model(choice: str = None) -> str:
-    """Retorna modelo Claude para Relator J2."""
-    if choice is None:
-        choice = RELATOR_CLAUDE_DEFAULT
-    return RELATOR_CLAUDE_OPTIONS.get(choice, RELATOR_CLAUDE_OPTIONS[RELATOR_CLAUDE_DEFAULT])["model"]
-
-# Alias de compatibilidade
-get_juiz_claude_model = get_relator_claude_model
 
 
 # =============================================================================

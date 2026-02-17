@@ -442,9 +442,6 @@ def executar_analise(
     # Extrair modelos do tier
     consolidador_model_key = tier_models.get("audit_chief", "gpt-5.2")
     conselheiro_model_key = tier_models.get("president", "gpt-5.2")
-    auditor_claude_model = tier_models.get("audit_claude", "sonnet-4.5")
-    relator_claude_model = tier_models.get("judgment_claude", "sonnet-4.5")
-    extraction_model = tier_models.get("extraction", "sonnet-4.5")
 
     # ── 2. Verificar saldo basico ──
     print(f"[ENGINE] Verificando saldo wallet para user {user_id[:8]}...")
@@ -486,8 +483,6 @@ def executar_analise(
     from src.config import (
         get_chefe_model,
         get_presidente_model,
-        get_auditor_claude_model,
-        get_juiz_claude_model,
     )
     import src.config as config_module
 
