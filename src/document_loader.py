@@ -276,6 +276,29 @@ class DocumentLoader:
                 if table_text:
                     text_parts.append("[TABELA]\n" + "\n".join(table_text))
 
+        # Fix: se poucas páginas foram detectadas mas o texto é muito longo,
+        # re-paginar com marcadores sintéticos (ex: DOCX com 184K chars e 2 páginas)
+        total_chars = sum(len(p) for p in text_parts)
+        avg_chars_per_page = total_chars / max(page_num, 1)
+        SYNTHETIC_PAGE_CHARS = 3000
+        if avg_chars_per_page > SYNTHETIC_PAGE_CHARS * 3:  # >9K por página = precisa subdividir
+            logger.info(
+                f"DOCX: {page_num} páginas detectadas mas {total_chars} chars "
+                f"({avg_chars_per_page:.0f} chars/pág). Re-paginando sinteticamente."
+            )
+            raw_text = "\n\n".join(p for p in text_parts if not p.strip().startswith("[Página"))
+            page_num = 1
+            text_parts = [f"[Página {page_num}]"]
+            char_count = 0
+            for line in raw_text.split("\n\n"):
+                if not line.strip():
+                    continue
+                char_count += len(line) + 2
+                if char_count > SYNTHETIC_PAGE_CHARS * page_num:
+                    page_num += 1
+                    text_parts.append(f"\n[Página {page_num}]")
+                text_parts.append(line)
+
         text = "\n\n".join(text_parts)
 
         # Metadata
