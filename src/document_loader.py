@@ -287,17 +287,24 @@ class DocumentLoader:
                 f"({avg_chars_per_page:.0f} chars/pág). Re-paginando sinteticamente."
             )
             raw_text = "\n\n".join(p for p in text_parts if not p.strip().startswith("[Página"))
+            # Dividir por posição de caracteres (não depende de \n\n)
+            # Prefere cortar em \n quando possível
             page_num = 1
             text_parts = [f"[Página {page_num}]"]
-            char_count = 0
-            for line in raw_text.split("\n\n"):
-                if not line.strip():
-                    continue
-                char_count += len(line) + 2
-                if char_count > SYNTHETIC_PAGE_CHARS * page_num:
+            pos = 0
+            while pos < len(raw_text):
+                end = min(pos + SYNTHETIC_PAGE_CHARS, len(raw_text))
+                if end < len(raw_text):
+                    # Tentar cortar numa newline para não partir palavras
+                    nl = raw_text.rfind("\n", pos, end)
+                    if nl > pos:
+                        end = nl + 1
+                text_parts.append(raw_text[pos:end])
+                pos = end
+                if pos < len(raw_text):
                     page_num += 1
                     text_parts.append(f"\n[Página {page_num}]")
-                text_parts.append(line)
+            logger.info(f"DOCX: Re-paginado para {page_num} páginas sintéticas")
 
         text = "\n\n".join(text_parts)
 

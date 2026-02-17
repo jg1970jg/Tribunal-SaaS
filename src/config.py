@@ -324,13 +324,13 @@ AUDITORES = [
 
 # =============================================================================
 # JUÍZES — v4.0 HANDOVER (3 IAs de RACIOCÍNIO de 3 marcas)
-# J1: o1-pro (Raciocínio puro) — OpenAI
+# J1: GPT-5.2 (Raciocínio) — o1-pro removido (tier 5 + preço proibitivo)
 # J2: DeepSeek R1 (Lógica matemática) — DeepSeek
 # J3: Opus 4.6 (Interpretação doutrinária) — Anthropic
 # =============================================================================
 
 RELATOR_MODELS = [
-    "openai/o1-pro",                    # J1: Raciocínio puro — v4.0
+    "openai/gpt-5.2",                   # J1: Raciocínio — o1-pro removido (tier 5 required + $150/M)
     "deepseek/deepseek-r1",             # J2: DeepSeek R1 — v4.0 (OpenRouter ID)
     "anthropic/claude-opus-4.6",        # J3: Doutrina — v4.0
 ]
