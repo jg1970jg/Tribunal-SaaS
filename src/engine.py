@@ -460,7 +460,17 @@ def executar_analise(
         raise EngineError("Forneça file_bytes OU texto, nao ambos.")
     if file_bytes is not None and not filename:
         raise EngineError("filename e obrigatorio quando file_bytes e fornecido.")
-    if area_direito not in AREAS_DIREITO:
+    # Normalizar área do direito (case-insensitive, aceitar variações sem acento)
+    import unicodedata
+    def _normalize_area(s):
+        s = s.strip().lower()
+        return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+
+    _areas_map = {_normalize_area(a): a for a in AREAS_DIREITO}
+    _area_norm = _normalize_area(area_direito)
+    if _area_norm in _areas_map:
+        area_direito = _areas_map[_area_norm]
+    elif _area_norm not in _areas_map:
         raise EngineError(
             f"Area do direito invalida: '{area_direito}'. "
             f"Opcoes: {', '.join(AREAS_DIREITO)}"

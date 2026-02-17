@@ -431,7 +431,7 @@ SYSTEM_PRESIDENTE = SYSTEM_CONSELHEIRO
 # CONFIGURAÇÕES RESTANTES (inalteradas)
 # =============================================================================
 
-AREAS_DIREITO = ["Civil", "Penal", "Trabalho", "Família", "Administrativo", "Constitucional", "Comercial", "Tributário", "Ambiental", "Consumidor"]
+AREAS_DIREITO = ["Civil", "Penal", "Trabalho", "Família", "Administrativo", "Constitucional", "Comercial", "Tributário", "Ambiental", "Consumidor", "Multi-área", "Outro"]
 
 SIMBOLOS_VERIFICACAO = {"aprovado": "V", "rejeitado": "X", "atencao": "!"}
 
