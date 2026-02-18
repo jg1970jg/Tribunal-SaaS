@@ -407,7 +407,7 @@ MODEL_CONTEXT_LIMITS = {
     "google/gemini-3-pro-preview":      1_049_000,
     "google/gemini-3-flash-preview":    1_049_000,
     "deepseek/deepseek-chat":           128_000,
-    "deepseek/deepseek-r1":             128_000,     # v4.0: J2 DeepSeek R1
+    "deepseek/deepseek-r1":             64_000,      # v4.0: J2 DeepSeek R1 (corrigido)
     "mistralai/mistral-medium-3":       131_072,
     "meta-llama/llama-3.1-405b-instruct": 128_000,    # legacy (ex-A4)
     "qwen/qwen3-max-thinking":          262_000,     # v5.0: A4 Advogado do Diabo (Alibaba 1st-party)
@@ -435,7 +435,7 @@ MODEL_MAX_OUTPUT = {
     "google/gemini-3-pro-preview":      65_535,
     "google/gemini-3-flash-preview":    65_535,
     "deepseek/deepseek-chat":           163_840,
-    "deepseek/deepseek-r1":             64_000,      # v4.0: J2
+    "deepseek/deepseek-r1":             16_000,      # v4.0: J2 (corrigido — real limit OpenRouter)
     "mistralai/mistral-medium-3":       32_768,
     "meta-llama/llama-3.1-405b-instruct": 32_768,     # legacy (ex-A4)
     "qwen/qwen3-max-thinking":          66_000,      # v5.0: A4 Advogado do Diabo — 66K max output
