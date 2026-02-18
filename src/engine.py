@@ -592,10 +592,29 @@ def executar_analise(
         if use_a5_opus:
             logger.info(f"[ENGINE] ELITE: A5 Opus auditor sénior ACTIVADO")
 
+        # Modelos base
+        extrator_models_for_run = list(config_module.EXTRATOR_MODELS)
+        relator_models_for_run = list(config_module.JUIZ_MODELS)
+
+        # Bronze/Standard: remover E4 (Sonnet 4.6) e trocar J3 Opus→Sonnet
+        if tier == "bronze":
+            extrator_models_for_run = [
+                m for m in extrator_models_for_run
+                if m != "anthropic/claude-sonnet-4.6"
+            ]
+            relator_models_for_run = [
+                "anthropic/claude-sonnet-4.6" if m == "anthropic/claude-opus-4.6" else m
+                for m in relator_models_for_run
+            ]
+            logger.info(
+                f"[ENGINE] Bronze: E4 Sonnet removido (extractors={len(extrator_models_for_run)}), "
+                f"J3 Opus→Sonnet 4.6"
+            )
+
         processor = LexForumProcessor(
-            extrator_models=list(config_module.EXTRATOR_MODELS),
+            extrator_models=extrator_models_for_run,
             auditor_models=auditor_models_for_run,
-            relator_models=list(config_module.JUIZ_MODELS),
+            relator_models=relator_models_for_run,
             chefe_model=chefe_model_for_run,
             presidente_model=presidente_model_for_run,
             callback_progresso=callback,
