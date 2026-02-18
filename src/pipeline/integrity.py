@@ -41,7 +41,6 @@ from src.pipeline.text_normalize import (
     NormalizationConfig,
 )
 
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 

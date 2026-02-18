@@ -37,7 +37,6 @@ from src.config import (
     CONSENSUS_PROBABLE_MIN_AUDITORS,
 )
 
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 

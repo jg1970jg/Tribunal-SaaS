@@ -31,7 +31,6 @@ from src.pipeline.schema_unified import (
     create_item_id,
 )
 
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 

@@ -19,9 +19,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Set
 
-from src.config import LOG_LEVEL
 
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 

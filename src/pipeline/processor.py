@@ -148,8 +148,6 @@ from prompts_maximos import (
 from src.utils.perguntas import parse_perguntas, validar_perguntas
 from src.utils.metadata_manager import guardar_metadata, gerar_titulo_automatico
 
-# Configurar logging
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 

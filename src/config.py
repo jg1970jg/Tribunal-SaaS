@@ -476,12 +476,8 @@ ASK_MODELS = [
 # PROMPTS SISTEMA
 # =============================================================================
 
-SYSTEM_AGREGADOR = PROMPT_AGREGADOR_PRESERVADOR
-SYSTEM_CHEFE = "Consolide auditorias."
-SYSTEM_CONSELHEIRO = "Parecer final fundamentado."
-
-# Alias de compatibilidade
-SYSTEM_PRESIDENTE = SYSTEM_CONSELHEIRO
+# (Removidos: SYSTEM_AGREGADOR, SYSTEM_CHEFE, SYSTEM_CONSELHEIRO, SYSTEM_PRESIDENTE
+#  — não eram importados por nenhum módulo. Os prompts activos estão em processor.py)
 
 # =============================================================================
 # CONFIGURAÇÕES RESTANTES (inalteradas)

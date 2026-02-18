@@ -12,10 +12,8 @@ from datetime import datetime
 import hashlib
 import io
 
-from src.config import SUPPORTED_EXTENSIONS, LOG_LEVEL
+from src.config import SUPPORTED_EXTENSIONS
 
-# Configurar logging
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 

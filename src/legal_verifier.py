@@ -30,7 +30,6 @@ from src.config import (
     API_TIMEOUT,
 )
 
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 

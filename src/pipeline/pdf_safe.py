@@ -21,7 +21,6 @@ import io
 
 from src.config import LOG_LEVEL, OUTPUT_DIR
 
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 

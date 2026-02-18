@@ -130,8 +130,6 @@ def _safe_parse_json(response: httpx.Response, context: str = "") -> Dict[str, A
     return data
 
 
-# Configurar logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

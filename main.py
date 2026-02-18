@@ -44,6 +44,12 @@ from src.cost_controller import BudgetExceededError
 
 logger = logging.getLogger(__name__)
 
+# Constantes de validação de ficheiros (usadas em /analyze e /analyze/add)
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".doc"}
+MAX_QUESTION_LENGTH = 5000
+ADMIN_SESSION_TTL = 3600  # 1 hora
+
 
 def _sanitize_filename(filename: str) -> str:
     """Sanitize filename to prevent path traversal and prompt injection."""
@@ -414,9 +420,6 @@ async def analyze(
                 detail="Já tem uma análise em curso. Aguarde que termine antes de submeter outra.",
             )
         _active_user_analyses[user_id] = "starting"
-
-    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-    ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".doc"}
 
     try:
         file_bytes = await file.read()
@@ -847,8 +850,8 @@ async def ask_question(request: Request, req: AskRequest, user: dict = Depends(g
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="A pergunta não pode estar vazia.")
-    if len(question) > 5000:
-        raise HTTPException(status_code=422, detail="Pergunta demasiado longa. Máximo: 5000 caracteres.")
+    if len(question) > MAX_QUESTION_LENGTH:
+        raise HTTPException(status_code=422, detail=f"Pergunta demasiado longa. Máximo: {MAX_QUESTION_LENGTH} caracteres.")
 
     context = _build_ask_context(req.analysis_result, req.previous_qa)
 
@@ -967,7 +970,6 @@ async def add_document_to_project(
     filename = _sanitize_filename(file.filename)
 
     # Validar extensão
-    ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".doc"}
     ext = os.path.splitext(filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -975,7 +977,6 @@ async def add_document_to_project(
             detail=f"Tipo de ficheiro não suportado. Aceites: {', '.join(ALLOWED_EXTENSIONS)}",
         )
 
-    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -1540,7 +1541,7 @@ async def admin_verify(request: Request, req: AdminVerifyRequest):
     }
     # Cleanup expired sessions (older than 1 hour)
     expired = [k for k, v in _admin_sessions.items()
-               if (now - v["created_at"]).total_seconds() > 3600]
+               if (now - v["created_at"]).total_seconds() > ADMIN_SESSION_TTL]
     for k in expired:
         del _admin_sessions[k]
     return {"status": "ok", "message": "Acesso autorizado.", "admin_token": admin_token}

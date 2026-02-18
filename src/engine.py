@@ -122,7 +122,7 @@ def verificar_saldo_wallet(user_id: str, num_chars: int = 0) -> Dict[str, Any]:
     Se SKIP_WALLET_CHECK=true, ignora a verificação.
     """
     if _is_wallet_skip():
-        print(f"[WALLET] SKIP_WALLET_CHECK ativo - ignorando verificação de saldo")
+        logger.info(f"[WALLET] SKIP_WALLET_CHECK ativo - ignorando verificação de saldo")
         return {"saldo_atual": 999.99, "custo_estimado": 0.0, "suficiente": True}
 
     wm = get_wallet_manager()
@@ -163,7 +163,7 @@ def bloquear_creditos(
         InsufficientBalanceError: Se saldo insuficiente
     """
     if _is_wallet_skip():
-        print(f"[WALLET] SKIP - bloqueio ignorado para analysis {analysis_id}")
+        logger.info(f"[WALLET] SKIP - bloqueio ignorado para analysis {analysis_id}")
         return {
             "transaction_id": "skip",
             "blocked_usd": 0.0,
@@ -183,7 +183,7 @@ def bloquear_creditos(
             estimated_cost_usd=estimated_cost,
             reason=f"Analise tier={tier.value}",
         )
-        print(
+        logger.info(
             f"[WALLET] Bloqueio OK: analysis={analysis_id}, "
             f"tier={tier.value}, blocked=${result['blocked_usd']:.4f}"
         )
@@ -201,7 +201,7 @@ def liquidar_creditos(analysis_id: str, custo_real_usd: float) -> Dict[str, Any]
     Debita custo real x2 (margem 100%), devolve diferenca.
     """
     if _is_wallet_skip():
-        print(f"[WALLET] SKIP - liquidacao ignorada (custo real=${custo_real_usd:.4f})")
+        logger.info(f"[WALLET] SKIP - liquidacao ignorada (custo real=${custo_real_usd:.4f})")
         return {
             "status": "skipped",
             "real_cost": custo_real_usd,
@@ -215,7 +215,7 @@ def liquidar_creditos(analysis_id: str, custo_real_usd: float) -> Dict[str, Any]
             analysis_id=analysis_id,
             real_cost_usd=custo_real_usd,
         )
-        print(
+        logger.info(
             f"[WALLET] Liquidacao OK: analysis={analysis_id}, "
             f"real=${custo_real_usd:.4f}, refunded=${result.get('refunded', 0):.4f}"
         )
@@ -228,18 +228,17 @@ def liquidar_creditos(analysis_id: str, custo_real_usd: float) -> Dict[str, Any]
 def cancelar_bloqueio(analysis_id: str) -> None:
     """Cancela bloqueio se analise falhar. Devolve tudo."""
     if _is_wallet_skip():
-        print(f"[WALLET] SKIP - cancelamento ignorado para {analysis_id}")
+        logger.info(f"[WALLET] SKIP - cancelamento ignorado para {analysis_id}")
         return
 
     wm = get_wallet_manager()
     try:
         wm.cancel_block(analysis_id=analysis_id)
-        print(f"[WALLET] Bloqueio cancelado: analysis={analysis_id}")
+        logger.info(f"[WALLET] Bloqueio cancelado: analysis={analysis_id}")
     except Exception as e:
         logger.error(f"[WALLET] ERRO ao cancelar bloqueio: {e}")
         # Criar alerta de segurança — créditos ficaram bloqueados
         try:
-            from auth_service import get_supabase_admin
             sb = get_supabase_admin()
             sb.table("security_alerts").insert({
                 "type": "wallet_cancel_failed",
@@ -307,7 +306,7 @@ def carregar_documento_de_bytes(
             f"Verifique se o PDF nao e uma imagem escaneada."
         )
 
-    print(f"[DOC] Carregado: {filename} | {doc.num_chars:,} chars | {doc.num_words:,} palavras | {doc.num_pages} paginas")
+    logger.info(f"[DOC] Carregado: {filename} | {doc.num_chars:,} chars | {doc.num_words:,} palavras | {doc.num_pages} paginas")
     return doc
 
 
@@ -338,7 +337,7 @@ def carregar_multiplos_documentos(
             )
             documentos.append(doc)
         except InvalidDocumentError as e:
-            print(f"[AVISO] {e}")
+            logger.warning(f"[AVISO] {e}")
     return documentos
 
 
@@ -435,16 +434,16 @@ def executar_analise(
         raise EngineError(f"Tier '{tier}' inválido. Opções: bronze, silver, gold")
 
     tier_models = get_tier_models(tier_level)
-    print(f"[ENGINE] Tier: {tier_level.value} | Analysis ID: {analysis_id}")
+    logger.info(f"[ENGINE] Tier: {tier_level.value} | Analysis ID: {analysis_id}")
 
     # Extrair modelos do tier
     consolidador_model_key = tier_models.get("audit_chief", "gpt-5.2")
     conselheiro_model_key = tier_models.get("president", "gpt-5.2")
 
     # ── 2. Verificar saldo basico ──
-    print(f"[ENGINE] Verificando saldo wallet para user {user_id[:8]}...")
+    logger.info(f"[ENGINE] Verificando saldo wallet para user {user_id[:8]}...")
     wallet_info = verificar_saldo_wallet(user_id, num_chars=0)
-    print(f"[ENGINE] Saldo OK: ${wallet_info['saldo_atual']:.2f} USD")
+    logger.info(f"[ENGINE] Saldo OK: ${wallet_info['saldo_atual']:.2f} USD")
 
     # ── 3. Validar API keys ──
     if not OPENROUTER_API_KEY or len(OPENROUTER_API_KEY) < 10:
@@ -470,7 +469,7 @@ def executar_analise(
     _area_norm = _normalize_area(area_direito)
     if _area_norm in _areas_map:
         area_direito = _areas_map[_area_norm]
-    elif _area_norm not in _areas_map:
+    else:
         raise EngineError(
             f"Area do direito invalida: '{area_direito}'. "
             f"Opcoes: {', '.join(AREAS_DIREITO)}"
@@ -483,9 +482,9 @@ def executar_analise(
             pode, msg = validar_perguntas(perguntas)
             if not pode:
                 raise EngineError(f"Perguntas invalidas: {msg}")
-            print(f"[ENGINE] {len(perguntas)} pergunta(s) detectadas")
+            logger.info(f"[ENGINE] {len(perguntas)} pergunta(s) detectadas")
     else:
-        print("[ENGINE] Sem perguntas do utilizador")
+        logger.info("[ENGINE] Sem perguntas do utilizador")
 
     # ── 5. Configurar modelos conforme tier ──
     from src.config import (
@@ -510,7 +509,7 @@ def executar_analise(
     extrator_summary = ", ".join(f"{cfg['id']}={cfg['model'].split('/')[-1]}" for cfg in config_module.LLM_CONFIGS)
     auditor_summary = ", ".join(f"A{i+1}={m.split('/')[-1]}" for i, m in enumerate(config_module.AUDITOR_MODELS))
     juiz_summary = ", ".join(f"J{i+1}={m.split('/')[-1]}" for i, m in enumerate(config_module.JUIZ_MODELS))
-    print(
+    logger.info(
         f"[ENGINE] Modelos ({tier_level.value}): "
         f"{extrator_summary}, "
         f"Consolidador={chefe_model_for_run}, Conselheiro={presidente_model_for_run}, "
@@ -519,7 +518,7 @@ def executar_analise(
 
     # ── 6. Carregar documento ou criar a partir de texto ──
     if file_bytes is not None:
-        print(f"[ENGINE] Carregando documento: {filename}")
+        logger.info(f"[ENGINE] Carregando documento: {filename}")
         temp_out_dir = OUTPUT_DIR / f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         documento = carregar_documento_de_bytes(
             file_bytes=file_bytes,
@@ -538,12 +537,12 @@ def executar_analise(
             num_words=len(texto.split()),
             success=True,
         )
-        print(f"[ENGINE] Texto direto: {len(texto):,} caracteres")
+        logger.info(f"[ENGINE] Texto direto: {len(texto):,} caracteres")
 
     # ── 7. Gerar titulo se nao fornecido ──
     if not titulo:
         titulo = gerar_titulo_automatico(documento.filename, area_direito)
-    print(f"[ENGINE] Titulo: {titulo}")
+    logger.info(f"[ENGINE] Titulo: {titulo}")
 
     # ── 8. BLOQUEAR CREDITOS (antes de processar) ──
     num_chars = documento.num_chars if documento else 0
@@ -556,7 +555,7 @@ def executar_analise(
             tier=tier_level,
             document_tokens=document_tokens,
         )
-        print(
+        logger.info(
             f"[ENGINE] Creditos bloqueados: ${block_result['blocked_usd']:.4f}, "
             f"saldo restante: ${block_result['balance_after']:.2f}"
         )
@@ -568,14 +567,14 @@ def executar_analise(
 
     # ── 9. Callback de progresso ──
     def _callback_default(fase: str, progresso: int, mensagem: str):
-        print(f"[{progresso:3d}%] {fase}: {mensagem}")
+        logger.info(f"[{progresso:3d}%] {fase}: {mensagem}")
 
     callback = callback_progresso or _callback_default
 
     # ── 10. Executar pipeline ──
-    print(f"[ENGINE] Iniciando pipeline de 4 fases...")
-    print(f"[ENGINE] Area: {area_direito}")
-    print(f"[ENGINE] Documento: {documento.filename} ({documento.num_chars:,} chars)")
+    logger.info(f"[ENGINE] Iniciando pipeline de 4 fases...")
+    logger.info(f"[ENGINE] Area: {area_direito}")
+    logger.info(f"[ENGINE] Documento: {documento.filename} ({documento.num_chars:,} chars)")
 
     try:
         # v4.0: Selecção de modelos por tier
@@ -585,12 +584,12 @@ def executar_analise(
         from src.tier_config import get_openrouter_model
         president_key = tier_models.get("president", "gpt-5.2")
         presidente_model_for_run = get_openrouter_model(president_key)
-        print(f"[ENGINE] Presidente model (tier={tier}): {presidente_model_for_run}")
+        logger.info(f"[ENGINE] Presidente model (tier={tier}): {presidente_model_for_run}")
 
         # v4.0: A5 Opus (APENAS ELITE)
         use_a5_opus = tier_models.get("audit_a5_opus", False)
         if use_a5_opus:
-            print(f"[ENGINE] ELITE: A5 Opus auditor sénior ACTIVADO")
+            logger.info(f"[ENGINE] ELITE: A5 Opus auditor sénior ACTIVADO")
 
         processor = LexForumProcessor(
             extrator_models=list(config_module.EXTRATOR_MODELS),
@@ -647,13 +646,13 @@ def executar_analise(
 
     # ── 12. Reportar resultado ──
     duracao = (datetime.now() - timestamp_inicio).total_seconds()
-    print(f"[ENGINE] Pipeline concluido em {duracao:.1f}s")
-    print(f"[ENGINE] Parecer: {resultado.simbolo_final} {resultado.veredicto_final}")
-    print(f"[ENGINE] Tokens: {resultado.total_tokens:,}")
+    logger.info(f"[ENGINE] Pipeline concluido em {duracao:.1f}s")
+    logger.info(f"[ENGINE] Parecer: {resultado.simbolo_final} {resultado.veredicto_final}")
+    logger.info(f"[ENGINE] Tokens: {resultado.total_tokens:,}")
     if custo_real_usd > 0:
-        print(f"[ENGINE] Custo APIs: ${custo_real_usd:.4f}")
-    print(f"[ENGINE] Tier: {tier_level.value} | Analysis ID: {analysis_id}")
-    print(f"[ENGINE] Run ID: {resultado.run_id}")
+        logger.info(f"[ENGINE] Custo APIs: ${custo_real_usd:.4f}")
+    logger.info(f"[ENGINE] Tier: {tier_level.value} | Analysis ID: {analysis_id}")
+    logger.info(f"[ENGINE] Run ID: {resultado.run_id}")
 
     return resultado
 
@@ -721,7 +720,7 @@ def executar_analise_multiplos_documentos(
         PipelineResult
     """
     # Verificar saldo ANTES de carregar documentos
-    print(f"[ENGINE] Verificando saldo wallet para user {user_id[:8]}...")
+    logger.info(f"[ENGINE] Verificando saldo wallet para user {user_id[:8]}...")
     verificar_saldo_wallet(user_id, num_chars=0)
 
     # Carregar todos os documentos

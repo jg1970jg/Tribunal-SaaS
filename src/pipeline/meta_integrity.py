@@ -28,7 +28,6 @@ from typing import List, Dict, Optional, Set, Any, Tuple
 from src.config import LOG_LEVEL, OUTPUT_DIR, USE_UNIFIED_PROVENANCE
 from src.utils.sanitize import sanitize_run_id
 
-logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 
