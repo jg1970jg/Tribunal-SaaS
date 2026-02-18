@@ -279,6 +279,7 @@ class LLMResponse:
     error: Optional[str] = None
     success: bool = True
     api_used: str = ""  # "openai" ou "openrouter"
+    finish_reason: str = ""  # "stop", "length", "content_filter", "error", etc.
 
     @property
     def cache_hit_rate(self) -> float:
@@ -302,6 +303,7 @@ class LLMResponse:
             "error": self.error,
             "success": self.success,
             "api_used": self.api_used,
+            "finish_reason": self.finish_reason,
         }
 
 
@@ -585,11 +587,14 @@ class OpenAIClient:
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
+            # Capturar finish_reason para metadata
+            openai_finish_reason = choice.get("finish_reason") or ""
+
             # FIX 2026-02-10: Detectar conteúdo vazio como falha
             if not content or not content.strip():
                 logger.warning(
                     f"[OpenAI] Resposta com content VAZIO para {model}. "
-                    f"Finish reason: {choice.get('finish_reason', 'N/A')}"
+                    f"Finish reason: {openai_finish_reason or 'N/A'}"
                 )
                 self._stats["failed_calls"] += 1
                 return LLMResponse(
@@ -604,7 +609,8 @@ class OpenAIClient:
                     raw_response=raw_response,
                     error="Resposta com conteúdo vazio (content empty)",
                     success=False,
-                    api_used="openai"
+                    api_used="openai",
+                    finish_reason=openai_finish_reason,
                 )
 
             response = LLMResponse(
@@ -618,7 +624,8 @@ class OpenAIClient:
                 latency_ms=latency_ms,
                 raw_response=raw_response,
                 success=True,
-                api_used="openai"
+                api_used="openai",
+                finish_reason=openai_finish_reason,
             )
 
             self._stats["successful_calls"] += 1
@@ -832,6 +839,9 @@ class OpenAIClient:
 
             total_tokens = usage.get("total_tokens", 0) or (prompt_tokens + actual_completion)
 
+            # Responses API usa "status" em vez de "finish_reason"
+            responses_status = raw_response.get("status") or ""
+
             response = LLMResponse(
                 content=output_text,
                 model=raw_response.get("model", model),
@@ -844,7 +854,8 @@ class OpenAIClient:
                 latency_ms=latency_ms,
                 raw_response=raw_response,
                 success=True,
-                api_used="openai (responses)"
+                api_used="openai (responses)",
+                finish_reason=responses_status,
             )
 
             self._stats["successful_calls"] += 1
@@ -1056,12 +1067,63 @@ class OpenRouterClient:
             # Log raw usage for debugging
             logger.info(f"[USAGE-RAW] {model}: {usage}")
 
-            # FIX 2026-02-10: Detectar conteúdo vazio como falha
+            # Extrair finish_reason para validacao (OpenRouter pode devolver HTTP 200 com problemas)
+            finish_reason = choice.get("finish_reason") or ""
+
+            # FIX 2026-02-18: Validar finish_reason ANTES de aceitar a resposta
+            # Output truncado — content existe mas esta incompleto (grave para analise juridica)
+            if finish_reason == "length" and content and content.strip():
+                logger.warning(
+                    f"[OpenRouter] Output TRUNCADO para {model} — finish_reason: length. "
+                    f"Content len: {len(content)} chars. Aumentar max_tokens ou rever chunking."
+                )
+                self._stats["failed_calls"] += 1
+                return LLMResponse(
+                    content=content,
+                    model=raw_response.get("model", model),
+                    role="assistant",
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=actual_completion,
+                    reasoning_tokens=reasoning_tokens,
+                    total_tokens=usage.get("total_tokens", 0),
+                    cached_tokens=cached_tokens,
+                    latency_ms=latency_ms,
+                    raw_response=raw_response,
+                    error=f"Output truncado (finish_reason=length)",
+                    success=False,
+                    api_used="openrouter",
+                    finish_reason="length",
+                )
+
+            # Filtro de conteudo ativado — nao esperado em analise juridica
+            if finish_reason == "content_filter":
+                logger.warning(
+                    f"[OpenRouter] Content filter ativado para {model}. "
+                    f"Verificar prompt. Raw choices: {raw_response.get('choices', [])}"
+                )
+                self._stats["failed_calls"] += 1
+                return LLMResponse(
+                    content="",
+                    model=raw_response.get("model", model),
+                    role="assistant",
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=actual_completion,
+                    reasoning_tokens=reasoning_tokens,
+                    total_tokens=usage.get("total_tokens", 0),
+                    cached_tokens=cached_tokens,
+                    latency_ms=latency_ms,
+                    raw_response=raw_response,
+                    error=f"Filtro de conteudo ativado (finish_reason=content_filter)",
+                    success=False,
+                    api_used="openrouter",
+                    finish_reason="content_filter",
+                )
+
+            # FIX 2026-02-10: Detectar conteudo vazio como falha
             if not content or not content.strip():
-                finish_reason = choice.get("finish_reason", "N/A")
                 logger.warning(
                     f"[OpenRouter] Resposta com content VAZIO para {model}. "
-                    f"Finish reason: {finish_reason}. "
+                    f"Finish reason: {finish_reason or 'N/A'}. "
                     f"Raw choices: {raw_response.get('choices', [])}"
                 )
                 self._stats["failed_calls"] += 1
@@ -1076,9 +1138,10 @@ class OpenRouterClient:
                     cached_tokens=cached_tokens,
                     latency_ms=latency_ms,
                     raw_response=raw_response,
-                    error=f"Resposta com conteúdo vazio (finish_reason={finish_reason})",
+                    error=f"Resposta com conteudo vazio (finish_reason={finish_reason or 'N/A'})",
                     success=False,
-                    api_used="openrouter"
+                    api_used="openrouter",
+                    finish_reason=finish_reason,
                 )
 
             response = LLMResponse(
@@ -1093,7 +1156,8 @@ class OpenRouterClient:
                 latency_ms=latency_ms,
                 raw_response=raw_response,
                 success=True,
-                api_used="openrouter"
+                api_used="openrouter",
+                finish_reason=finish_reason,
             )
 
             self._stats["successful_calls"] += 1

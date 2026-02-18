@@ -922,7 +922,14 @@ REVISTO:"""
         MAX_RETRIES = MODEL_MAX_RETRIES.get(modelo_final, 2)
         for retry_num in range(1, MAX_RETRIES + 1):
             if not response.success or not response.content:
-                quality_issue = {"code": "CALL_FAILED", "critical": True, "msg": "LLM call failed"}
+                # FIX 2026-02-18: Distinguir output truncado de falha generica
+                if getattr(response, 'finish_reason', '') == 'length':
+                    quality_issue = {
+                        "code": "OUTPUT_TRUNCATED", "critical": True,
+                        "msg": "Output truncado por max_tokens (finish_reason=length)"
+                    }
+                else:
+                    quality_issue = {"code": "CALL_FAILED", "critical": True, "msg": "LLM call failed"}
             else:
                 quality_issue = check_response_quality(response.content, role_name)
 
