@@ -1383,8 +1383,28 @@ REVISTO:"""
             extractor_prompt_tokens = 0
             extractor_completion_tokens = 0
 
-            for chunk_idx, chunk in enumerate(chunks):
-                chunk_info = f" (chunk {chunk_idx+1}/{num_chunks})" if num_chunks > 1 else ""
+            # FIX 2026-02-18: Micro-chunking para modelos com output limitado (ex: nova-pro 5K)
+            from src.config import MODEL_MAX_OUTPUT as _MODEL_MAX_OUTPUT
+            model_max_out = _MODEL_MAX_OUTPUT.get(model, 16_384)
+            if model_max_out <= 8192:
+                micro_chunk_size = 15_000
+                micro_overlap = 3_750
+                extractor_chunks = self._criar_chunks_estruturados(
+                    texto=documento.text, doc_id=doc_id, method="text",
+                    chunk_size=micro_chunk_size, overlap=micro_overlap,
+                )
+                if page_mapper:
+                    self._enrich_chunks_with_pages(extractor_chunks, page_mapper)
+                logger.info(
+                    f"[MICRO-CHUNK] {extractor_id}: max_output={model_max_out} → "
+                    f"re-chunked {num_chunks}→{len(extractor_chunks)} chunks "
+                    f"({micro_chunk_size:,} chars cada)"
+                )
+            else:
+                extractor_chunks = chunks
+
+            for chunk_idx, chunk in enumerate(extractor_chunks):
+                chunk_info = f" (chunk {chunk_idx+1}/{len(extractor_chunks)})" if len(extractor_chunks) > 1 else ""
 
                 logger.info(f"=== {extractor_id}{chunk_info} [{chunk.start_char:,}-{chunk.end_char:,}] - {model} ===")
 
@@ -1457,10 +1477,49 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                     func_name=f"{extractor_id}-chunk{chunk_idx}",
                 )
 
-                if response is None or not response.content:
-                    chunk_errors.append(f"{extractor_id} chunk {chunk_idx}: LLM falhou após retries")
-                    logger.error(f"✗ {extractor_id} chunk {chunk_idx}: sem resposta após retries")
-                    continue
+                # FIX 2026-02-18: Suplente E4 (Sonnet 4.6) quando extractor falha num chunk
+                if response is None or not response.content or not getattr(response, 'success', True):
+                    fallback_model = "anthropic/claude-sonnet-4.6"
+                    if model != fallback_model:
+                        fail_reason = ""
+                        if response and hasattr(response, 'finish_reason') and response.finish_reason:
+                            fail_reason = f" (finish_reason={response.finish_reason})"
+                        elif response and hasattr(response, 'error') and response.error:
+                            fail_reason = f" ({response.error[:80]})"
+                        logger.warning(
+                            f"[SUPLENTE] {extractor_id} chunk {chunk_idx+1}: "
+                            f"{model} falhou{fail_reason} → tentando {fallback_model}"
+                        )
+                        fallback_max_tokens = min(32_768, MODEL_MAX_OUTPUT.get(fallback_model, 16_384))
+
+                        def _do_fallback_call(
+                            _model=fallback_model, _prompt=prompt, _sys=sys_prompt,
+                            _temp=temperature, _max_tokens=fallback_max_tokens,
+                        ):
+                            return self.llm_client.chat_simple(
+                                model=_model, prompt=_prompt,
+                                system_prompt=_sys, temperature=_temp,
+                                max_tokens=_max_tokens,
+                            )
+
+                        response = _call_with_retry(
+                            _do_fallback_call,
+                            func_name=f"{extractor_id}-chunk{chunk_idx}-fallback",
+                        )
+                        if response and response.content and getattr(response, 'success', True):
+                            logger.info(
+                                f"[SUPLENTE] {extractor_id} chunk {chunk_idx+1}: "
+                                f"Sonnet 4.6 OK ({len(response.content):,} chars)"
+                            )
+                            # continua normalmente para o parse abaixo
+                        else:
+                            chunk_errors.append(f"{extractor_id} chunk {chunk_idx}: falhou + suplente falhou")
+                            logger.error(f"✗ {extractor_id} chunk {chunk_idx+1}: suplente também falhou")
+                            continue
+                    else:
+                        chunk_errors.append(f"{extractor_id} chunk {chunk_idx}: LLM falhou após retries")
+                        logger.error(f"✗ {extractor_id} chunk {chunk_idx+1}: sem resposta após retries")
+                        continue
 
                 # Acumular tokens REAIS da resposta
                 r_prompt = response.prompt_tokens
