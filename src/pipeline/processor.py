@@ -272,15 +272,34 @@ class PipelineResult:
         }
 
 
-def _call_with_retry(func, func_name="LLM", max_retries=3, backoff_times=None):
-    """Chama func() com até 3 tentativas. Backoff: 3s, 8s, 15s."""
+def _call_with_retry(func, func_name="LLM", max_retries=3, backoff_times=None, deadline=None):
+    """Chama func() com até max_retries tentativas. Backoff: 3s, 8s, 15s.
+
+    Args:
+        deadline: tempo máximo total em segundos (None = sem limite).
+                  Se excedido, retorna None imediatamente.
+    """
     if backoff_times is None:
         backoff_times = [3, 8, 15]
 
+    _start = time.monotonic()
     for attempt in range(max_retries):
+        if deadline and (time.monotonic() - _start) >= deadline:
+            logger.warning(
+                f"[RETRY] {func_name}: deadline {deadline}s excedido "
+                f"após {attempt} tentativas ({time.monotonic() - _start:.0f}s)"
+            )
+            return None
         try:
             return func()
         except Exception as e:
+            elapsed = time.monotonic() - _start
+            if deadline and elapsed >= deadline:
+                logger.warning(
+                    f"[RETRY] {func_name}: deadline {deadline}s excedido "
+                    f"na tentativa {attempt+1}: {e}"
+                )
+                return None
             if attempt < max_retries - 1:
                 wait = backoff_times[min(attempt, len(backoff_times) - 1)]
                 logger.warning(
@@ -1463,18 +1482,22 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                         return self.llm_client.chat(
                             model=_model, messages=messages,
                             system_prompt=_sys, temperature=_temp,
-                            max_tokens=_max_tokens,
+                            max_tokens=_max_tokens, timeout=120,
                         )
                     else:
                         return self.llm_client.chat_simple(
                             model=_model, prompt=_prompt,
                             system_prompt=_sys, temperature=_temp,
-                            max_tokens=_max_tokens,
+                            max_tokens=_max_tokens, timeout=120,
                         )
 
+                # FIX 2026-02-18: Extractores com timeout 120s, 2 retries, deadline 250s
                 response = _call_with_retry(
                     _do_llm_call,
                     func_name=f"{extractor_id}-chunk{chunk_idx}",
+                    max_retries=2,
+                    backoff_times=[5],
+                    deadline=250,
                 )
 
                 # FIX 2026-02-18: Suplente E4 (Sonnet 4.6) quando extractor falha num chunk
@@ -1499,12 +1522,13 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                             return self.llm_client.chat_simple(
                                 model=_model, prompt=_prompt,
                                 system_prompt=_sys, temperature=_temp,
-                                max_tokens=_max_tokens,
+                                max_tokens=_max_tokens, timeout=120,
                             )
 
                         response = _call_with_retry(
                             _do_fallback_call,
                             func_name=f"{extractor_id}-chunk{chunk_idx}-fallback",
+                            max_retries=1,
                         )
                         if response and response.content and getattr(response, 'success', True):
                             logger.info(

@@ -462,6 +462,7 @@ class OpenAIClient:
         messages: List[Dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: int = 16384,
+        timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Faz uma requisição à API Chat Completions com retry automático."""
         url = f"{self.base_url}/chat/completions"
@@ -478,7 +479,10 @@ class OpenAIClient:
 
         logger.debug(f"OpenAI Request para {clean_model}: {len(str(messages))} chars")
 
-        response = self._client.post(url, json=payload)
+        post_kwargs = {"json": payload}
+        if timeout:
+            post_kwargs["timeout"] = timeout
+        response = self._client.post(url, **post_kwargs)
         response.raise_for_status()
 
         # FIX 2026-02-10: Parse JSON defensivo
@@ -497,6 +501,7 @@ class OpenAIClient:
         instructions: Optional[str] = None,
         temperature: float = 0.7,
         max_output_tokens: int = 16384,
+        timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Faz requisição à API Responses (/v1/responses) com retry automático.
@@ -530,7 +535,10 @@ class OpenAIClient:
 
         logger.debug(f"OpenAI Responses Request para {clean_model}: {len(input_text)} chars")
 
-        response = self._client.post(url, json=payload)
+        post_kwargs = {"json": payload}
+        if timeout:
+            post_kwargs["timeout"] = timeout
+        response = self._client.post(url, **post_kwargs)
         response.raise_for_status()
 
         # FIX 2026-02-10: Parse JSON defensivo
@@ -544,10 +552,11 @@ class OpenAIClient:
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
         enable_cache: bool = True,  # NOVO parâmetro
+        timeout: Optional[int] = None,
     ) -> LLMResponse:
         """
         Envia mensagens para um modelo e retorna a resposta.
-        
+
         NOVO: Suporte para prompt caching (automático em OpenAI).
         """
         self._stats["total_calls"] += 1
@@ -567,6 +576,7 @@ class OpenAIClient:
                 messages=full_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                timeout=timeout,
             )
 
             # Extrair resposta
@@ -661,6 +671,7 @@ class OpenAIClient:
         temperature: float = 0.7,
         max_tokens: int = 16384,
         enable_cache: bool = True,  # NOVO parâmetro
+        timeout: Optional[int] = None,
     ) -> LLMResponse:
         """Versão simplificada de chat com apenas um prompt."""
         messages = [{"role": "user", "content": prompt}]
@@ -671,6 +682,7 @@ class OpenAIClient:
             temperature=temperature,
             max_tokens=max_tokens,
             enable_cache=enable_cache,
+            timeout=timeout,
         )
 
     def chat_responses(
@@ -681,6 +693,7 @@ class OpenAIClient:
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
         enable_cache: bool = True,  # NOVO parâmetro
+        timeout: Optional[int] = None,
     ) -> LLMResponse:
         """
         Envia mensagens para um modelo usando Responses API (/v1/responses).
@@ -721,6 +734,7 @@ class OpenAIClient:
                 instructions=instructions,
                 temperature=temperature,
                 max_output_tokens=max_tokens,
+                timeout=timeout,
             )
 
             # Extrair resposta (formato diferente!)
@@ -965,6 +979,7 @@ class OpenRouterClient:
         messages: List[Dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: int = 16384,
+        timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Faz uma requisição à API com retry automático."""
         url = f"{self.base_url}/chat/completions"
@@ -981,7 +996,10 @@ class OpenRouterClient:
 
         logger.debug(f"OpenRouter Request para {clean_model}: {len(str(messages))} chars")
 
-        response = self._client.post(url, json=payload)
+        post_kwargs = {"json": payload}
+        if timeout:
+            post_kwargs["timeout"] = timeout
+        response = self._client.post(url, **post_kwargs)
         response.raise_for_status()
 
         # FIX 2026-02-10: Parse JSON defensivo (em vez de response.json() directo)
@@ -995,10 +1013,11 @@ class OpenRouterClient:
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
         enable_cache: bool = True,  # NOVO parâmetro
+        timeout: Optional[int] = None,
     ) -> LLMResponse:
         """
         Envia mensagens para um modelo e retorna a resposta.
-        
+
         NOVO: Suporte para prompt caching (Anthropic manual, outros automático).
         """
         self._stats["total_calls"] += 1
@@ -1022,6 +1041,7 @@ class OpenRouterClient:
                 messages=full_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                timeout=timeout,
             )
 
             # Extrair resposta
@@ -1192,6 +1212,7 @@ class OpenRouterClient:
         temperature: float = 0.7,
         max_tokens: int = 16384,
         enable_cache: bool = True,  # NOVO parâmetro
+        timeout: Optional[int] = None,
     ) -> LLMResponse:
         """Versão simplificada de chat com apenas um prompt."""
         messages = [{"role": "user", "content": prompt}]
@@ -1202,6 +1223,7 @@ class OpenRouterClient:
             temperature=temperature,
             max_tokens=max_tokens,
             enable_cache=enable_cache,
+            timeout=timeout,
         )
 
     def get_stats(self) -> Dict[str, Any]:
@@ -1281,12 +1303,13 @@ class UnifiedLLMClient:
         temperature: float = 0.7,
         max_tokens: int = 16384,
         enable_cache: bool = True,  # NOVO parâmetro
+        timeout: Optional[int] = None,
     ) -> LLMResponse:
         """
         Versão simplificada de chat.
-        
+
         Detecta automaticamente qual API usar e implementa fallback.
-        
+
         NOVO: Suporte para prompt caching.
         """
         messages = [{"role": "user", "content": prompt}]
@@ -1297,6 +1320,7 @@ class UnifiedLLMClient:
             temperature=temperature,
             max_tokens=max_tokens,
             enable_cache=enable_cache,
+            timeout=timeout,
         )
 
     def chat_vision(
@@ -1368,10 +1392,11 @@ class UnifiedLLMClient:
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
         enable_cache: bool = True,  # NOVO parâmetro
+        timeout: Optional[int] = None,
     ) -> LLMResponse:
         """
         Chat com detecção automática de API + fallback + CACHING.
-        
+
         1. Detecta se deve usar OpenAI directa
         2. Se OpenAI, detecta se usa Responses API ou Chat API
         3. Tenta API apropriada (com cache se enable_cache=True)
@@ -1394,6 +1419,7 @@ class UnifiedLLMClient:
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
                     enable_cache=enable_cache,
+                    timeout=timeout,
                 )
                 if response_fallback.success:
                     response_fallback.api_used = "openrouter (circuit-breaker)"
@@ -1413,6 +1439,7 @@ class UnifiedLLMClient:
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
                     enable_cache=enable_cache,
+                    timeout=timeout,
                 )
             else:
                 logger.info(f"🎯 Modelo OpenAI detectado: {model} (via Chat API)")
@@ -1425,6 +1452,7 @@ class UnifiedLLMClient:
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
                     enable_cache=enable_cache,
+                    timeout=timeout,
                 )
 
             # Se sucesso, retornar
@@ -1454,6 +1482,7 @@ class UnifiedLLMClient:
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
                     enable_cache=enable_cache,
+                    timeout=timeout,
                 )
 
                 # Marcar que usou fallback
@@ -1477,6 +1506,7 @@ class UnifiedLLMClient:
                 max_tokens=max_tokens,
                 system_prompt=system_prompt,
                 enable_cache=enable_cache,
+                timeout=timeout,
             )
 
     def get_stats(self) -> Dict[str, Any]:
