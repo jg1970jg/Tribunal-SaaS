@@ -38,7 +38,7 @@ MODEL_COSTS = {
     "haiku-4.5": 0.04,           # E1
     "gemini-3-pro": 0.12,        # E2
     "gpt-5.2": 0.12,             # E3
-    "sonnet-4.5": 0.08,          # E4
+    "sonnet-4.6": 0.08,          # E4
     "llama-3.3-70b": 0.03,        # E5 Llama 3.3 (Meta)
     "nova-pro": 0.05,             # E6 Amazon Nova Pro (visual)
     "nemotron-70b": 0.03,         # E7 Nemotron (NVIDIA)
@@ -46,7 +46,7 @@ MODEL_COSTS = {
     # Auditores (Fase 3) — v5.0
     "gpt-5.2-audit": 0.15,       # A1
     "gemini-3-pro-audit": 0.15,  # A2
-    "claude-sonnet-4.5-audit": 0.10,  # A3
+    "claude-sonnet-4.6-audit": 0.10,  # A3
     "qwen3-max-audit": 0.15,    # A4 (Qwen3 Max Thinking: $1.20/$6.00 per M)
     "claude-opus-4-audit": 0.40, # A5 (Elite only)
 
@@ -352,7 +352,7 @@ def calculate_custom_selection_cost(
 
 OPENROUTER_MODEL_MAPPING = {
     # Anthropic
-    "sonnet-4.5": "anthropic/claude-sonnet-4.5",
+    "sonnet-4.6": "anthropic/claude-sonnet-4.6",
     "claude-opus-4": "anthropic/claude-opus-4.6",
     "haiku-4.5": "anthropic/claude-haiku-4.5",
     "haiku-3.5": "anthropic/claude-3-5-haiku",

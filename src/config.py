@@ -269,7 +269,7 @@ LLM_CONFIGS = [
     {
         "id": "E4",
         "role": "Extrator Texto",
-        "model": "anthropic/claude-sonnet-4.5",        # v4.0: Nuance PT (616 itens)
+        "model": "anthropic/claude-sonnet-4.6",        # v4.0: Nuance PT (616 itens)
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL
     },
@@ -313,7 +313,7 @@ EXTRATOR_MODELS = [cfg["model"] for cfg in LLM_CONFIGS]
 AUDITOR_MODELS = [
     "openai/gpt-5.2",                  # A1: Prazos e lógica
     "google/gemini-3-pro-preview",      # A2: Visual (carimbos vs texto) — v4.0
-    "anthropic/claude-sonnet-4.5",      # A3: Texto + visão complementar — v4.0
+    "anthropic/claude-sonnet-4.6",      # A3: Texto + visão complementar — v4.0
     "qwen/qwen3-max-thinking",          # A4: Advogado do Diabo — v5.0 (Alibaba 1st-party, 262K ctx)
 ]
 
@@ -358,7 +358,7 @@ RELATORES = [
 JUDGE_SUBSTITUTES = {
     "J1": ["openai/gpt-4.1",              "google/gemini-2.5-pro"],         # OpenAI → OpenAI → Google
     "J2": ["deepseek/deepseek-chat",       "qwen/qwen3-max-thinking"],      # DeepSeek → DeepSeek → Qwen
-    "J3": ["anthropic/claude-sonnet-4.5",  "x-ai/grok-4"],                  # Anthropic → Anthropic → xAI
+    "J3": ["anthropic/claude-sonnet-4.6",  "x-ai/grok-4"],                  # Anthropic → Anthropic → xAI
 }
 
 # Aliases de compatibilidade
@@ -383,7 +383,7 @@ CONSOLIDADOR_SUBSTITUTES = [
 
 PRESIDENTE_SUBSTITUTES = {
     "openai/gpt-5.2":           ["openai/gpt-4.1",              "anthropic/claude-opus-4.6"],   # Bronze
-    "anthropic/claude-opus-4.6":["anthropic/claude-sonnet-4.5",  "openai/gpt-5.2"],              # Silver
+    "anthropic/claude-opus-4.6":["anthropic/claude-sonnet-4.6",  "openai/gpt-5.2"],              # Silver
     "openai/gpt-5.2-pro":       ["openai/gpt-5.2",              "anthropic/claude-opus-4.6"],   # Gold
 }
 
@@ -401,7 +401,7 @@ MODEL_CONTEXT_LIMITS = {
     "openai/gpt-4o":                    128_000,
     "openai/gpt-4o-mini":              128_000,      # v4.0: Fase 0
     "anthropic/claude-opus-4.6":        1_000_000,
-    "anthropic/claude-sonnet-4.5":      200_000,
+    "anthropic/claude-sonnet-4.6":      1_000_000,
     "anthropic/claude-haiku-4.5":       200_000,
     "anthropic/claude-3-5-haiku":       200_000,
     "google/gemini-3-pro-preview":      1_049_000,
@@ -429,7 +429,7 @@ MODEL_MAX_OUTPUT = {
     "openai/gpt-4o":                    16_384,
     "openai/gpt-4o-mini":              16_384,       # v4.0: Fase 0
     "anthropic/claude-opus-4.6":        128_000,
-    "anthropic/claude-sonnet-4.5":      64_000,
+    "anthropic/claude-sonnet-4.6":      128_000,
     "anthropic/claude-haiku-4.5":       64_000,
     "anthropic/claude-3-5-haiku":       8_192,
     "google/gemini-3-pro-preview":      65_535,
@@ -499,7 +499,7 @@ VISION_OCR_TEMPERATURE = 0.0
 
 # Modelos com capacidade de visão (podem receber imagens)
 VISION_CAPABLE_MODELS = {
-    "anthropic/claude-sonnet-4.5",      # E4
+    "anthropic/claude-sonnet-4.6",      # E4
     "google/gemini-3-pro-preview",      # E2 (visual extractor)
     "openai/gpt-4o",
     "amazon/nova-pro-v1",              # E6 (visual extractor) — NOVO

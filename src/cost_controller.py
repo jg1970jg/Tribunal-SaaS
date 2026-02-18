@@ -33,7 +33,7 @@ HARDCODED_PRICING = {
     "openai/o1-pro": {"input": 150.00, "output": 600.00},         # v4.0: J1 reasoning (real pricing)
     # Anthropic
     "anthropic/claude-opus-4.6": {"input": 15.00, "output": 75.00},  # v4.0: preço corrigido
-    "anthropic/claude-sonnet-4.5": {"input": 3.00, "output": 15.00},
+    "anthropic/claude-sonnet-4.6": {"input": 3.00, "output": 15.00},
     "anthropic/claude-haiku-4.5": {"input": 0.80, "output": 4.00},   # v4.0: preço corrigido
     "anthropic/claude-3.5-haiku": {"input": 0.25, "output": 1.25},
     # Google
