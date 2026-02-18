@@ -4434,21 +4434,24 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
     def _guardar_resultado(self, result: PipelineResult):
         """Guarda o resultado completo em JSON."""
         if self._output_dir:
-            # JSON completo
-            json_path = self._output_dir / "resultado.json"
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
+            try:
+                # JSON completo
+                json_path = self._output_dir / "resultado.json"
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
 
-            # Markdown resumido
-            md_path = self._output_dir / "RESUMO.md"
-            md_content = self._gerar_resumo_md(result)
-            with open(md_path, "w", encoding="utf-8") as f:
-                f.write(md_content)
+                # Markdown resumido
+                md_path = self._output_dir / "RESUMO.md"
+                md_content = self._gerar_resumo_md(result)
+                with open(md_path, "w", encoding="utf-8") as f:
+                    f.write(md_content)
 
-            # Copiar para histórico
-            historico_path = HISTORICO_DIR / f"{result.run_id}.json"
-            with open(historico_path, "w", encoding="utf-8") as f:
-                json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
+                # Copiar para histórico
+                historico_path = HISTORICO_DIR / f"{result.run_id}.json"
+                with open(historico_path, "w", encoding="utf-8") as f:
+                    json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
+            except OSError as e:
+                logger.error(f"Erro ao guardar resultado em disco: {e}")
             
             # ← NOVO: Guardar metadata (título, descrição, etc.)
             guardar_metadata(

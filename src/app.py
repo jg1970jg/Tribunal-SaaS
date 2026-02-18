@@ -78,8 +78,12 @@ def carregar_resultado(run_id: str) -> PipelineResult:
         from src.config import HISTORICO_DIR
         filepath = HISTORICO_DIR / f"{run_id}.json"
 
-    with open(filepath, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+        logger.error(f"[carregar_resultado] Erro ao ler {filepath}: {e}")
+        return None
 
     # Reconstruir DocumentContent
     doc_data = data.get('documento')

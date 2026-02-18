@@ -235,10 +235,19 @@ class DynamicPricing:
                 if cls._normalize(key) == model_norm:
                     return cls._cache[key]
 
-            # Partial match
+            # Partial match — pick the best (shortest key that contains
+            # model_clean, or shortest model_clean-substring key) to avoid
+            # e.g. "gpt-4o" incorrectly matching "gpt-4o-mini" first.
+            best_key = None
+            best_len_diff = float("inf")
             for key in cls._cache:
                 if key in model_clean or model_clean in key:
-                    return cls._cache[key]
+                    diff = abs(len(key) - len(model_clean))
+                    if diff < best_len_diff:
+                        best_len_diff = diff
+                        best_key = key
+            if best_key is not None:
+                return cls._cache[best_key]
 
         return None
 
@@ -248,9 +257,20 @@ class DynamicPricing:
         if model_clean in HARDCODED_PRICING:
             return HARDCODED_PRICING[model_clean]
 
+        # Partial match — pick closest-length key to avoid e.g.
+        # "gpt-4o" incorrectly matching "gpt-4o-mini" first.
+        best_key = None
+        best_len_diff = float("inf")
         for key in HARDCODED_PRICING:
+            if key == "default":
+                continue
             if key in model_clean or model_clean in key:
-                return HARDCODED_PRICING[key]
+                diff = abs(len(key) - len(model_clean))
+                if diff < best_len_diff:
+                    best_len_diff = diff
+                    best_key = key
+        if best_key is not None:
+            return HARDCODED_PRICING[best_key]
 
         return HARDCODED_PRICING["default"]
 

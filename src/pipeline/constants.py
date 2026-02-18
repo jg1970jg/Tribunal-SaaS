@@ -6,7 +6,7 @@ Centraliza definicoes para evitar divergencias entre modulos.
 """
 
 # Estados de paginas - bloqueantes (requerem atencao)
-ESTADOS_BLOQUEANTES = ["SUSPEITA", "SEM_TEXTO", "NAO_COBERTA"]
+ESTADOS_BLOQUEANTES = ["SUSPEITA", "SEM_TEXTO", "NAO_COBERTA", "VISUAL_PENDING"]
 
 # Estados de paginas - resolvidos (utilizador ja tratou)
 ESTADOS_RESOLVIDOS = ["VISUAL_ONLY", "REPARADA"]

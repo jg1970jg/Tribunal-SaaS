@@ -157,11 +157,11 @@ class TriageProcessor:
                     return tid, domain, kws, photos
                 else:
                     logger.warning(f"[TRIAGE] {tid} ({model}): JSON parse failed")
-                    return tid, "Civil", [], 0
+                    return tid, None, [], 0
 
             except Exception as e:
                 logger.error(f"[TRIAGE] {tid} ({model}) failed: {e}")
-                return tid, "Civil", [], 0
+                return tid, None, [], 0
 
         # Executar em paralelo
         with ThreadPoolExecutor(max_workers=3) as executor:
@@ -170,15 +170,17 @@ class TriageProcessor:
                 tid = futures[future]
                 try:
                     tid_result, domain, kws, photos = future.result()
-                    # Normalizar domínio
-                    domain = self._normalize_domain(domain)
-                    votes[tid_result] = domain
-                    all_keywords.extend(kws)
-                    photo_estimates.append(photos)
-                    logger.info(f"[TRIAGE] {tid_result}: domain={domain}, keywords={kws[:3]}")
+                    if domain is not None:
+                        # Normalizar domínio
+                        domain = self._normalize_domain(domain)
+                        votes[tid_result] = domain
+                        all_keywords.extend(kws)
+                        photo_estimates.append(photos)
+                        logger.info(f"[TRIAGE] {tid_result}: domain={domain}, keywords={kws[:3]}")
+                    else:
+                        logger.warning(f"[TRIAGE] {tid_result}: falhou - voto não contabilizado")
                 except Exception as e:
                     logger.error(f"[TRIAGE] {tid} exception: {e}")
-                    votes[tid] = "Civil"
 
         # Votação por maioria
         result.votes = votes
@@ -187,7 +189,8 @@ class TriageProcessor:
             domain_counts[d] = domain_counts.get(d, 0) + 1
 
         # Determinar consenso
-        if not domain_counts:
+        total_votes = len(votes)
+        if not domain_counts or total_votes == 0:
             result.domain = "Civil"
             result.consensus = "none"
             result.domain_confidence = 0.0
@@ -203,6 +206,11 @@ class TriageProcessor:
                 result.domain = winners[0]
                 result.consensus = "majority"
                 result.domain_confidence = 0.75
+            elif total_votes == 1:
+                # Só 1 modelo respondeu (os outros falharam)
+                result.domain = winners[0]
+                result.consensus = "single"
+                result.domain_confidence = 0.5
             else:
                 result.domain = "Multi-domínio"
                 result.consensus = "split"

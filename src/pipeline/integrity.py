@@ -113,9 +113,6 @@ class IntegrityReport:
         self.errors.append(error)
         if error.severity == "ERROR":
             self.is_valid = False
-            self.overall_confidence_penalty = min(1.0, self.overall_confidence_penalty + 0.05)
-        elif error.severity == "WARNING":
-            self.overall_confidence_penalty = min(1.0, self.overall_confidence_penalty + 0.02)
 
     def to_dict(self) -> Dict:
         return {

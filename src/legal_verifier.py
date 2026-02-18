@@ -20,6 +20,9 @@ from difflib import SequenceMatcher
 
 import httpx
 
+# Maximum size for in-memory caches to prevent unbounded memory growth
+_MAX_CACHE_SIZE = 10000
+
 from src.config import (
     DATABASE_PATH,
     LOG_LEVEL,
@@ -361,62 +364,78 @@ class LegalVerifier:
         self._load_discovered_nids()
 
     # ------------------------------------------------------------------
+    # Cache eviction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _evict_cache(cache: dict, max_size: int = _MAX_CACHE_SIZE) -> None:
+        """Remove the oldest half of entries when cache exceeds max_size."""
+        if len(cache) > max_size:
+            # Remove the first (oldest-inserted) half of keys.
+            # dict preserves insertion order in Python 3.7+.
+            keys_to_remove = list(cache.keys())[: len(cache) // 2]
+            for k in keys_to_remove:
+                del cache[k]
+            logger.debug(
+                f"[LEGAL] Cache evicted {len(keys_to_remove)} entries, "
+                f"remaining={len(cache)}"
+            )
+
+    # ------------------------------------------------------------------
     # Database
     # ------------------------------------------------------------------
 
     def _init_database(self):
-        conn = sqlite3.connect(str(self.db_path))
-        c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS legislacao_cache (
-                id TEXT PRIMARY KEY,
-                diploma TEXT NOT NULL,
-                artigo TEXT NOT NULL,
-                numero TEXT,
-                alinea TEXT,
-                texto TEXT,
-                fonte TEXT,
-                timestamp TEXT,
-                hash TEXT,
-                verificado INTEGER DEFAULT 1
-            )
-        """)
-        c.execute("""
-            CREATE INDEX IF NOT EXISTS idx_diploma_artigo
-            ON legislacao_cache(diploma, artigo)
-        """)
-        # Tabela para NIDs descobertos dinamicamente
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS pgdl_nid_map (
-                diploma TEXT PRIMARY KEY,
-                nid INTEGER NOT NULL,
-                discovered_at TEXT NOT NULL,
-                source TEXT DEFAULT 'auto'
-            )
-        """)
-        # Tabela para histórico de versões dos diplomas
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS pgdl_version_history (
-                nid INTEGER NOT NULL,
-                nversao INTEGER NOT NULL,
-                lei_alteradora TEXT,
-                data_publicacao TEXT,
-                cached_at TEXT,
-                PRIMARY KEY (nid, nversao)
-            )
-        """)
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(str(self.db_path)) as conn:
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS legislacao_cache (
+                    id TEXT PRIMARY KEY,
+                    diploma TEXT NOT NULL,
+                    artigo TEXT NOT NULL,
+                    numero TEXT,
+                    alinea TEXT,
+                    texto TEXT,
+                    fonte TEXT,
+                    timestamp TEXT,
+                    hash TEXT,
+                    verificado INTEGER DEFAULT 1
+                )
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_diploma_artigo
+                ON legislacao_cache(diploma, artigo)
+            """)
+            # Tabela para NIDs descobertos dinamicamente
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS pgdl_nid_map (
+                    diploma TEXT PRIMARY KEY,
+                    nid INTEGER NOT NULL,
+                    discovered_at TEXT NOT NULL,
+                    source TEXT DEFAULT 'auto'
+                )
+            """)
+            # Tabela para histórico de versões dos diplomas
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS pgdl_version_history (
+                    nid INTEGER NOT NULL,
+                    nversao INTEGER NOT NULL,
+                    lei_alteradora TEXT,
+                    data_publicacao TEXT,
+                    cached_at TEXT,
+                    PRIMARY KEY (nid, nversao)
+                )
+            """)
+            conn.commit()
         logger.info(f"[LEGAL] DB inicializada: {self.db_path}")
 
     def _load_discovered_nids(self):
         """Carrega NIDs descobertos anteriormente do SQLite."""
         try:
-            conn = sqlite3.connect(str(self.db_path))
-            c = conn.cursor()
-            c.execute("SELECT diploma, nid, discovered_at FROM pgdl_nid_map")
-            rows = c.fetchall()
-            conn.close()
+            with sqlite3.connect(str(self.db_path)) as conn:
+                c = conn.cursor()
+                c.execute("SELECT diploma, nid, discovered_at FROM pgdl_nid_map")
+                rows = c.fetchall()
             for diploma, nid, discovered_at in rows:
                 if diploma not in self._nid_map:
                     self._nid_map[diploma] = nid
@@ -428,14 +447,13 @@ class LegalVerifier:
     def _save_discovered_nid(self, diploma: str, nid: int, source: str = "auto"):
         """Guarda um NID descoberto no SQLite."""
         try:
-            conn = sqlite3.connect(str(self.db_path))
-            c = conn.cursor()
-            c.execute("""
-                INSERT OR REPLACE INTO pgdl_nid_map (diploma, nid, discovered_at, source)
-                VALUES (?, ?, ?, ?)
-            """, (diploma, nid, datetime.now().isoformat(), source))
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(self.db_path)) as conn:
+                c = conn.cursor()
+                c.execute("""
+                    INSERT OR REPLACE INTO pgdl_nid_map (diploma, nid, discovered_at, source)
+                    VALUES (?, ?, ?, ?)
+                """, (diploma, nid, datetime.now().isoformat(), source))
+                conn.commit()
         except Exception as e:
             logger.warning(f"[LEGAL] Erro ao guardar NID: {e}")
 
@@ -493,6 +511,7 @@ class LegalVerifier:
 
                 # Guardar no mapa (não substituir estáticos verificados)
                 if diploma_name not in self._nid_map:
+                    self._evict_cache(self._nid_map)
                     self._nid_map[diploma_name] = nid
                     self._save_discovered_nid(diploma_name, nid, "area32")
                     discovered += 1
@@ -564,6 +583,7 @@ class LegalVerifier:
         # 5. Pesquisa dinâmica no PGDL por nome exacto
         nid = self._search_pgdl_by_name(diploma)
         if nid:
+            self._evict_cache(self._nid_map)
             self._nid_map[diploma] = nid
             self._save_discovered_nid(diploma, nid, "search")
             return nid
@@ -698,15 +718,14 @@ class LegalVerifier:
     def _load_version_history_from_db(self, nid: int) -> Optional[List[Tuple[int, str, Optional[datetime]]]]:
         """Carrega histórico de versões do SQLite se dentro do TTL."""
         try:
-            conn = sqlite3.connect(str(self.db_path))
-            c = conn.cursor()
-            c.execute(
-                "SELECT nversao, lei_alteradora, data_publicacao, cached_at "
-                "FROM pgdl_version_history WHERE nid = ? ORDER BY nversao",
-                (nid,),
-            )
-            rows = c.fetchall()
-            conn.close()
+            with sqlite3.connect(str(self.db_path)) as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT nversao, lei_alteradora, data_publicacao, cached_at "
+                    "FROM pgdl_version_history WHERE nid = ? ORDER BY nversao",
+                    (nid,),
+                )
+                rows = c.fetchall()
             if not rows:
                 return None
             # Verificar TTL pelo cached_at da primeira entrada
@@ -725,21 +744,20 @@ class LegalVerifier:
     def _save_version_history_to_db(self, nid: int, versions: List[Tuple[int, str, Optional[datetime]]]):
         """Guarda histórico de versões no SQLite."""
         try:
-            conn = sqlite3.connect(str(self.db_path))
-            c = conn.cursor()
-            now = datetime.now().isoformat()
-            for nversao, lei, data_pub in versions:
-                c.execute("""
-                    INSERT OR REPLACE INTO pgdl_version_history
-                    (nid, nversao, lei_alteradora, data_publicacao, cached_at)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    nid, nversao, lei,
-                    data_pub.isoformat() if data_pub else None,
-                    now,
-                ))
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(self.db_path)) as conn:
+                c = conn.cursor()
+                now = datetime.now().isoformat()
+                for nversao, lei, data_pub in versions:
+                    c.execute("""
+                        INSERT OR REPLACE INTO pgdl_version_history
+                        (nid, nversao, lei_alteradora, data_publicacao, cached_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        nid, nversao, lei,
+                        data_pub.isoformat() if data_pub else None,
+                        now,
+                    ))
+                conn.commit()
         except Exception as e:
             logger.warning(f"[LEGAL] Erro ao guardar version_history: {e}")
 
@@ -759,6 +777,7 @@ class LegalVerifier:
         # 2. Cache SQLite
         db_versions = self._load_version_history_from_db(nid)
         if db_versions:
+            self._evict_cache(self._version_history_cache)
             self._version_history_cache[nid] = (db_versions, datetime.now())
             return db_versions
 
@@ -813,6 +832,7 @@ class LegalVerifier:
             if versions:
                 logger.info(f"[LEGAL] Version history nid={nid}: {len(versions)} versões ({versions[-1][0]} actual)")
                 # Guardar caches
+                self._evict_cache(self._version_history_cache)
                 self._version_history_cache[nid] = (versions, datetime.now())
                 self._save_version_history_to_db(nid, versions)
             else:
@@ -987,14 +1007,17 @@ class LegalVerifier:
         return result
 
     def _verificar_cache(self, citacao: CitacaoLegal) -> Optional[VerificacaoLegal]:
-        conn = sqlite3.connect(str(self.db_path))
-        c = conn.cursor()
-        c.execute(
-            "SELECT texto, fonte, timestamp, hash FROM legislacao_cache WHERE diploma = ? AND artigo = ?",
-            (citacao.diploma, citacao.artigo),
-        )
-        row = c.fetchone()
-        conn.close()
+        try:
+            with sqlite3.connect(str(self.db_path)) as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT texto, fonte, timestamp, hash FROM legislacao_cache WHERE diploma = ? AND artigo = ?",
+                    (citacao.diploma, citacao.artigo),
+                )
+                row = c.fetchone()
+        except sqlite3.Error as e:
+            logger.warning(f"[LEGAL] Erro ao ler cache SQLite: {e}")
+            return None
 
         if row:
             texto, fonte, ts, hash_texto = row
@@ -1052,6 +1075,7 @@ class LegalVerifier:
                 text = response.content.decode("iso-8859-1", errors="replace")
                 arts = re.findall(r"Artigo\s+(\d+)", text)
                 article_set = set(arts)
+                self._evict_cache(self._pgdl_articles_cache)
                 self._pgdl_articles_cache[cache_key] = article_set
                 ver_label = f"v{nversao}" if nversao else "actual"
                 logger.info(f"[LEGAL] PGDL nid={nid} ({ver_label}): {len(article_set)} artigos")
@@ -1252,26 +1276,28 @@ class LegalVerifier:
         )
 
     def _guardar_cache(self, citacao: CitacaoLegal, resultado: VerificacaoLegal):
-        conn = sqlite3.connect(str(self.db_path))
-        c = conn.cursor()
-        c.execute("""
-            INSERT OR REPLACE INTO legislacao_cache
-            (id, diploma, artigo, numero, alinea, texto, fonte, timestamp, hash, verificado)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            citacao.to_key(),
-            citacao.diploma,
-            citacao.artigo,
-            citacao.numero,
-            citacao.alinea,
-            resultado.texto_encontrado,
-            resultado.fonte,
-            datetime.now().isoformat(),
-            resultado.hash_texto,
-            1 if resultado.existe else 0,
-        ))
-        conn.commit()
-        conn.close()
+        try:
+            with sqlite3.connect(str(self.db_path)) as conn:
+                c = conn.cursor()
+                c.execute("""
+                    INSERT OR REPLACE INTO legislacao_cache
+                    (id, diploma, artigo, numero, alinea, texto, fonte, timestamp, hash, verificado)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    citacao.to_key(),
+                    citacao.diploma,
+                    citacao.artigo,
+                    citacao.numero,
+                    citacao.alinea,
+                    resultado.texto_encontrado,
+                    resultado.fonte,
+                    datetime.now().isoformat(),
+                    resultado.hash_texto,
+                    1 if resultado.existe else 0,
+                ))
+                conn.commit()
+        except sqlite3.Error as e:
+            logger.warning(f"[LEGAL] Erro ao guardar cache SQLite: {e}")
 
     # ------------------------------------------------------------------
     # API pública

@@ -241,27 +241,28 @@ class PDFSafeLoader:
 
         # Abrir PDF
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        total_pages = len(doc)
+        try:
+            total_pages = len(doc)
 
-        logger.info(f"PDF Seguro: {filename} - {total_pages} páginas")
+            logger.info(f"PDF Seguro: {filename} - {total_pages} páginas")
 
-        # Extrair todas as páginas
-        pages: List[PageRecord] = []
-        all_first_lines: List[str] = []
-        all_last_lines: List[str] = []
+            # Extrair todas as páginas
+            pages: List[PageRecord] = []
+            all_first_lines: List[str] = []
+            all_last_lines: List[str] = []
 
-        for page_num in range(total_pages):
-            page = doc[page_num]
-            page_record = self._extract_page(page, page_num + 1, pages_dir)
-            pages.append(page_record)
+            for page_num in range(total_pages):
+                page = doc[page_num]
+                page_record = self._extract_page(page, page_num + 1, pages_dir)
+                pages.append(page_record)
 
-            # Recolher linhas para deteção de headers/footers
-            lines = page_record.text_raw.split('\n')
-            if lines:
-                all_first_lines.extend(lines[:5])
-                all_last_lines.extend(lines[-5:] if len(lines) >= 5 else lines)
-
-        doc.close()
+                # Recolher linhas para deteção de headers/footers
+                lines = page_record.text_raw.split('\n')
+                if lines:
+                    all_first_lines.extend(lines[:5])
+                    all_last_lines.extend(lines[-5:] if len(lines) >= 5 else lines)
+        finally:
+            doc.close()
 
         # Detetar e remover headers/footers
         provenance, pages = self._clean_headers_footers(pages, all_first_lines, all_last_lines)
@@ -964,9 +965,12 @@ def load_overrides(out_dir: Path) -> Dict[int, Dict]:
 
     overrides = {}
     for json_file in overrides_dir.glob("page_*_override.json"):
-        with open(json_file, 'r', encoding='utf-8') as f:
-            info = json.load(f)
-            overrides[info["page_num"]] = info
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                info = json.load(f)
+                overrides[info["page_num"]] = info
+        except (json.JSONDecodeError, KeyError, OSError) as e:
+            logger.warning(f"Override corrompido ignorado: {json_file.name} - {e}")
 
     return overrides
 

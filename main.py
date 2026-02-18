@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, Request, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -789,7 +789,7 @@ class AskRequest(BaseModel):
     question: str
     analysis_result: Dict[str, Any]
     document_id: str = ""
-    previous_qa: List[Dict[str, str]] = []
+    previous_qa: List[Dict[str, str]] = Field(default=[], max_length=50)
 
 
 def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] = None) -> str:
@@ -965,6 +965,15 @@ async def add_document_to_project(
 
     file_bytes = await file.read()
     filename = _sanitize_filename(file.filename)
+
+    # Validar extensão
+    ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".doc"}
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Tipo de ficheiro não suportado. Aceites: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
 
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
     if len(file_bytes) > MAX_FILE_SIZE:
