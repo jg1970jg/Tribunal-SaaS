@@ -23,9 +23,9 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Optional, Set, Any, Tuple
+from typing import List, Dict, Optional, Set, Tuple
 
-from src.config import LOG_LEVEL, OUTPUT_DIR, USE_UNIFIED_PROVENANCE
+from src.config import OUTPUT_DIR, USE_UNIFIED_PROVENANCE
 from src.utils.sanitize import sanitize_run_id
 
 logger = logging.getLogger(__name__)
@@ -369,7 +369,7 @@ class MetaIntegrityValidator:
         if self.config.require_unified_result:
             files.append("fase1_unified_result.json")
             # Ficheiros de extractors
-            for i in range(1, 6):
+            for i in range(1, 9):
                 files.append(f"fase1_extractor_E{i}_items.json")
 
         if self.config.require_coverage_report:

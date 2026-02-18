@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # PREÇOS HARDCODED — FALLBACK de último recurso (Fev 2026)
 # ============================================================
 
+# Fallback prices (last verified: 2026-02-18). Updated via OpenRouter API with 24h cache.
 HARDCODED_PRICING = {
     # OpenAI
     "openai/gpt-4o": {"input": 2.50, "output": 10.00},

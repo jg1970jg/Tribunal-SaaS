@@ -30,7 +30,8 @@ import uuid
 
 import base64
 
-from src.cost_controller import CostController
+from src.cost_controller import CostController, BudgetExceededError
+from src.wallet_manager import InsufficientCreditsError
 from src.pipeline.zone_processor import should_use_zones, create_zone_plan, log_zone_plan  # NOVO: C5 zonas
 from src.config import (
     EXTRATOR_MODELS,
@@ -131,9 +132,9 @@ from src.pipeline.confidence_policy import (
     compute_penalty,
     apply_penalty_to_confidence,
 )
-from src.llm_client import OpenRouterClient, LLMResponse, get_llm_client
-from src.document_loader import DocumentContent, load_document
-from src.legal_verifier import LegalVerifier, VerificacaoLegal, get_legal_verifier
+from src.llm_client import get_llm_client
+from src.document_loader import DocumentContent
+from src.legal_verifier import VerificacaoLegal, get_legal_verifier
 from prompts_maximos import (
     PROMPT_EXTRATOR_TEXTO,
     PROMPT_EXTRATOR_VISUAL,
@@ -165,6 +166,10 @@ class FaseResult:
     timestamp: datetime = field(default_factory=datetime.now)
     sucesso: bool = True
     erro: Optional[str] = None
+
+    def __post_init__(self):
+        if self.conteudo is None:
+            self.conteudo = ""
 
     def to_dict(self) -> Dict:
         return {
@@ -800,9 +805,12 @@ REVISTO:"""
 
     def _reportar_progresso(self, fase: str, progresso: int, mensagem: str):
         """Reporta progresso ao callback."""
-        logger.info(f"[{progresso}%] {fase}: {mensagem}")
-        if self.callback_progresso:
-            self.callback_progresso(fase, progresso, mensagem)
+        try:
+            logger.info(f"[{progresso}%] {fase}: {mensagem}")
+            if self.callback_progresso:
+                self.callback_progresso(fase, progresso, mensagem)
+        except Exception as e:
+            logger.debug(f"Erro ao reportar progresso: {e}")
 
     def _setup_run(self) -> str:
         """Configura uma nova execução."""
@@ -881,12 +889,12 @@ REVISTO:"""
         # === CHAMADA LLM ===
         effective_temp = temperature
 
-        # v4.0: Reasoning models (o1-pro, o1, o3) don't support system_prompt or temperature
+        # NOTE: Keep in sync with reasoning model list. These models don't support system_prompt or temperature.
         REASONING_MODELS = {"openai/o1-pro", "openai/o1", "openai/o3-pro", "openai/o3-mini", "deepseek/deepseek-reasoner", "deepseek/deepseek-r1"}
         if modelo_final in REASONING_MODELS:
             # Embed system prompt into user prompt for reasoning models
             if effective_system:
-                prompt = f"{effective_system}\n\n---\n\n{prompt}"
+                prompt = f"<system_instructions>\n{effective_system}\n</system_instructions>\n\n{prompt}"
                 effective_system = None
             effective_temp = None  # Reasoning models don't accept temperature
 
@@ -1055,7 +1063,7 @@ REVISTO:"""
             fase=role_name.split("_")[0],
             modelo=modelo_final,  # NOVO: modelo real usado (pode ser suplente)
             role=role_name,
-            conteudo=response.content,
+            conteudo=response.content or "",
             tokens_usados=total_tokens,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -1679,7 +1687,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
         for i, r in enumerate(resultados):
             cfg = extractor_configs[i] if i < len(extractor_configs) else {"id": f"E{i+1}", "role": "Extrator"}
             bruto_parts.append(f"\n## [EXTRATOR {cfg['id']}: {cfg['role']} - {r.modelo}]\n")
-            bruto_parts.append(r.conteudo)
+            bruto_parts.append(r.conteudo or "")
             bruto_parts.append("\n---\n")
         bruto = "\n".join(bruto_parts)
         self._log_to_file("fase1_agregado_bruto.md", bruto)
@@ -1902,6 +1910,12 @@ CONTEÚDO{chunk_header}:
                 f"# Extrator {extractor_id}: {role}\n## Modelo: {model}\n## Chunks processados: {num_chunks}\n\n{conteudo_final}"
             )
 
+        # Guard: if all extractors failed, skip aggregation
+        successful_extractions = [r for r in resultados if r.sucesso and (r.conteudo or "").strip()]
+        if not successful_extractions:
+            logger.error("Todas as extrações falharam - impossível agregar")
+            raise Exception("Todas as extrações falharam - impossível agregar")
+
         # Criar agregado BRUTO (concatenação simples de todos os extratores)
         self._reportar_progresso("fase1", 32, f"Criando agregado bruto ({len(extractor_configs)} extratores)...")
 
@@ -1909,7 +1923,7 @@ CONTEÚDO{chunk_header}:
         for i, r in enumerate(resultados):
             cfg = extractor_configs[i] if i < len(extractor_configs) else {"id": f"E{i+1}", "role": "Extrator"}
             bruto_parts.append(f"\n## [EXTRATOR {cfg['id']}: {cfg['role']} - {r.modelo}]\n")
-            bruto_parts.append(r.conteudo)
+            bruto_parts.append(r.conteudo or "")
             bruto_parts.append("\n---\n")
 
         bruto = "\n".join(bruto_parts)
@@ -1999,7 +2013,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
 
                 if pages:
                     # Verificar cobertura de sinais pelos extratores
-                    extractor_outputs = {f"E{i+1}": r.conteudo for i, r in enumerate(resultados)}
+                    extractor_outputs = {f"E{i+1}": (r.conteudo or "") for i, r in enumerate(resultados)}
                     signal_report = verificar_cobertura_sinais(pages, extractor_outputs)
                     logger.info(f"=== DETETOR: verificar_cobertura_sinais executado ===")
 
@@ -2209,7 +2223,10 @@ Devolve o JSON completo no mesmo formato."""
         # DETETOR INTRA-PÁGINA: verificar sinais não extraídos
         from src.pipeline.pdf_safe import verificar_cobertura_sinais
         # Usar IDs dos extratores (E1-E5)
-        extractor_outputs = {extractor_configs[i]["id"]: r.conteudo for i, r in enumerate(resultados)}
+        extractor_outputs = {
+            (extractor_configs[i]["id"] if i < len(extractor_configs) else f"E{i+1}"): (r.conteudo or "")
+            for i, r in enumerate(resultados)
+        }
         signal_report = verificar_cobertura_sinais(pages, extractor_outputs)
 
         # Guardar relatório de sinais
@@ -2236,6 +2253,12 @@ Devolve o JSON completo no mesmo formato."""
         if recall_score < RECALL_MIN_THRESHOLD:
             logger.warning(f"ALERTA: Recall {recall_score:.2%} < threshold {RECALL_MIN_THRESHOLD:.0%}")
 
+        # Guard: if all extractors failed, skip aggregation
+        successful_extractions = [r for r in resultados if r.sucesso and (r.conteudo or "").strip()]
+        if not successful_extractions:
+            logger.error("Todas as extrações falharam - impossível agregar")
+            raise Exception("Todas as extrações falharam - impossível agregar")
+
         # Criar agregado BRUTO (concatenação simples de todos os extratores)
         self._reportar_progresso("fase1", 32, f"Criando agregado bruto ({len(extractor_configs)} extratores)...")
 
@@ -2243,7 +2266,7 @@ Devolve o JSON completo no mesmo formato."""
         for i, r in enumerate(resultados):
             cfg = extractor_configs[i] if i < len(extractor_configs) else {"id": f"E{i+1}", "role": "Extrator"}
             bruto_parts.append(f"\n## [EXTRATOR {cfg['id']}: {cfg['role']} - {r.modelo}]\n")
-            bruto_parts.append(r.conteudo)
+            bruto_parts.append(r.conteudo or "")
             bruto_parts.append("\n---\n")
 
         bruto = "\n".join(bruto_parts)
@@ -4323,6 +4346,13 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.sucesso = True
             self._reportar_progresso("concluido", 100, "Pipeline concluido!")
 
+        except (BudgetExceededError, InsufficientCreditsError) as e:
+            logger.error(f"Erro de créditos no pipeline: {e}")
+            result.sucesso = False
+            result.erro = str(e)
+            raise  # Re-raise budget/credit errors - must not be swallowed
+        except KeyboardInterrupt:
+            raise
         except Exception as e:
             logger.error(f"Erro no pipeline: {e}")
             result.sucesso = False

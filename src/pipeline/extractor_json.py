@@ -9,8 +9,7 @@ devolver JSON estrito com page_num validado.
 import json
 import logging
 import re
-from typing import List, Dict, Optional, Any
-from dataclasses import dataclass, field
+from typing import List, Dict
 
 try:
     from json_repair import repair_json
@@ -81,9 +80,9 @@ def extract_json_from_text(text: str) -> dict | list | None:
 
     text = text.strip()
 
-    logger.info(f"[JSON-EXTRACT] Input length: {len(text)} chars")
-    logger.info(f"[JSON-EXTRACT] First 500 chars: {text[:500]!r}")
-    logger.info(f"[JSON-EXTRACT] Last 200 chars: {text[-200:]!r}")
+    logger.debug(f"[JSON-EXTRACT] Input length: {len(text)} chars")
+    logger.debug(f"[JSON-EXTRACT] First 500 chars: {text[:500]!r}")
+    logger.debug(f"[JSON-EXTRACT] Last 200 chars: {text[-200:]!r}")
 
     # 1. Tentar parse directo
     try:

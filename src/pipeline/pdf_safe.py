@@ -15,11 +15,8 @@ import re
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple
 from collections import Counter
-import io
-
-from src.config import LOG_LEVEL, OUTPUT_DIR
 
 logger = logging.getLogger(__name__)
 

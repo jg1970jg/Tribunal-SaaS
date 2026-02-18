@@ -11,9 +11,8 @@ Implementa o sistema completo de:
 NOTA: Usa tabela `profiles` (NÃO `users`) para credits_balance/credits_blocked.
 """
 
-import os
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 from datetime import datetime, timedelta
 from supabase import Client
 
@@ -142,7 +141,7 @@ class WalletManager:
         analysis_id: str,
         estimated_cost_usd: float,
         reason: str = "Bloqueio para análise",
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Bloqueia créditos ANTES de processar análise.
         Tenta usar RPC atómico; fallback para operação multi-step.
@@ -203,6 +202,9 @@ class WalletManager:
             logger.warning(f"[WALLET] RPC block_credits_atomic indisponível ({e}), usando fallback")
 
         # --- Fallback: operação multi-step (race condition possível) ---
+        # WARNING: This fallback is NOT atomic. The RPC block_credits_atomic should be used.
+        # If RPC is unavailable, this provides degraded service with race condition risk.
+        logger.warning("[WALLET] Usando fallback não-atómico para block_credits - risco de race condition")
         try:
             balance = self.get_balance(user_id)
 
@@ -245,7 +247,7 @@ class WalletManager:
         self,
         analysis_id: str,
         real_cost_usd: float,
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Liquida créditos APÓS processamento.
         Tenta usar RPC atómico; fallback para operação multi-step.
@@ -412,7 +414,7 @@ class WalletManager:
         user_id: str,
         cost_real_usd: float,
         run_id: str,
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Débito direto (compatibilidade com engine.py antigo).
         Usa markup de 100% (custo × 2).
@@ -482,7 +484,7 @@ class WalletManager:
         limit: int = 50,
         offset: int = 0,
         type_filter: Optional[str] = None,
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Retorna histórico de transações.
         """
@@ -513,7 +515,7 @@ class WalletManager:
         amount_usd: float,
         description: str = "Crédito admin",
         admin_id: Optional[str] = None,
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Credita saldo (apenas admin).
         """
@@ -557,7 +559,7 @@ class WalletManager:
             logger.error(f"Erro ao creditar saldo: {e}")
             raise WalletError(f"Erro ao creditar saldo: {e}")
 
-    def get_profit_report(self, days: int = 30) -> Dict[str, any]:
+    def get_profit_report(self, days: int = 30) -> Dict[str, Any]:
         """Gera relatório de lucro (apenas admin)."""
         try:
             from_date = (datetime.now() - timedelta(days=days)).isoformat()

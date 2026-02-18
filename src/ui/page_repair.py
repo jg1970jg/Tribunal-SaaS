@@ -18,10 +18,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import streamlit as st
-from typing import List, Dict, Optional, Any
-import json
-from datetime import datetime
-import io
+from typing import Dict, Optional
 
 from src.pipeline.pdf_safe import (
     PageRecord,

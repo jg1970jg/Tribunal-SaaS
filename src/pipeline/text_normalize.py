@@ -344,45 +344,6 @@ def text_contains_normalized(
 # FUNÇÕES AUXILIARES
 # ============================================================================
 
-def extract_page_markers(text: str) -> list:
-    """
-    Extrai marcadores de página do texto.
-    Usa normalização para encontrar variações.
-
-    Returns:
-        Lista de tuples (page_num, start_pos, end_pos)
-    """
-    # Padrões para marcadores de página
-    patterns = [
-        r'\[Página\s*(\d+)\]',
-        r'\[PÁGINA\s*(\d+)\]',
-        r'\[Pagina\s*(\d+)\]',
-        r'---\s*Página\s*(\d+)\s*---',
-        r'\[\s*P[áa]g\.?\s*(\d+)\s*\]',
-    ]
-
-    markers = []
-
-    for pattern in patterns:
-        for match in re.finditer(pattern, text, re.IGNORECASE):
-            page_num = int(match.group(1))
-            markers.append((page_num, match.start(), match.end()))
-
-    # Ordenar por posição
-    markers.sort(key=lambda x: x[1])
-
-    # Remover duplicados (mesmo page_num na mesma posição)
-    seen = set()
-    unique_markers = []
-    for marker in markers:
-        key = (marker[0], marker[1])  # page_num, start_pos
-        if key not in seen:
-            seen.add(key)
-            unique_markers.append(marker)
-
-    return unique_markers
-
-
 def normalize_excerpt_for_debug(excerpt: str, actual_text: str) -> dict:
     """
     Compara excerpt com texto actual e retorna debug info.
@@ -421,28 +382,3 @@ def normalize_excerpt_for_debug(excerpt: str, actual_text: str) -> dict:
         "missing_words": list(norm_excerpt.words - norm_actual.words)[:20],
     }
 
-
-# ============================================================================
-# COMPATIBILIDADE (aliases para código existente)
-# ============================================================================
-
-def normalize_text_for_comparison(text: str) -> str:
-    """
-    Alias para compatibilidade com código existente.
-    Usa normalize_for_matching com config default.
-    """
-    return normalize_for_matching(text, NormalizationConfig.default())
-
-
-def text_similarity(text1: str, text2: str) -> float:
-    """
-    Alias para compatibilidade com código existente.
-    """
-    return text_similarity_normalized(text1, text2)
-
-
-def text_contains(haystack: str, needle: str, threshold: float = 0.7) -> bool:
-    """
-    Alias para compatibilidade com código existente.
-    """
-    return text_contains_normalized(haystack, needle, threshold)

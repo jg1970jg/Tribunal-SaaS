@@ -274,10 +274,10 @@ def _decode_and_validate_token(token: str) -> dict | None:
         payload = None
 
     # --- Tentativa 2 (fallback): decode SEM verificação de assinatura ---
-    # NOTA: Este fallback SÓ é usado quando JWKS não está disponível ou
-    # nenhuma chave compatível foi encontrada — NUNCA quando a assinatura
-    # foi activamente verificada e falhou (InvalidSignatureError).
-    if payload is None:
+    # SECURITY: Fallback only enabled when explicitly configured
+    ALLOW_UNVERIFIED_FALLBACK = os.environ.get("JWT_ALLOW_UNVERIFIED_FALLBACK", "false").lower() == "true"
+
+    if payload is None and ALLOW_UNVERIFIED_FALLBACK:
         try:
             payload = pyjwt.decode(
                 token,
@@ -291,7 +291,7 @@ def _decode_and_validate_token(token: str) -> dict | None:
             if not signature_verified:
                 logger.warning(
                     "JWT aceite SEM verificação de assinatura "
-                    "(JWKS indisponível ou chave não encontrada). "
+                    "(JWKS indisponível - JWT_ALLOW_UNVERIFIED_FALLBACK=true). "
                     "Segurança depende do RLS do Supabase."
                 )
         except pyjwt.ExpiredSignatureError:
@@ -306,6 +306,12 @@ def _decode_and_validate_token(token: str) -> dict | None:
         except Exception as e:
             logger.warning(f"Token JWT inválido: {type(e).__name__}: {e}")
             return None
+    elif payload is None:
+        logger.warning(
+            "JWT rejeitado: verificação de assinatura falhou e fallback desativado. "
+            "Defina JWT_ALLOW_UNVERIFIED_FALLBACK=true para aceitar tokens não verificados."
+        )
+        return None
 
     # --- Extrair dados do utilizador ---
     user_id = payload.get("sub", "")

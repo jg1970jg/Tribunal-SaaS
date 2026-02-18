@@ -13,14 +13,12 @@ Princípio: outputs probabilísticos dos LLMs são validados por camadas determi
 import json
 import logging
 import re
-import hashlib
 import time
-import threading
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple
 
 from src.config import (
     LOG_LEVEL,
@@ -925,10 +923,7 @@ def run_consensus_engine(
 
     consensus_path = output_dir / "consensus_engine_report.json"
     try:
-        save_data = {
-            k: v for k, v in result.items()
-            if k != "citation_validation" or k == "citation_validation"
-        }
+        save_data = dict(result)
         if "citation_validation" in save_data:
             save_data["citation_validation"] = {
                 k: v for k, v in save_data["citation_validation"].items()

@@ -59,9 +59,8 @@ from src.config import (
     OUTPUT_DIR,
 )
 from src.cost_controller import BudgetExceededError
-from src.pipeline.processor import LexForumProcessor, PipelineResult, FaseResult
+from src.pipeline.processor import LexForumProcessor, PipelineResult
 from src.document_loader import DocumentLoader, DocumentContent
-from src.llm_client import get_llm_client
 from src.utils.perguntas import parse_perguntas, validar_perguntas
 from src.utils.metadata_manager import gerar_titulo_automatico
 from auth_service import get_supabase_admin
@@ -112,7 +111,9 @@ def get_wallet_manager() -> NewWalletManager:
 
 
 def _is_wallet_skip() -> bool:
-    """Verifica se SKIP_WALLET_CHECK esta ativo."""
+    """Verifica se SKIP_WALLET_CHECK está ativo (apenas em desenvolvimento)."""
+    if os.environ.get("ENV", "production").lower() not in ("development", "dev", "local", "test"):
+        return False  # Never skip in production
     return os.environ.get("SKIP_WALLET_CHECK", "").lower() == "true"
 
 

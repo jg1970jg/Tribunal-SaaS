@@ -142,7 +142,14 @@ def safe_join_path(base_dir: Path, *parts: str) -> Path:
             raise ValueError(f"Caminho resultante fora do diretório base")
     except OSError:
         # Em Windows, resolve() pode falhar para caminhos que não existem
-        # Nesse caso, verificar textualmente
-        pass
+        # Verificar textualmente como fallback
+        result_str = str(result).replace("\\", "/")
+        base_str = str(base_dir).replace("\\", "/")
+        if not result_str.startswith(base_str):
+            logger.warning(
+                f"[SECURITY] Path traversal detectado (textual check): "
+                f"resultado={result_str} fora de base={base_str}"
+            )
+            raise ValueError(f"Caminho resultante fora do diretório base")
 
     return result

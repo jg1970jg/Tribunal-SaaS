@@ -25,7 +25,7 @@ INTEGRAÇÃO:
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Any
 from pathlib import Path
 
 

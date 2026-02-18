@@ -17,6 +17,7 @@ import os
 import logging
 import re
 import secrets
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -25,7 +26,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, Request, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -48,7 +49,9 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".doc"}
 MAX_QUESTION_LENGTH = 5000
+MAX_ADDITIONAL_DOCS = 10
 ADMIN_SESSION_TTL = 3600  # 1 hora
+VALID_AREAS = {"Civil", "Penal", "Trabalho", "Administrativo", "Fiscal", "Comercial", "Família", "Outro"}
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -69,6 +72,7 @@ ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").sp
 
 # Admin session tokens (from /admin/verify) — with 1h expiry
 _admin_sessions: dict = {}
+_admin_sessions_lock = threading.Lock()
 
 
 # ============================================================
@@ -76,20 +80,7 @@ _admin_sessions: dict = {}
 # ============================================================
 
 def _get_user_or_ip(request: Request) -> str:
-    """Extrai user_id do JWT (se presente) ou usa IP como fallback."""
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        try:
-            import jwt as pyjwt
-            payload = pyjwt.decode(
-                auth[7:],
-                options={"verify_signature": False, "verify_exp": True},
-            )
-            user_id = payload.get("sub", "")
-            if user_id:
-                return f"user:{user_id}"
-        except Exception:
-            pass
+    """Usa IP do request para rate limiting (seguro, sem depender de JWT)."""
     return get_remote_address(request)
 
 
@@ -113,24 +104,9 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRespons
 
 
 def _extract_user_info(request: Request) -> dict:
-    """Extrai user_id, email e IP do request."""
+    """Extrai IP do request para logging de segurança."""
     ip = get_remote_address(request)
-    info = {"ip": ip, "user_id": None, "email": None}
-
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        try:
-            import jwt as pyjwt
-            payload = pyjwt.decode(
-                auth[7:],
-                options={"verify_signature": False, "verify_exp": True},
-            )
-            info["user_id"] = payload.get("sub", "")
-            info["email"] = payload.get("email", "")
-        except Exception:
-            pass
-
-    return info
+    return {"ip": ip, "user_id": None, "email": None}
 
 
 def _register_security_alert(request: Request, limit_detail: str):
@@ -175,7 +151,7 @@ def _register_security_alert(request: Request, limit_detail: str):
 
 # Cache local (recarregado a cada 60s para não consultar DB a cada request)
 _blacklist_cache: dict = {"emails": set(), "ips": set(), "domains": set(), "loaded_at": 0}
-_blacklist_lock = __import__("threading").Lock()  # Thread-safe access to _blacklist_cache
+_blacklist_lock = threading.Lock()  # Thread-safe access to _blacklist_cache
 BLACKLIST_CACHE_TTL = 60  # Recarregar a cada 60 segundos
 
 
@@ -226,23 +202,11 @@ def _check_blacklist(request: Request, user: dict = None):
             detail="Acesso bloqueado. Contacte o administrador.",
         )
 
-    # Verificar email e domínio (se utilizador autenticado)
+    # Verificar email e domínio (apenas se utilizador autenticado)
     email = ""
     if user:
         email = (user.get("email") or "").lower().strip()
-    else:
-        # Tentar extrair do JWT
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            try:
-                import jwt as pyjwt
-                payload = pyjwt.decode(
-                    auth[7:],
-                    options={"verify_signature": False, "verify_exp": True},
-                )
-                email = (payload.get("email") or "").lower().strip()
-            except Exception:
-                pass
+    # Se não há utilizador autenticado, apenas verificação de IP (já feita acima)
 
     if email:
         if email in _blacklist_cache["emails"]:
@@ -274,21 +238,21 @@ async def lifespan(app: FastAPI):
     service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
     if not supabase_url or not supabase_key:
-        print("[AVISO] SUPABASE_URL ou SUPABASE_KEY não definidos no .env")
+        logger.warning("[AVISO] SUPABASE_URL ou SUPABASE_KEY não definidos no .env")
     else:
         get_supabase()
-        print(f"[OK] Supabase (anon) conectado: {supabase_url[:40]}...")
+        logger.info(f"[OK] Supabase (anon) conectado: {supabase_url[:40]}...")
 
     if not service_role_key:
-        print("[AVISO] SUPABASE_SERVICE_ROLE_KEY não definida - operações de servidor falharão")
+        logger.warning("[AVISO] SUPABASE_SERVICE_ROLE_KEY não definida - operações de servidor falharão")
     else:
         get_supabase_admin()
-        print(f"[OK] Supabase (service_role) conectado.")
+        logger.info("[OK] Supabase (service_role) conectado.")
 
-    print("[OK] LexForum - Servidor iniciado.")
+    logger.info("[OK] LexForum - Servidor iniciado.")
     yield
     # -- Shutdown --
-    print("[OK] Servidor encerrado.")
+    logger.info("[OK] Servidor encerrado.")
 
 
 # ============================================================
@@ -313,10 +277,13 @@ CORS_ORIGINS = [
     "https://lovable.dev",
     "https://lexportal.lovable.app",
     "https://lexportal.lovable.dev",
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://localhost:8080",
 ]
+if os.environ.get("ENV", "production").lower() in ("development", "dev", "local"):
+    CORS_ORIGINS.extend([
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+    ])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -422,6 +389,18 @@ async def analyze(
         _active_user_analyses[user_id] = "starting"
 
     try:
+        # Pre-check Content-Length to reject oversized files early
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > MAX_FILE_SIZE * 2:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="Ficheiro demasiado grande. Máximo: 50MB.",
+                    )
+            except ValueError:
+                pass
+
         file_bytes = await file.read()
 
         if len(file_bytes) > MAX_FILE_SIZE:
@@ -455,6 +434,9 @@ async def analyze(
                 detail="Tier inválido. Opções: bronze/standard, silver/premium, gold/elite.",
             )
 
+        if area_direito and area_direito not in VALID_AREAS:
+            logger.warning(f"Área de direito não standard: {area_direito[:50]}")
+
         # FIX 2026-02-14: Executar em thread separada para não bloquear event loop
         resultado = await asyncio.to_thread(
             executar_analise_documento,
@@ -475,7 +457,7 @@ async def analyze(
             custos = result_dict.get("custos") or {}
             custo_real = custos.get("custo_total_usd", 0)
             custo_cobrado = custos.get("custo_cliente_usd", 0)
-            print(
+            logger.debug(
                 f"[DOCS-DEBUG] custos keys={list(custos.keys()) if custos else 'EMPTY'}, "
                 f"custo_real={custo_real}, custo_cobrado={custo_cobrado}, "
                 f"type_real={type(custo_real).__name__}, type_cobrado={type(custo_cobrado).__name__}"
@@ -567,6 +549,14 @@ async def analyze(
 
 class ExportRequest(BaseModel):
     analysis_result: Dict[str, Any]
+
+    @field_validator("analysis_result")
+    @classmethod
+    def validate_size(cls, v):
+        import json as _json
+        if len(_json.dumps(v, default=str)) > 10 * 1024 * 1024:
+            raise ValueError("analysis_result excede o tamanho máximo permitido (10MB)")
+        return v
 
 _INTERNAL_PATTERNS = [
     re.compile(r"^\s*-?\s*Fontes:\s*\[.*?\]\s*$", re.MULTILINE),
@@ -682,7 +672,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
 def _build_docx(data: Dict[str, Any]) -> bytes:
     """Gera DOCX profissional a partir do resultado da análise."""
     from docx import Document
-    from docx.shared import Pt, Cm, RGBColor
+    from docx.shared import Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     doc = Document()
@@ -793,6 +783,14 @@ class AskRequest(BaseModel):
     analysis_result: Dict[str, Any]
     document_id: str = ""
     previous_qa: List[Dict[str, str]] = Field(default=[], max_length=50)
+
+    @field_validator("analysis_result")
+    @classmethod
+    def validate_size(cls, v):
+        import json as _json
+        if len(_json.dumps(v, default=str)) > 10 * 1024 * 1024:
+            raise ValueError("analysis_result excede o tamanho máximo permitido (10MB)")
+        return v
 
 
 def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] = None) -> str:
@@ -1010,6 +1008,13 @@ async def add_document_to_project(
 
     current_result = doc_resp.data.get("analysis_result") or {}
     docs_adicionais = current_result.get("documentos_adicionais", [])
+
+    if len(docs_adicionais) >= MAX_ADDITIONAL_DOCS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Limite de {MAX_ADDITIONAL_DOCS} documentos adicionais atingido.",
+        )
+
     docs_adicionais.append({
         "filename": filename,
         "text": novo_texto,
@@ -1535,13 +1540,14 @@ async def admin_verify(request: Request, req: AdminVerifyRequest):
     # Gerar token de sessão admin (válido 1 hora)
     admin_token = secrets.token_urlsafe(32)
     now = datetime.now()
-    _admin_sessions[admin_token] = {
-        "created_at": now,
-        "ip": get_remote_address(request),
-    }
-    # Cleanup expired sessions (older than 1 hour)
-    expired = [k for k, v in _admin_sessions.items()
-               if (now - v["created_at"]).total_seconds() > ADMIN_SESSION_TTL]
-    for k in expired:
-        del _admin_sessions[k]
+    with _admin_sessions_lock:
+        _admin_sessions[admin_token] = {
+            "created_at": now,
+            "ip": get_remote_address(request),
+        }
+        # Cleanup expired sessions (older than 1 hour)
+        expired = [k for k, v in _admin_sessions.items()
+                   if (now - v["created_at"]).total_seconds() > ADMIN_SESSION_TTL]
+        for k in expired:
+            del _admin_sessions[k]
     return {"status": "ok", "message": "Acesso autorizado.", "admin_token": admin_token}

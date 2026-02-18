@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any, Set
 
-from src.config import LOG_LEVEL, OUTPUT_DIR
+from src.config import OUTPUT_DIR
 
 # Importar normalização unificada
 from src.pipeline.text_normalize import (

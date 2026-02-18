@@ -12,7 +12,7 @@ import sys
 import json
 from datetime import datetime
 import io
-from typing import List, Optional
+from typing import List
 import shutil  # ← NOVO: Para apagar pastas
 
 # Adicionar diretório raiz ao path
@@ -61,7 +61,7 @@ from src.utils.metadata_manager import (
     gerar_titulo_automatico
 )
 
-from src.utils.sanitize import sanitize_run_id, sanitize_filename
+from src.utils.sanitize import sanitize_run_id
 
 logger = logging.getLogger(__name__)
 

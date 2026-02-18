@@ -7,12 +7,11 @@ Não apaga runs válidos.
 ============================================================
 """
 
-import os
 import shutil
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 logger = logging.getLogger(__name__)
 

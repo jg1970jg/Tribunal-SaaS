@@ -22,10 +22,9 @@ import streamlit as st
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 import logging
 from io import BytesIO
-import shutil
 
 from src.utils.metadata_manager import listar_analises_com_titulos
 from src.utils.sanitize import sanitize_run_id, sanitize_filename

@@ -17,8 +17,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 
-from src.config import AREAS_DIREITO
-
 logger = logging.getLogger(__name__)
 
 # Modelos de triagem (baratos e rápidos)

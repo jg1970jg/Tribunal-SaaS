@@ -22,7 +22,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Importar prompts maximizados
-from prompts_maximos import PROMPT_EXTRATOR_UNIVERSAL, PROMPT_AGREGADOR_PRESERVADOR
+from prompts_maximos import PROMPT_EXTRATOR_UNIVERSAL
 
 logger = logging.getLogger(__name__)
 

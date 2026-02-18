@@ -15,7 +15,7 @@ REGRAS NÃO-NEGOCIÁVEIS:
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Dict, Optional, Any, Literal, Set, Tuple
+from typing import List, Dict, Optional, Any, Set, Tuple
 from enum import Enum
 import hashlib
 import json

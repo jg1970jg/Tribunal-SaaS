@@ -346,27 +346,24 @@ class ConfidencePolicyCalculator:
 
     def _count_integrity_errors(self, report: Any, counts: Dict[str, int]):
         """Conta erros de um IntegrityReport."""
-        # Se for dict
         if isinstance(report, dict):
             top_errors = report.get("top_errors", [])
-            for err in top_errors:
-                error_type = err.get("error_type", "UNKNOWN")
-                counts[error_type] = counts.get(error_type, 0) + 1
-
-            # Contagens diretas
-            citations = report.get("citations", {})
-            if citations.get("invalid", 0) > 0:
-                counts["RANGE_INVALID"] = counts.get("RANGE_INVALID", 0) + citations["invalid"]
-
-            excerpts = report.get("excerpts", {})
-            if excerpts.get("mismatch", 0) > 0:
-                counts["EXCERPT_MISMATCH"] = counts.get("EXCERPT_MISMATCH", 0) + excerpts["mismatch"]
-
-            pages = report.get("pages", {})
-            if pages.get("mismatch", 0) > 0:
-                counts["PAGE_MISMATCH"] = counts.get("PAGE_MISMATCH", 0) + pages["mismatch"]
-
-        # Se for objeto IntegrityReport
+            if top_errors:
+                # Use top_errors as primary source (avoid double counting)
+                for err in top_errors:
+                    error_type = err.get("error_type", "UNKNOWN")
+                    counts[error_type] = counts.get(error_type, 0) + 1
+            else:
+                # Fallback to individual field counts only if no top_errors
+                citations = report.get("citations", {})
+                if citations.get("invalid", 0) > 0:
+                    counts["RANGE_INVALID"] = counts.get("RANGE_INVALID", 0) + citations["invalid"]
+                excerpts = report.get("excerpts", {})
+                if excerpts.get("mismatch", 0) > 0:
+                    counts["EXCERPT_MISMATCH"] = counts.get("EXCERPT_MISMATCH", 0) + excerpts["mismatch"]
+                pages = report.get("pages", {})
+                if pages.get("mismatch", 0) > 0:
+                    counts["PAGE_MISMATCH"] = counts.get("PAGE_MISMATCH", 0) + pages["mismatch"]
         elif hasattr(report, 'errors'):
             for err in report.errors:
                 if hasattr(err, 'error_type'):
@@ -597,22 +594,3 @@ def apply_penalty_to_confidence(
     return max(0.0, min(1.0, adjusted))
 
 
-def get_penalty_summary(result: ConfidencePenaltyResult) -> str:
-    """
-    Retorna resumo textual da penalidade.
-    """
-    lines = [
-        f"Penalty: -{result.total_penalty:.1%}",
-        f"Adjusted Confidence: {result.adjusted_confidence:.1%}",
-    ]
-
-    if result.confidence_ceiling:
-        lines.append(f"Ceiling Applied: {result.confidence_ceiling:.1%}")
-
-    if result.dominant_category:
-        lines.append(f"Dominant Category: {result.dominant_category}")
-
-    if result.is_severely_penalized:
-        lines.append("STATUS: SEVERELY PENALIZED")
-
-    return " | ".join(lines)

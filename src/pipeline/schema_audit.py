@@ -19,11 +19,10 @@ CHANGELOG:
 """
 
 import json
-import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Dict, Optional, Any, Literal, Tuple
+from typing import List, Dict, Optional, Tuple
 from enum import Enum
 
 from src.pipeline.schema_unified import SourceSpan, ExtractionMethod
