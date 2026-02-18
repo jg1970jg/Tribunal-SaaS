@@ -1438,10 +1438,11 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                         else:
                             chunk_scanned_images.append((pg_num, b64_img))
 
-                # FIX 2026-02-14: Calcular max_tokens adequado ao modelo
-                # Extractores produzem JSON extenso — modelos premium precisam de mais espaço
+                # FIX 2026-02-18: Calcular max_tokens adequado ao modelo
+                # Extractores produzem JSON extenso (~66K chars para chunk 50K)
+                # Cap 65K para modelos com output grande; modelos pequenos usam seu limite real
                 from src.config import MODEL_MAX_OUTPUT
-                extractor_max_tokens = min(32_768, MODEL_MAX_OUTPUT.get(model, 16_384))
+                extractor_max_tokens = min(65_536, MODEL_MAX_OUTPUT.get(model, 16_384))
                 logger.info(f"[MAX_TOKENS] {extractor_id}: modelo={model} → max_tokens={extractor_max_tokens:,}")
 
                 # Chamar LLM com retry (com ou sem imagens)
@@ -1508,7 +1509,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                             f"[SUPLENTE] {extractor_id} chunk {chunk_idx+1}: "
                             f"{model} falhou{fail_reason} → tentando {sub_model}"
                         )
-                        sub_max_tokens = min(32_768, MODEL_MAX_OUTPUT.get(sub_model, 16_384))
+                        sub_max_tokens = min(65_536, MODEL_MAX_OUTPUT.get(sub_model, 16_384))
 
                         # v5.1: Suplente com suporte a imagens (se visual e modelo capaz)
                         def _do_sub_call(
