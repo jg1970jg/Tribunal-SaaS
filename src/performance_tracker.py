@@ -451,13 +451,18 @@ def check_response_quality(content: str, role_name: str) -> Optional[Dict]:
                 }
 
         # JSON valido mas sem citations
+        # FIX v5.0: Contar citations de AMBOS os campos possíveis (citations + supporting_citations)
+        # Bug anterior: get("supporting_citations", get("citations")) ignorava citations se
+        # supporting_citations existisse como lista vazia
         total_citations = 0
         for item in parsed.get("findings", []):
             if isinstance(item, dict):
                 total_citations += len(item.get("citations", []))
         for item in parsed.get("decision_points", []):
             if isinstance(item, dict):
-                total_citations += len(item.get("supporting_citations", item.get("citations", [])))
+                # Somar ambos os campos — prompt pede "citations" mas IA pode usar "supporting_citations"
+                total_citations += len(item.get("citations", []))
+                total_citations += len(item.get("supporting_citations", []))
 
         has_items = len(parsed.get("findings", [])) > 0 or len(parsed.get("decision_points", [])) > 0
         if has_items and total_citations == 0:
@@ -507,8 +512,10 @@ def build_retry_prompt(
         ),
         "NO_CITATIONS": (
             "A tua resposta anterior tinha findings/pontos mas ZERO citations. "
-            "CADA finding/decision_point DEVE ter pelo menos 1 citation com "
-            "evidence_item_id, start_char, end_char, page_num e excerpt."
+            "CADA finding/decision_point DEVE ter pelo menos 1 citation no campo "
+            '"citations": [{"doc_id": "...", "start_char": N, "end_char": N, '
+            '"page_num": N, "excerpt": "texto exacto"}]. '
+            "NAO uses 'supporting_citations' — usa 'citations'."
         ),
     }
 

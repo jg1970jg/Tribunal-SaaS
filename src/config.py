@@ -7,7 +7,7 @@ PIPELINE 6 FASES:
   Fase 0: Triagem (3 IAs baratas: GPT-4o-mini, Gemini Flash, Llama 8B)
   Fase 1: Extração (7 IAs: Haiku, Gemini Pro, GPT-5.2, Sonnet, Llama 3.3, Nova Pro, Nemotron)
   Fase 2: Agregação com deduplicação semântica
-  Fase 3: Auditoria (4 IAs: GPT-5.2, Gemini Pro, Sonnet 4.5, Llama 405B) + A5 Opus (Elite)
+  Fase 3: Auditoria (4 IAs: GPT-5.2, Gemini Pro, Sonnet 4.5, Qwen3 Max) + A5 Opus (Elite)
   Fase 4: Julgamento (3 IAs reasoning: o1-pro, DeepSeek R1, Opus 4.6)
   Fase 5: Síntese (GPT-5.2 Standard / Opus 4.6 Premium / GPT-5.2-Pro Elite)
 
@@ -300,19 +300,21 @@ LLM_CONFIGS = [
 EXTRATOR_MODELS = [cfg["model"] for cfg in LLM_CONFIGS]
 
 # =============================================================================
-# AUDITORES — v4.0 HANDOVER
+# AUDITORES — v5.0 SUBSTITUTES
 # A1: GPT-5.2 (Prazos e lógica)
 # A2: Gemini 3 Pro (Visual: carimbos vs texto)
 # A3: Sonnet 4.5 (Texto + visão complementar)
-# A4: Llama 4 405B (Advogado do Diabo) — Grok BANIDO ($2.54 desperdiçados)
+# A4: Qwen3 Max Thinking (Advogado do Diabo) — substitui Llama 405B (100% falhas)
 # A5: Opus 4.6 (Auditor Sénior — APENAS ELITE) — ver engine.py
+#
+# FALLBACK: Primário falha → Sub 1 (mesma empresa) → Sub 2 (outra empresa)
 # =============================================================================
 
 AUDITOR_MODELS = [
     "openai/gpt-5.2",                  # A1: Prazos e lógica
     "google/gemini-3-pro-preview",      # A2: Visual (carimbos vs texto) — v4.0
     "anthropic/claude-sonnet-4.5",      # A3: Texto + visão complementar — v4.0
-    "meta-llama/llama-3.1-405b-instruct", # A4: Advogado do Diabo — v4.0 (Grok BANIDO)
+    "qwen/qwen3-max-thinking",          # A4: Advogado do Diabo — v5.0 (Alibaba 1st-party, 262K ctx)
 ]
 
 AUDITORES = [
@@ -322,11 +324,21 @@ AUDITORES = [
     {"id": "A4", "model": AUDITOR_MODELS[3], "temperature": 0.0},
 ]
 
+# Substitutos por auditor: [sub1_mesma_empresa, sub2_outra_empresa]
+AUDITOR_SUBSTITUTES = {
+    "A1": ["openai/gpt-4.1",              "google/gemini-2.5-pro"],         # OpenAI → OpenAI → Google
+    "A2": ["google/gemini-2.5-flash",      "openai/gpt-4.1"],               # Google → Google → OpenAI
+    "A3": ["anthropic/claude-haiku-4.5",   "google/gemini-2.5-flash"],      # Anthropic → Anthropic → Google
+    "A4": ["google/gemini-2.5-flash",      "x-ai/grok-4"],                  # Alibaba → Google → xAI
+}
+
 # =============================================================================
-# JUÍZES — v4.0 HANDOVER (3 IAs de RACIOCÍNIO de 3 marcas)
-# J1: GPT-5.2 (Raciocínio) — o1-pro removido (tier 5 + preço proibitivo)
+# JUÍZES — v5.0 SUBSTITUTES (3 IAs de RACIOCÍNIO de 3 marcas)
+# J1: GPT-5.2 (Raciocínio) — OpenAI
 # J2: DeepSeek R1 (Lógica matemática) — DeepSeek
 # J3: Opus 4.6 (Interpretação doutrinária) — Anthropic
+#
+# FALLBACK: Primário falha → Sub 1 (mesma empresa) → Sub 2 (empresa diversa)
 # =============================================================================
 
 RELATOR_MODELS = [
@@ -341,9 +353,39 @@ RELATORES = [
     {"id": "J3", "model": RELATOR_MODELS[2], "temperature": 0.0},
 ]
 
+# Substitutos por juiz: [sub1_mesma_empresa, sub2_outra_empresa]
+# Sub 2: cada juiz usa empresa DIFERENTE (Google, Qwen, xAI) — máxima diversidade
+JUDGE_SUBSTITUTES = {
+    "J1": ["openai/gpt-4.1",              "google/gemini-2.5-pro"],         # OpenAI → OpenAI → Google
+    "J2": ["deepseek/deepseek-chat",       "qwen/qwen3-max-thinking"],      # DeepSeek → DeepSeek → Qwen
+    "J3": ["anthropic/claude-sonnet-4.5",  "x-ai/grok-4"],                  # Anthropic → Anthropic → xAI
+}
+
 # Aliases de compatibilidade
 JUIZ_MODELS = RELATOR_MODELS
 JUIZES = RELATORES
+
+# =============================================================================
+# CONSOLIDADOR (Fase 2 — Agregação de Auditorias)
+# FALLBACK: Primário falha → Sub 1 (mesma empresa) → Sub 2 (outra empresa)
+# =============================================================================
+
+CONSOLIDADOR_SUBSTITUTES = [
+    "openai/gpt-4.1",              # Sub 1: mesma empresa (OpenAI, 1M ctx)
+    "google/gemini-2.5-pro",       # Sub 2: outra empresa (Google, 1M ctx)
+]
+
+# =============================================================================
+# PRESIDENTE / CURADOR (Fase 4-5 — Conselheiro-Mor + Curador Sénior)
+# Modelo varia por tier. Suplentes indexados pelo modelo primário.
+# FALLBACK: Primário falha → Sub 1 (mesma empresa) → Sub 2 (outra empresa)
+# =============================================================================
+
+PRESIDENTE_SUBSTITUTES = {
+    "openai/gpt-5.2":           ["openai/gpt-4.1",              "anthropic/claude-opus-4.6"],   # Bronze
+    "anthropic/claude-opus-4.6":["anthropic/claude-sonnet-4.5",  "openai/gpt-5.2"],              # Silver
+    "openai/gpt-5.2-pro":       ["openai/gpt-5.2",              "anthropic/claude-opus-4.6"],   # Gold
+}
 
 # =============================================================================
 # LIMITES DE CONTEXTO E OUTPUT POR MODELO (tokens)
@@ -367,7 +409,11 @@ MODEL_CONTEXT_LIMITS = {
     "deepseek/deepseek-chat":           128_000,
     "deepseek/deepseek-r1":             128_000,     # v4.0: J2 DeepSeek R1
     "mistralai/mistral-medium-3":       131_072,
-    "meta-llama/llama-3.1-405b-instruct": 128_000,    # v4.0: A4 Advogado do Diabo
+    "meta-llama/llama-3.1-405b-instruct": 128_000,    # legacy (ex-A4)
+    "qwen/qwen3-max-thinking":          262_000,     # v5.0: A4 Advogado do Diabo (Alibaba 1st-party)
+    "google/gemini-2.5-flash":          1_000_000,   # v5.0: Sub A2/A3/A4 (Google 1st-party)
+    "google/gemini-2.5-pro":            1_000_000,   # v5.0: Sub A1 (Google 1st-party)
+    "x-ai/grok-4":                      256_000,     # v5.0: Sub A4 (xAI 1st-party)
     "meta-llama/llama-3.1-8b-instruct":  128_000,    # v4.0: Fase 0
     "meta-llama/llama-3.3-70b-instruct": 131_072,    # E5 Llama 3.3 (Meta)
     "amazon/nova-pro-v1":               300_000,     # E6 Nova Pro (Amazon) — 300k context
@@ -391,7 +437,11 @@ MODEL_MAX_OUTPUT = {
     "deepseek/deepseek-chat":           163_840,
     "deepseek/deepseek-r1":             64_000,      # v4.0: J2
     "mistralai/mistral-medium-3":       32_768,
-    "meta-llama/llama-3.1-405b-instruct": 32_768,     # v4.0: A4
+    "meta-llama/llama-3.1-405b-instruct": 32_768,     # legacy (ex-A4)
+    "qwen/qwen3-max-thinking":          66_000,      # v5.0: A4 Advogado do Diabo — 66K max output
+    "google/gemini-2.5-flash":          65_535,      # v5.0: Sub A2/A3/A4
+    "google/gemini-2.5-pro":            65_535,      # v5.0: Sub A1
+    "x-ai/grok-4":                      100_000,     # v5.0: Sub A4 (xAI 1st-party)
     "meta-llama/llama-3.1-8b-instruct":  32_768,     # v4.0: Fase 0
     "meta-llama/llama-3.3-70b-instruct": 16_384,     # E5 Llama 3.3 (Meta) — real OpenRouter
     "amazon/nova-pro-v1":               5_120,       # E6 Nova Pro (Amazon) — output menor

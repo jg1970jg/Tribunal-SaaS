@@ -34,6 +34,10 @@ from src.pipeline.zone_processor import should_use_zones, create_zone_plan, log_
 from src.config import (
     EXTRATOR_MODELS,
     AUDITOR_MODELS,
+    AUDITOR_SUBSTITUTES,
+    JUDGE_SUBSTITUTES,
+    CONSOLIDADOR_SUBSTITUTES,
+    PRESIDENTE_SUBSTITUTES,
     JUIZ_MODELS,
     PRESIDENTE_MODEL,
     AGREGADOR_MODEL,
@@ -2434,19 +2438,39 @@ Audita a extração acima, verificando completude, precisão e relevância jurí
 
         resultados = []
         for i, model in enumerate(self.auditor_models):
+            auditor_id = f"A{i+1}"
             self._reportar_progresso("fase2", 40 + i * 5, f"Auditor {i+1}: {model}")
             # v4.0: A4 uses Devil's Advocate prompt
-            aud_sys_prompt = self.SYSTEM_ADVOGADO_DIABO if f"A{i+1}" == "A4" else self.SYSTEM_AUDITOR
+            aud_sys_prompt = self.SYSTEM_ADVOGADO_DIABO if auditor_id == "A4" else self.SYSTEM_AUDITOR
 
-            resultado = self._call_llm(
-                model=model,
-                prompt=prompt_base,
-                system_prompt=aud_sys_prompt,
-                role_name=f"auditor_{i+1}",
-            )
-            resultados.append(resultado)
+            # v5.0: Fallback para substitutos se primário falhar
+            models_to_try = [model] + AUDITOR_SUBSTITUTES.get(auditor_id, [])
+            resultado = None
+            used_model = model
+            for attempt_idx, try_model in enumerate(models_to_try):
+                resultado = self._call_llm(
+                    model=try_model,
+                    prompt=prompt_base,
+                    system_prompt=aud_sys_prompt,
+                    role_name=f"auditor_{i+1}",
+                )
+                if resultado is not None and resultado.conteudo:
+                    used_model = try_model
+                    if attempt_idx > 0:
+                        logger.warning(
+                            f"[FALLBACK] {auditor_id} substituto {attempt_idx} ({try_model}) "
+                            f"assumiu após falha do primário ({model})"
+                        )
+                    break
+                else:
+                    logger.warning(f"[FALLBACK] {auditor_id} modelo {try_model} falhou")
+                    resultado = None
 
-            self._log_to_file(f"fase2_auditor_{i+1}.md", f"# Auditor {i+1}: {model}\n\n{resultado.conteudo}")
+            if resultado is not None:
+                resultados.append(resultado)
+                self._log_to_file(f"fase2_auditor_{i+1}.md", f"# Auditor {i+1}: {used_model}\n\n{resultado.conteudo}")
+            else:
+                logger.error(f"✗ {auditor_id} falhou todos os {len(models_to_try)} modelos — ignorado")
 
         # Criar auditorias BRUTAS (concatenação simples)
         self._reportar_progresso("fase2", 53, "Criando auditorias brutas...")
@@ -2470,14 +2494,33 @@ Audita a extração acima, verificando completude, precisão e relevância jurí
 Consolida estas {n_auditores} auditorias numa única auditoria LOSSLESS.
 Área do Direito: {area}"""
 
-        chefe_result = self._call_llm(
-            model=self.chefe_model,
-            prompt=prompt_chefe,
-            system_prompt=self.SYSTEM_CONSOLIDADOR,
-            role_name="consolidador",
-        )
+        # v5.0: Consolidador com fallback para substitutos
+        models_to_try = [self.chefe_model] + CONSOLIDADOR_SUBSTITUTES
+        chefe_result = None
+        consolidador_used = self.chefe_model
+        for attempt_idx, try_model in enumerate(models_to_try):
+            chefe_result = self._call_llm(
+                model=try_model,
+                prompt=prompt_chefe,
+                system_prompt=self.SYSTEM_CONSOLIDADOR,
+                role_name="consolidador",
+            )
+            if chefe_result is not None and chefe_result.conteudo and chefe_result.conteudo.strip():
+                consolidador_used = try_model
+                if attempt_idx > 0:
+                    logger.warning(
+                        f"[FALLBACK] Consolidador substituto {attempt_idx} ({try_model}) "
+                        f"assumiu após falha do primário ({self.chefe_model})"
+                    )
+                break
+            else:
+                logger.warning(f"[FALLBACK] Consolidador modelo {try_model} falhou")
+                chefe_result = None
 
-        consolidado = f"# AUDITORIA CONSOLIDADA (CONSOLIDADOR: {self.chefe_model})\n\n{chefe_result.conteudo}"
+        if chefe_result is None or not chefe_result.conteudo:
+            raise Exception("Consolidador falhou após todos os modelos. Pipeline abortado.")
+
+        consolidado = f"# AUDITORIA CONSOLIDADA (CONSOLIDADOR: {consolidador_used})\n\n{chefe_result.conteudo}"
         self._log_to_file("fase2_consolidador_consolidado.md", consolidado)
 
         # Backwards compat: guardar também como fase2_chefe.md
@@ -2605,30 +2648,58 @@ INSTRUÇÕES:
 OUTPUT: Same JSON format as other auditors, plus include a "devils_advocate_conclusion" field ("errors_found" or "audit_clean") and a "challenges" array."""
 
         def _run_auditor(i, model):
-            """Executa um auditor. Thread-safe."""
+            """Executa um auditor com fallback para substitutos. Thread-safe.
+
+            v5.0: Se o modelo primário falha após retries, tenta substitutos:
+              Sub 1 (mesma empresa) → Sub 2 (outra empresa)
+            """
             auditor_id = f"A{i+1}"
             # v4.0: A4 uses Devil's Advocate prompt
             sys_prompt = SYSTEM_A4_ADVOGADO_DIABO_JSON if auditor_id == "A4" else self.SYSTEM_AUDITOR_JSON
 
-            def _do_audit():
-                return self._call_llm(
-                    model=model,
-                    prompt=prompt_base,
-                    system_prompt=sys_prompt,
-                    role_name=f"auditor_{i+1}_json",
-                )
+            # v5.0: Lista de modelos a tentar (primário + substitutos)
+            models_to_try = [model] + AUDITOR_SUBSTITUTES.get(auditor_id, [])
 
-            resultado = _call_with_retry(_do_audit, func_name=f"Auditor-{auditor_id}")
+            resultado = None
+            used_model = model
+            for attempt_idx, try_model in enumerate(models_to_try):
+                label = "primário" if attempt_idx == 0 else f"substituto {attempt_idx}"
+
+                def _do_audit(_m=try_model):
+                    return self._call_llm(
+                        model=_m,
+                        prompt=prompt_base,
+                        system_prompt=sys_prompt,
+                        role_name=f"auditor_{i+1}_json",
+                    )
+
+                resultado = _call_with_retry(_do_audit, func_name=f"Auditor-{auditor_id}")
+
+                if resultado is not None and resultado.conteudo:
+                    used_model = try_model
+                    if attempt_idx > 0:
+                        logger.warning(
+                            f"[FALLBACK] {auditor_id} {label} ({try_model}) assumiu "
+                            f"após falha do primário ({model})"
+                        )
+                    break
+                else:
+                    logger.warning(
+                        f"[FALLBACK] {auditor_id} {label} ({try_model}) falhou — "
+                        f"tentando próximo substituto..." if attempt_idx < len(models_to_try) - 1
+                        else f"[FALLBACK] {auditor_id} todos os modelos falharam ({len(models_to_try)} tentativas)"
+                    )
+                    resultado = None
 
             if resultado is None or not resultado.conteudo:
-                logger.error(f"✗ Auditor {auditor_id} falhou após retries")
+                logger.error(f"✗ Auditor {auditor_id} falhou após {len(models_to_try)} modelos (primário + substitutos)")
                 return None
 
             # Parsear JSON com fallback
             report = parse_audit_report(
                 output=resultado.conteudo,
                 auditor_id=auditor_id,
-                model_name=model,
+                model_name=used_model,
                 run_id=run_id,
             )
 
@@ -2660,7 +2731,7 @@ OUTPUT: Same JSON format as other auditors, plus include a "devils_advocate_conc
             return {
                 "auditor_id": auditor_id,
                 "index": i,
-                "model": model,
+                "model": used_model,
                 "report": report,
                 "md_content": md_content,
                 "tokens_usados": resultado.tokens_usados if resultado else 0,
@@ -2796,17 +2867,43 @@ Consolida estas {n_auditores} auditorias num ÚNICO relatório JSON LOSSLESS.
 
 CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanation, or markdown before or after the JSON. Start your response with {{ and end with }}."""
 
-        chefe_result = self._call_llm(
-            model=self.chefe_model,
-            prompt=prompt_chefe_json,
-            system_prompt=self.SYSTEM_CONSOLIDADOR_JSON,
-            role_name="consolidador_json",
-        )
+        # v5.0: Consolidador com fallback para substitutos
+        models_to_try = [self.chefe_model] + CONSOLIDADOR_SUBSTITUTES
+        chefe_result = None
+        consolidador_used_model = self.chefe_model
+        for attempt_idx, try_model in enumerate(models_to_try):
+            label = "primário" if attempt_idx == 0 else f"substituto {attempt_idx}"
+            chefe_result = self._call_llm(
+                model=try_model,
+                prompt=prompt_chefe_json,
+                system_prompt=self.SYSTEM_CONSOLIDADOR_JSON,
+                role_name="consolidador_json",
+            )
+            if chefe_result is not None and chefe_result.conteudo and chefe_result.conteudo.strip():
+                consolidador_used_model = try_model
+                if attempt_idx > 0:
+                    logger.warning(
+                        f"[FALLBACK] Consolidador {label} ({try_model}) assumiu "
+                        f"após falha do primário ({self.chefe_model})"
+                    )
+                break
+            else:
+                logger.warning(
+                    f"[FALLBACK] Consolidador {label} ({try_model}) falhou"
+                    + (" — tentando próximo substituto..." if attempt_idx < len(models_to_try) - 1 else "")
+                )
+                chefe_result = None
+
+        if chefe_result is None or not chefe_result.conteudo:
+            raise Exception(
+                f"Consolidador falhou após {len(models_to_try)} modelos (primário + substitutos). "
+                f"Pipeline abortado."
+            )
 
         # Parsear JSON do Consolidador com soft-fail
         chefe_report = parse_chefe_report(
             output=chefe_result.conteudo,
-            model_name=self.chefe_model,
+            model_name=consolidador_used_model,
             run_id=run_id,
         )
 
@@ -2826,7 +2923,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         self._log_to_file("fase2_chefe.md", consolidado_md)
 
         # Para compatibilidade com Fase 3, criar string consolidada
-        consolidado = f"# AUDITORIA CONSOLIDADA (CONSOLIDADOR: {self.chefe_model})\n\n"
+        consolidado = f"# AUDITORIA CONSOLIDADA (CONSOLIDADOR: {consolidador_used_model})\n\n"
         consolidado += consolidado_md
 
         logger.info(
@@ -2937,28 +3034,56 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         respostas_qa = []
 
         def _run_judge(i, model):
-            """Executa um relator. Thread-safe."""
+            """Executa um relator com fallback para substitutos. Thread-safe.
+
+            v5.0: Se o modelo primário falha após retries, tenta substitutos:
+              Sub 1 (mesma empresa) → Sub 2 (outra empresa)
+            """
             judge_id = f"J{i+1}"
 
-            def _do_judge():
-                return self._call_llm(
-                    model=model,
-                    prompt=prompt_base,
-                    system_prompt=system_prompt,
-                    role_name=f"relator_{i+1}_json",
-                )
+            # v5.0: Lista de modelos a tentar (primário + substitutos)
+            models_to_try = [model] + JUDGE_SUBSTITUTES.get(judge_id, [])
 
-            resultado = _call_with_retry(_do_judge, func_name=f"Relator-{judge_id}")
+            resultado = None
+            used_model = model
+            for attempt_idx, try_model in enumerate(models_to_try):
+                label = "primário" if attempt_idx == 0 else f"substituto {attempt_idx}"
+
+                def _do_judge(_m=try_model):
+                    return self._call_llm(
+                        model=_m,
+                        prompt=prompt_base,
+                        system_prompt=system_prompt,
+                        role_name=f"relator_{i+1}_json",
+                    )
+
+                resultado = _call_with_retry(_do_judge, func_name=f"Relator-{judge_id}")
+
+                if resultado is not None and resultado.conteudo:
+                    used_model = try_model
+                    if attempt_idx > 0:
+                        logger.warning(
+                            f"[FALLBACK] {judge_id} {label} ({try_model}) assumiu "
+                            f"após falha do primário ({model})"
+                        )
+                    break
+                else:
+                    logger.warning(
+                        f"[FALLBACK] {judge_id} {label} ({try_model}) falhou — "
+                        f"tentando próximo substituto..." if attempt_idx < len(models_to_try) - 1
+                        else f"[FALLBACK] {judge_id} todos os modelos falharam ({len(models_to_try)} tentativas)"
+                    )
+                    resultado = None
 
             if resultado is None or not resultado.conteudo:
-                logger.error(f"✗ Relator {judge_id} falhou após retries")
+                logger.error(f"✗ Relator {judge_id} falhou após {len(models_to_try)} modelos (primário + substitutos)")
                 return None
 
             # Parsear JSON
             opinion = parse_judge_opinion(
                 output=resultado.conteudo,
                 judge_id=judge_id,
-                model_name=model,
+                model_name=used_model,
                 run_id=run_id,
             )
 
@@ -2987,7 +3112,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
             return {
                 "judge_id": judge_id,
                 "index": i,
-                "model": model,
+                "model": used_model,
                 "opinion": opinion,
                 "md_content": md_content,
                 "tokens_usados": resultado.tokens_usados if resultado else 0,
@@ -3102,35 +3227,37 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
 
         system_prompt = self.SYSTEM_CONSELHEIRO_JSON_QA if perguntas else self.SYSTEM_CONSELHEIRO_JSON
 
-        resultado = self._call_llm(
-            model=self.presidente_model,
-            prompt=prompt,
-            system_prompt=system_prompt,
-            role_name="presidente_json",
-        )
-
-        # FIX 2026-02-14: Fallback — se presidente falhou (vazio), tentar gpt-5.2
+        # v5.0: Presidente com fallback para substitutos (indexados pelo modelo)
+        models_to_try = [self.presidente_model] + PRESIDENTE_SUBSTITUTES.get(self.presidente_model, [])
+        resultado = None
         modelo_usado = self.presidente_model
-        if not resultado.conteudo or not resultado.conteudo.strip():
-            # FIX 2026-02-14: Fallback tier-aware (Gold usa gpt-5.2, outros não fazem fallback)
-            tier_name = getattr(self, '_tier', 'bronze')
-            fallback_model = "openai/gpt-5.2" if tier_name == "gold" else "openai/gpt-5.2"
-            if self.presidente_model != fallback_model:
+        for attempt_idx, try_model in enumerate(models_to_try):
+            label = "primário" if attempt_idx == 0 else f"substituto {attempt_idx}"
+            resultado = self._call_llm(
+                model=try_model,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                role_name="presidente_json" if attempt_idx == 0 else f"presidente_json_fallback_{attempt_idx}",
+            )
+            if resultado is not None and resultado.conteudo and resultado.conteudo.strip():
+                modelo_usado = try_model
+                if attempt_idx > 0:
+                    logger.warning(
+                        f"[PRESIDENTE-FALLBACK] {label} ({try_model}) assumiu "
+                        f"após falha do primário ({self.presidente_model})"
+                    )
+                break
+            else:
                 logger.warning(
-                    f"[PRESIDENTE-FALLBACK] {self.presidente_model} retornou vazio! "
-                    f"Tentando fallback: {fallback_model} (tier={tier_name})"
+                    f"[PRESIDENTE-FALLBACK] {label} ({try_model}) falhou"
+                    + (" — tentando próximo substituto..." if attempt_idx < len(models_to_try) - 1 else "")
                 )
-                resultado = self._call_llm(
-                    model=fallback_model,
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    role_name="presidente_json_fallback",
-                )
-                modelo_usado = fallback_model
-                if resultado.conteudo and resultado.conteudo.strip():
-                    logger.info(f"[PRESIDENTE-FALLBACK] {fallback_model} respondeu OK!")
-                else:
-                    logger.error(f"[PRESIDENTE-FALLBACK] {fallback_model} TAMBÉM falhou!")
+                resultado = None
+
+        if resultado is None or not resultado.conteudo:
+            raise Exception(
+                f"Presidente falhou após {len(models_to_try)} modelos. Pipeline abortado."
+            )
 
         # Parsear JSON
         decision = parse_final_decision(
@@ -3216,24 +3343,42 @@ Com base na análise acima, emite o teu parecer jurídico fundamentado.{bloco_qa
         respostas_qa = []
 
         for i, model in enumerate(self.relator_models):
+            judge_id = f"J{i+1}"
             self._reportar_progresso("fase3", 65 + i * 5, f"Relator {i+1}: {model}")
 
-            resultado = self._call_llm(
-                model=model,
-                prompt=prompt_base,
-                system_prompt=system_prompt,
-                role_name=f"relator_{i+1}",
-            )
-            resultados.append(resultado)
+            # v5.0: Fallback para substitutos se primário falhar
+            models_to_try = [model] + JUDGE_SUBSTITUTES.get(judge_id, [])
+            resultado = None
+            used_model = model
+            for attempt_idx, try_model in enumerate(models_to_try):
+                resultado = self._call_llm(
+                    model=try_model,
+                    prompt=prompt_base,
+                    system_prompt=system_prompt,
+                    role_name=f"relator_{i+1}",
+                )
+                if resultado is not None and resultado.conteudo:
+                    used_model = try_model
+                    if attempt_idx > 0:
+                        logger.warning(
+                            f"[FALLBACK] {judge_id} substituto {attempt_idx} ({try_model}) "
+                            f"assumiu após falha do primário ({model})"
+                        )
+                    break
+                else:
+                    logger.warning(f"[FALLBACK] {judge_id} modelo {try_model} falhou")
+                    resultado = None
 
-            # Guardar resposta Q&A
-            respostas_qa.append({
-                "juiz": i + 1,
-                "modelo": model,
-                "resposta": resultado.conteudo
-            })
-
-            self._log_to_file(f"fase3_relator_{i+1}.md", f"# Relator {i+1}: {model}\n\n{resultado.conteudo}")
+            if resultado is not None:
+                resultados.append(resultado)
+                respostas_qa.append({
+                    "juiz": i + 1,
+                    "modelo": used_model,
+                    "resposta": resultado.conteudo
+                })
+                self._log_to_file(f"fase3_relator_{i+1}.md", f"# Relator {i+1}: {used_model}\n\n{resultado.conteudo}")
+            else:
+                logger.error(f"✗ {judge_id} falhou todos os {len(models_to_try)} modelos — ignorado")
 
         # Guardar ficheiro Q&A dos relatores (se houver perguntas)
         if perguntas:
@@ -3291,35 +3436,31 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         # Escolher system prompt apropriado
         system_prompt = self.SYSTEM_CONSELHEIRO_QA if perguntas else self.SYSTEM_CONSELHEIRO
 
-        presidente_result = self._call_llm(
-            model=self.presidente_model,
-            prompt=prompt_presidente,
-            system_prompt=system_prompt,
-            role_name="presidente",
-        )
-
-        # FIX 2026-02-14: Fallback — se presidente falhou (vazio), tentar gpt-5.2
+        # v5.0: Presidente com fallback para substitutos (indexados pelo modelo)
+        models_to_try = [self.presidente_model] + PRESIDENTE_SUBSTITUTES.get(self.presidente_model, [])
+        presidente_result = None
         modelo_usado = self.presidente_model
-        if not presidente_result.conteudo or not presidente_result.conteudo.strip():
-            # FIX 2026-02-14: Fallback tier-aware
-            tier_name = getattr(self, '_tier', 'bronze')
-            fallback_model = "openai/gpt-5.2" if tier_name == "gold" else "openai/gpt-5.2"
-            if self.presidente_model != fallback_model:
-                logger.warning(
-                    f"[PRESIDENTE-FALLBACK] {self.presidente_model} retornou vazio! "
-                    f"Tentando fallback: {fallback_model} (tier={tier_name})"
-                )
-                presidente_result = self._call_llm(
-                    model=fallback_model,
-                    prompt=prompt_presidente,
-                    system_prompt=system_prompt,
-                    role_name="presidente_fallback",
-                )
-                modelo_usado = fallback_model
-                if presidente_result.conteudo and presidente_result.conteudo.strip():
-                    logger.info(f"[PRESIDENTE-FALLBACK] {fallback_model} respondeu OK!")
-                else:
-                    logger.error(f"[PRESIDENTE-FALLBACK] {fallback_model} TAMBÉM falhou!")
+        for attempt_idx, try_model in enumerate(models_to_try):
+            presidente_result = self._call_llm(
+                model=try_model,
+                prompt=prompt_presidente,
+                system_prompt=system_prompt,
+                role_name="presidente" if attempt_idx == 0 else f"presidente_fallback_{attempt_idx}",
+            )
+            if presidente_result is not None and presidente_result.conteudo and presidente_result.conteudo.strip():
+                modelo_usado = try_model
+                if attempt_idx > 0:
+                    logger.warning(
+                        f"[PRESIDENTE-FALLBACK] substituto {attempt_idx} ({try_model}) "
+                        f"assumiu após falha do primário ({self.presidente_model})"
+                    )
+                break
+            else:
+                logger.warning(f"[PRESIDENTE-FALLBACK] modelo {try_model} falhou")
+                presidente_result = None
+
+        if presidente_result is None or not presidente_result.conteudo:
+            raise Exception("Presidente falhou após todos os modelos. Pipeline abortado.")
 
         self._log_to_file("fase4_conselheiro.md", f"# CONSELHEIRO-MOR: {modelo_usado}\n\n{presidente_result.conteudo}")
 
@@ -3618,17 +3759,37 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             "Gera o Relatório de Análise Final completo em Markdown, seguindo TODAS as instruções do sistema."
         )
 
-        resultado = self._call_llm(
-            model=self.presidente_model,
-            prompt=user_prompt,
-            system_prompt=PROMPT_CURADOR_SENIOR,
-            role_name="curador_senior",
-            temperature=0.0,
-            max_tokens=32768,
-        )
+        # v5.0: Curador com fallback para substitutos (mesmos do presidente)
+        models_to_try = [self.presidente_model] + PRESIDENTE_SUBSTITUTES.get(self.presidente_model, [])
+        resultado = None
+        curador_used_model = self.presidente_model
+        for attempt_idx, try_model in enumerate(models_to_try):
+            label = "primário" if attempt_idx == 0 else f"substituto {attempt_idx}"
+            resultado = self._call_llm(
+                model=try_model,
+                prompt=user_prompt,
+                system_prompt=PROMPT_CURADOR_SENIOR,
+                role_name="curador_senior" if attempt_idx == 0 else f"curador_senior_fallback_{attempt_idx}",
+                temperature=0.0,
+                max_tokens=32768,
+            )
+            if resultado is not None and resultado.sucesso and resultado.conteudo and resultado.conteudo.strip():
+                curador_used_model = try_model
+                if attempt_idx > 0:
+                    logger.warning(
+                        f"[CURADOR-FALLBACK] {label} ({try_model}) assumiu "
+                        f"após falha do primário ({self.presidente_model})"
+                    )
+                break
+            else:
+                logger.warning(
+                    f"[CURADOR-FALLBACK] {label} ({try_model}) falhou"
+                    + (" — tentando próximo substituto..." if attempt_idx < len(models_to_try) - 1 else "")
+                )
+                resultado = None
 
-        if not resultado.sucesso or not resultado.conteudo.strip():
-            logger.warning("[CURADOR] LLM call falhou ou retornou vazio")
+        if resultado is None or not resultado.conteudo or not resultado.conteudo.strip():
+            logger.warning("[CURADOR] Todos os modelos falharam")
             return ""
 
         relatorio = resultado.conteudo
@@ -3652,7 +3813,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             )
 
             resultado_corr = self._call_llm(
-                model=self.presidente_model,
+                model=curador_used_model,
                 prompt=feedback_prompt,
                 system_prompt=PROMPT_CURADOR_SENIOR,
                 role_name="curador_senior_correcao",

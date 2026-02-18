@@ -43,11 +43,11 @@ MODEL_COSTS = {
     "nova-pro": 0.05,             # E6 Amazon Nova Pro (visual)
     "nemotron-70b": 0.03,         # E7 Nemotron (NVIDIA)
 
-    # Auditores (Fase 3) — v4.0
+    # Auditores (Fase 3) — v5.0
     "gpt-5.2-audit": 0.15,       # A1
     "gemini-3-pro-audit": 0.15,  # A2
     "claude-sonnet-4.5-audit": 0.10,  # A3
-    "llama-405b-audit": 0.08,    # A4
+    "qwen3-max-audit": 0.15,    # A4 (Qwen3 Max Thinking: $1.20/$6.00 per M)
     "claude-opus-4-audit": 0.40, # A5 (Elite only)
 
     # Juízes (Fase 4) — v4.0
@@ -88,7 +88,7 @@ TIER_CONFIG = {
             "triage": 0.10,          # Fase 0 (3 IAs baratas)
             "extraction": 3.00,      # Fase 1 (7 IAs incl. GPT-5.2, Gemini Pro)
             "aggregation": 0.80,     # Fase 2 (agregador dedup)
-            "audit": 2.00,           # Fase 3 (4 IAs: GPT-5.2, Gemini Pro, Sonnet, Llama)
+            "audit": 2.10,           # Fase 3 (4 IAs: GPT-5.2, Gemini Pro, Sonnet, Qwen3 Max)
             "judgment": 3.50,        # Fase 4 (3 IAs reasoning: o1-pro $150/$600, R1, Opus)
             "president": 0.60,       # Fase 5 (GPT-5.2)
         },
@@ -135,7 +135,7 @@ TIER_CONFIG = {
             "triage": 0.10,
             "extraction": 3.00,
             "aggregation": 0.80,
-            "audit": 2.00,
+            "audit": 2.10,           # Fase 3 (4 IAs: GPT-5.2, Gemini Pro, Sonnet, Qwen3 Max)
             "judgment": 3.50,
             "president": 2.50,       # Opus 4.6 ($15/$75 per M tokens)
         },
@@ -182,7 +182,7 @@ TIER_CONFIG = {
             "triage": 0.10,
             "extraction": 3.00,
             "aggregation": 0.80,
-            "audit": 4.00,           # +A5 Opus ($15/$75 per M tokens)
+            "audit": 4.10,           # A1-A4 (Qwen3 Max) + A5 Opus ($15/$75 per M tokens)
             "judgment": 3.50,
             "president": 3.50,       # GPT-5.2-Pro ($21/$168 per M tokens)
         },
@@ -378,9 +378,14 @@ OPENROUTER_MODEL_MAPPING = {
     "nova-pro": "amazon/nova-pro-v1",                            # E6 visual
     # NVIDIA
     "nemotron-70b": "nvidia/llama-3.1-nemotron-70b-instruct",  # E7
-    # Mistral / Qwen (legacy)
+    # Mistral / Qwen
     "mistral-medium-3": "mistralai/mistral-medium-3",
     "qwen-vl-72b": "qwen/qwen2.5-vl-72b-instruct",
+    "qwen3-max-thinking": "qwen/qwen3-max-thinking",    # v5.0: A4 Advogado do Diabo
+    # v5.0: Substitutos de auditores
+    "gemini-2.5-flash": "google/gemini-2.5-flash",
+    "gemini-2.5-pro": "google/gemini-2.5-pro",
+    "grok-4": "x-ai/grok-4",
 }
 
 

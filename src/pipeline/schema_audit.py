@@ -411,11 +411,20 @@ class JudgePoint:
             # Bug #10: converter "alta"/"média"/"baixa" para float
             computed_confidence = _safe_confidence(raw_confidence)
 
+        # FIX v5.0: Aceitar nomes alternativos de citations que IAs podem usar
+        raw_citations = data.get("citations", [])
+        if not raw_citations or not isinstance(raw_citations, list):
+            raw_citations = data.get("supporting_citations", [])
+        if not raw_citations or not isinstance(raw_citations, list):
+            raw_citations = data.get("references", [])
+        if not isinstance(raw_citations, list):
+            raw_citations = []
+
         return cls(
             point_id=data.get("point_id", ""),
             conclusion=data.get("conclusion", ""),
             rationale=data.get("rationale", ""),
-            citations=[Citation.from_dict(c) for c in data.get("citations", []) if isinstance(c, dict)],
+            citations=[Citation.from_dict(c) for c in raw_citations if isinstance(c, dict)],
             legal_basis=data.get("legal_basis", []) if isinstance(data.get("legal_basis"), list) else [],
             risks=data.get("risks", []) if isinstance(data.get("risks"), list) else [],
             alternatives=data.get("alternatives", []) if isinstance(data.get("alternatives"), list) else [],
