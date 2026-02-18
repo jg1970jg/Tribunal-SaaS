@@ -5,7 +5,7 @@ CONFIGURAÇÃO LEXFORUM - PIPELINE v4.0
 
 PIPELINE 6 FASES:
   Fase 0: Triagem (3 IAs baratas: GPT-4o-mini, Gemini Flash, Llama 8B)
-  Fase 1: Extração (7 IAs: Haiku, Gemini Pro, GPT-5.2, Sonnet, Llama 3.3, Nova Pro, Nemotron)
+  Fase 1: Extração (7 IAs: Haiku, Gemini Pro, GPT-5.2, Sonnet, Llama 3.3, GPT-5 Nano, Nemotron)
   Fase 2: Agregação com deduplicação semântica
   Fase 3: Auditoria (4 IAs: GPT-5.2, Gemini Pro, Sonnet 4.5, Qwen3 Max) + A5 Opus (Elite)
   Fase 4: Julgamento (3 IAs reasoning: o1-pro, DeepSeek R1, Opus 4.6)
@@ -239,7 +239,7 @@ def get_max_tokens_para_fase(role_name: str) -> int:
 # E3: GPT-5.2 (JSON robusto: 729 itens) — GPT-4o promovido
 # E4: Sonnet 4.5 (Nuance PT: 616 itens)
 # E5: Llama 3.3 70B (Meta) — texto
-# E6: Amazon Nova Pro (Amazon) — visual
+# E6: GPT-5 Nano (OpenAI) — visual
 # E7: Nemotron 70B (NVIDIA) — texto
 # =============================================================================
 

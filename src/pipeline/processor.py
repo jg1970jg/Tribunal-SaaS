@@ -1510,15 +1510,39 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                         )
                         sub_max_tokens = min(32_768, MODEL_MAX_OUTPUT.get(sub_model, 16_384))
 
+                        # v5.1: Suplente com suporte a imagens (se visual e modelo capaz)
                         def _do_sub_call(
                             _model=sub_model, _prompt=prompt, _sys=sys_prompt,
                             _temp=temperature, _max_tokens=sub_max_tokens,
+                            _images=chunk_scanned_images, _eid=extractor_id,
                         ):
-                            return self.llm_client.chat_simple(
-                                model=_model, prompt=_prompt,
-                                system_prompt=_sys, temperature=_temp,
-                                max_tokens=_max_tokens, timeout=120,
-                            )
+                            if _images and _model in VISION_CAPABLE_MODELS:
+                                pages_info = ", ".join(str(pg) for pg, _ in _images)
+                                vision_note = (
+                                    f"\n\nNOTA IMPORTANTE: Este documento contém {len(_images)} "
+                                    f"página(s) digitalizada(s) (página(s) {pages_info}). "
+                                    f"Analisa as imagens e extrai TODO o texto e informação visível."
+                                )
+                                content_blocks = [{"type": "text", "text": _prompt + vision_note}]
+                                for pg_num, b64_img in _images:
+                                    content_blocks.append({"type": "text", "text": f"\n--- Imagem da Página {pg_num} ---"})
+                                    content_blocks.append({
+                                        "type": "image_url",
+                                        "image_url": {"url": f"data:image/png;base64,{b64_img}"}
+                                    })
+                                messages = [{"role": "user", "content": content_blocks}]
+                                logger.info(f"📸 {_eid} [SUPLENTE]: enviando {len(_images)} imagem(ns) para {_model}")
+                                return self.llm_client.chat(
+                                    model=_model, messages=messages,
+                                    system_prompt=_sys, temperature=_temp,
+                                    max_tokens=_max_tokens, timeout=120,
+                                )
+                            else:
+                                return self.llm_client.chat_simple(
+                                    model=_model, prompt=_prompt,
+                                    system_prompt=_sys, temperature=_temp,
+                                    max_tokens=_max_tokens, timeout=120,
+                                )
 
                         response = _call_with_retry(
                             _do_sub_call,
@@ -1533,6 +1557,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                             )
                             # TITULAR MORTO: suplente assume todos os chunks restantes
                             model = sub_model
+                            run.model_name = sub_model  # FIX: actualizar model_name para custo/tracking
                             suplente_ok = True
                             break
                         else:

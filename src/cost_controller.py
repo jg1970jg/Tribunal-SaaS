@@ -50,8 +50,18 @@ HARDCODED_PRICING = {
     "mistralai/mistral-medium-3": {"input": 0.40, "output": 2.00},
     # Qwen (legacy — manter para failover)
     "qwen/qwen2.5-vl-72b-instruct": {"input": 0.30, "output": 1.20},
-    # Amazon
-    "amazon/nova-pro-v1": {"input": 0.80, "output": 3.20},              # E6 visual (Amazon)
+    # OpenAI (v5.1: E6 + suplentes)
+    "openai/gpt-5-nano": {"input": 0.05, "output": 0.40},               # v5.1: E6 visual
+    "openai/gpt-5-mini": {"input": 0.25, "output": 2.00},               # v5.1: Suplente universal
+    # Google (v5.1: suplentes)
+    "google/gemini-2.5-flash": {"input": 0.30, "output": 2.50},         # v5.1: Suplente universal
+    "google/gemini-2.5-pro": {"input": 2.50, "output": 15.00},          # v5.0: Sub A1
+    # Qwen (v5.0: A4)
+    "qwen/qwen3-max-thinking": {"input": 1.20, "output": 6.00},         # v5.0: A4 Advogado do Diabo
+    # xAI (v5.0: subs)
+    "x-ai/grok-4": {"input": 5.00, "output": 25.00},                    # v5.0: Sub A4/J3
+    # Amazon (DEPRECATED)
+    "amazon/nova-pro-v1": {"input": 0.80, "output": 3.20},              # DEPRECATED: E6 visual
     # NVIDIA
     "nvidia/llama-3.1-nemotron-70b-instruct": {"input": 1.20, "output": 1.20},  # E7 texto (NVIDIA) — preço real OpenRouter
     # Default
