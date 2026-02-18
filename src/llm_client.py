@@ -371,17 +371,22 @@ def supports_temperature(model_name: str) -> bool:
 def should_use_openai_direct(model_name: str) -> bool:
     """
     Verifica se modelo OpenAI deve usar API OpenAI directa.
-    
-    TODOS os modelos OpenAI usam OpenAI directa agora!
-    (Incluindo GPT-5.2 via Responses API)
-    
+
+    NOTA: Modelos OpenRouter-only (gpt-5-nano, gpt-5-mini) são excluídos
+    porque não estão disponíveis na API OpenAI directa.
+
     Args:
         model_name: Nome do modelo (ex: "openai/gpt-5.2-pro")
-    
+
     Returns:
         True se deve usar OpenAI directa
     """
-    # Simplesmente verifica se é modelo OpenAI
+    # FIX 2026-02-18: Modelos que são OpenAI mas só existem via OpenRouter
+    # gpt-5-nano e gpt-5-mini dão 400 Bad Request na API directa
+    clean_name = model_name.replace("openai/", "").lower()
+    openrouter_only = {"gpt-5-nano", "gpt-5-mini"}
+    if clean_name in openrouter_only:
+        return False
     return is_openai_model(model_name)
 
 
