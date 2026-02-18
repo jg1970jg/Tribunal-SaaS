@@ -432,6 +432,13 @@ class WalletManager:
             balance = self.get_balance(user_id)
             saldo_antes = balance["total"]
 
+            # Verificar saldo suficiente
+            if balance["available"] < custo_cliente:
+                raise InsufficientCreditsError(
+                    required=custo_cliente,
+                    available=balance["available"]
+                )
+
             new_balance = saldo_antes - custo_cliente
 
             # Atualizar saldo na tabela profiles

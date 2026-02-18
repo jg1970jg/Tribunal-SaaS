@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Set, Any, Tuple
 
 from src.config import LOG_LEVEL, OUTPUT_DIR, USE_UNIFIED_PROVENANCE
+from src.utils.sanitize import sanitize_run_id
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 logger = logging.getLogger(__name__)
@@ -240,8 +241,8 @@ class MetaIntegrityValidator:
             loaded_doc_ids: Set de doc_ids dos documentos carregados
             document_num_pages: Número de páginas do documento
         """
-        self.run_id = run_id
-        self.output_dir = output_dir or (OUTPUT_DIR / run_id)
+        self.run_id = sanitize_run_id(run_id)
+        self.output_dir = output_dir or (OUTPUT_DIR / self.run_id)
         self.config = config or MetaIntegrityConfig.from_feature_flags(USE_UNIFIED_PROVENANCE)
         self.run_start = run_start or datetime.now()
         self.loaded_doc_ids = loaded_doc_ids or set()

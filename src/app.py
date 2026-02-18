@@ -61,6 +61,8 @@ from src.utils.metadata_manager import (
     gerar_titulo_automatico
 )
 
+from src.utils.sanitize import sanitize_run_id, sanitize_filename
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +71,7 @@ def carregar_resultado(run_id: str) -> PipelineResult:
     from src.pipeline.processor import PipelineResult, FaseResult
     from pathlib import Path
 
+    run_id = sanitize_run_id(run_id)
     filepath = OUTPUT_DIR / run_id / "resultado.json"
     if not filepath.exists():
         # Tentar no histórico
@@ -1511,13 +1514,15 @@ def pagina_historico():
                     with col_confirm:
                         if st.button("✅ SIM, APAGAR!", key=f"confirm_yes_{run_id}", use_container_width=True, type="primary"):
                             try:
+                                # Sanitizar run_id antes de usar em caminhos
+                                safe_run_id = sanitize_run_id(run_id)
                                 # Apagar pasta da análise
-                                analise_dir = OUTPUT_DIR / run_id
+                                analise_dir = OUTPUT_DIR / safe_run_id
                                 if analise_dir.exists():
                                     shutil.rmtree(analise_dir)
-                                
+
                                 # Apagar do histórico também
-                                historico_file = HISTORICO_DIR / f"{run_id}.json"
+                                historico_file = HISTORICO_DIR / f"{safe_run_id}.json"
                                 if historico_file.exists():
                                     historico_file.unlink()
                                 
@@ -1869,13 +1874,15 @@ def pagina_gerir_titulos():
                 with col_yes:
                     if st.button("✅ SIM, APAGAR TUDO!", key=f"yes_{run_id}", use_container_width=True, type="primary"):
                         try:
+                            # Sanitizar run_id antes de usar em caminhos
+                            safe_run_id = sanitize_run_id(run_id)
                             # Apagar pasta da análise
-                            analise_dir = OUTPUT_DIR / run_id
+                            analise_dir = OUTPUT_DIR / safe_run_id
                             if analise_dir.exists():
                                 shutil.rmtree(analise_dir)
-                            
+
                             # Apagar do histórico também
-                            historico_file = HISTORICO_DIR / f"{run_id}.json"
+                            historico_file = HISTORICO_DIR / f"{safe_run_id}.json"
                             if historico_file.exists():
                                 historico_file.unlink()
                             

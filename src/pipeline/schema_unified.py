@@ -533,7 +533,7 @@ def create_chunk_id(doc_id: str, chunk_index: int) -> str:
 def create_item_id(item_type: ItemType, value: str, span: SourceSpan) -> str:
     """Cria ID determinístico para um item baseado no conteúdo."""
     content = f"{item_type.value}:{value}:{span.doc_id}:{span.start_char}"
-    return f"item_{hashlib.md5(content.encode()).hexdigest()[:12]}"
+    return f"item_{hashlib.sha256(content.encode()).hexdigest()[:12]}"
 
 
 def calculate_chunks_for_document(

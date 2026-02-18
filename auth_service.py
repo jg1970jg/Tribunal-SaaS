@@ -13,10 +13,12 @@ Validação:
 NOTA TÉCNICA (Fev 2026):
   O Supabase migrou para ES256 (ECC P-256). Buscamos as chaves
   JWKS do Supabase e tentamos verificar a assinatura do JWT.
-  Se a verificação falhar (ex: kid mismatch — problema conhecido
-  do Supabase, GitHub issues #36212, #35870, #41691, #4726),
-  fazemos fallback para decode sem verificação de assinatura,
-  com log de warning. As chaves JWKS são cacheadas por 1 hora.
+  Se o JWKS não estiver disponível ou nenhuma chave compatível
+  for encontrada, fazemos fallback para decode sem verificação
+  de assinatura, com log de warning. IMPORTANTE: Se a assinatura
+  for activamente inválida (InvalidSignatureError), o token é
+  REJEITADO — nunca fazemos fallback nesse caso.
+  As chaves JWKS são cacheadas por 1 hora.
   A segurança adicional é mantida pelo RLS do Supabase.
 ============================================================
 """
@@ -47,7 +49,9 @@ _supabase_admin: Client | None = None
 # Cache de tokens validados (evita decode repetido)
 # Formato: {token_hash: {"payload": {...}, "expires": timestamp}}
 _token_cache: dict = {}
+_token_cache_lock = threading.Lock()
 TOKEN_CACHE_TTL = 120  # Cache por 2 minutos
+TOKEN_CACHE_MAX_SIZE = 500  # Limite máximo de entradas para evitar memory leak
 
 # JWKS cache: chaves públicas do Supabase para verificação de assinatura JWT
 JWKS_CACHE_TTL = 3600  # Cache por 1 hora
@@ -256,11 +260,12 @@ def _decode_and_validate_token(token: str) -> dict | None:
         logger.warning("Token JWT com audience inválida.")
         return None
     except pyjwt.InvalidSignatureError:
+        # SECURITY: Assinatura activamente inválida = token forjado. REJEITAR.
         logger.warning(
-            "Verificação de assinatura JWT falhou — "
-            "fallback para decode sem verificação de assinatura."
+            "Verificação de assinatura JWT falhou — token REJEITADO. "
+            "Assinatura inválida indica token potencialmente forjado."
         )
-        payload = None
+        return None
     except Exception as e:
         logger.debug(
             f"Verificação JWKS falhou ({type(e).__name__}: {e}) — "
@@ -269,6 +274,9 @@ def _decode_and_validate_token(token: str) -> dict | None:
         payload = None
 
     # --- Tentativa 2 (fallback): decode SEM verificação de assinatura ---
+    # NOTA: Este fallback SÓ é usado quando JWKS não está disponível ou
+    # nenhuma chave compatível foi encontrada — NUNCA quando a assinatura
+    # foi activamente verificada e falhou (InvalidSignatureError).
     if payload is None:
         try:
             payload = pyjwt.decode(
@@ -283,7 +291,7 @@ def _decode_and_validate_token(token: str) -> dict | None:
             if not signature_verified:
                 logger.warning(
                     "JWT aceite SEM verificação de assinatura "
-                    "(JWKS indisponível ou kid mismatch). "
+                    "(JWKS indisponível ou chave não encontrada). "
                     "Segurança depende do RLS do Supabase."
                 )
         except pyjwt.ExpiredSignatureError:
@@ -326,31 +334,33 @@ async def get_current_user(
     """
     token = credentials.credentials
 
-    # === Cache check ===
+    # === Cache check (thread-safe) ===
     token_hash = _get_token_hash(token)
     now = time.time()
 
-    if token_hash in _token_cache:
-        cached = _token_cache[token_hash]
-        if now < cached["expires"]:
-            return cached["payload"]
-        else:
-            del _token_cache[token_hash]
+    with _token_cache_lock:
+        if token_hash in _token_cache:
+            cached = _token_cache[token_hash]
+            if now < cached["expires"]:
+                return cached["payload"]
+            else:
+                del _token_cache[token_hash]
 
-    # Limpar cache expirado periodicamente
-    if len(_token_cache) > 100:
-        expired_keys = [k for k, v in _token_cache.items() if now >= v["expires"]]
-        for k in expired_keys:
-            del _token_cache[k]
+        # Limpar cache expirado periodicamente ou se excede tamanho máximo
+        if len(_token_cache) > TOKEN_CACHE_MAX_SIZE or len(_token_cache) > 100:
+            expired_keys = [k for k, v in _token_cache.items() if now >= v["expires"]]
+            for k in expired_keys:
+                del _token_cache[k]
 
     # === Decode e validação ===
     result = _decode_and_validate_token(token)
 
     if result:
-        _token_cache[token_hash] = {
-            "payload": result,
-            "expires": now + TOKEN_CACHE_TTL,
-        }
+        with _token_cache_lock:
+            _token_cache[token_hash] = {
+                "payload": result,
+                "expires": now + TOKEN_CACHE_TTL,
+            }
         return result
 
     # === Falhou ===

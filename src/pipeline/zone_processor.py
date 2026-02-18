@@ -232,9 +232,13 @@ def _split_by_chars(
         zones.append(zone)
         
         zone_id += 1
-        # Avançar com overlap
-        start = end - zone_overlap
-        
+        # Avançar com overlap (garantir progresso mínimo)
+        new_start = end - zone_overlap
+        if new_start <= start:
+            # Prevenir loop infinito: avançar pelo menos 1 char
+            new_start = start + max(1, zone_max_chars // 2)
+        start = new_start
+
         # Evitar loop infinito
         if start >= total - zone_overlap:
             break

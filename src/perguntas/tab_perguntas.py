@@ -28,6 +28,7 @@ from io import BytesIO
 import shutil
 
 from src.utils.metadata_manager import listar_analises_com_titulos
+from src.utils.sanitize import sanitize_run_id, sanitize_filename
 
 # Imports para extração de documentos
 try:
@@ -206,10 +207,11 @@ def guardar_pergunta_resposta(
     if run_id == "__FICHEIROS_SOLTOS__":
         perguntas_dir = output_dir / "perguntas"
     else:
+        run_id = sanitize_run_id(run_id)
         perguntas_dir = output_dir / run_id / "perguntas"
-    
+
     perguntas_dir.mkdir(exist_ok=True, parents=True)
-    
+
     # Contar perguntas existentes
     perguntas_existentes = list(perguntas_dir.glob("pergunta_*.json"))
     numero = len(perguntas_existentes) + 1
@@ -321,29 +323,41 @@ def guardar_documentos_anexados(
     if run_id == "__FICHEIROS_SOLTOS__":
         docs_dir = output_dir / "perguntas" / "documentos_anexados"
     else:
+        run_id = sanitize_run_id(run_id)
         docs_dir = output_dir / run_id / "perguntas" / "documentos_anexados"
-    
+
     docs_dir.mkdir(exist_ok=True, parents=True)
-    
+
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limite por ficheiro
+
     for uploaded_file in uploaded_files:
         try:
+            # Sanitizar nome do ficheiro para prevenir path traversal
+            safe_name = sanitize_filename(uploaded_file.name)
+            file_data = uploaded_file.getvalue()
+
+            # Verificar tamanho do ficheiro
+            if len(file_data) > MAX_FILE_SIZE:
+                logger.warning(f"Ficheiro {safe_name} excede limite de {MAX_FILE_SIZE} bytes")
+                continue
+
             # Guardar ficheiro original
-            file_path = docs_dir / uploaded_file.name
+            file_path = docs_dir / safe_name
             with open(file_path, 'wb') as f:
-                f.write(uploaded_file.getvalue())
-            
+                f.write(file_data)
+
             # Guardar texto extraído
             texto = textos_extraidos.get(uploaded_file.name, "")
-            nome_sem_ext = Path(uploaded_file.name).stem
+            nome_sem_ext = Path(safe_name).stem
             texto_path = docs_dir / f"{nome_sem_ext}_extraido.txt"
             
             with open(texto_path, 'w', encoding='utf-8') as f:
                 f.write(texto)
             
-            logger.info(f"✓ Documento guardado: {uploaded_file.name}")
-        
+            logger.info(f"Documento guardado: {safe_name}")
+
         except Exception as e:
-            logger.error(f"Erro ao guardar {uploaded_file.name}: {e}")
+            logger.error(f"Erro ao guardar documento: {e}")
 
 
 # Continuação no próximo ficheiro devido ao tamanho...

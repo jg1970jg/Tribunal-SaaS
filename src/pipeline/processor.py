@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -1551,6 +1552,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
         EXTRACTOR_TIMEOUT_SECONDS = max(EXTRACTOR_TIMEOUT_MIN, num_chunks * EXTRACTOR_TIMEOUT_PER_CHUNK)
         logger.info(f"[PARALELO] Lançando {len(extractor_configs)} extratores em paralelo "
                     f"(timeout={EXTRACTOR_TIMEOUT_SECONDS}s = {num_chunks} chunks × {EXTRACTOR_TIMEOUT_PER_CHUNK}s)...")
+        _extraction_lock = threading.Lock()
         with ThreadPoolExecutor(max_workers=min(10, len(extractor_configs))) as executor:
             futures = {}
             for i, cfg in enumerate(extractor_configs):
@@ -1563,10 +1565,11 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                     try:
                         result = future.result()
                         if result is not None:
-                            items_by_extractor[result["extractor_id"]] = result["items"]
-                            all_unreadable.extend(result["unreadable"])
-                            extraction_runs.append(result["run"])
-                            resultados.append(result["resultado"])
+                            with _extraction_lock:
+                                items_by_extractor[result["extractor_id"]] = result["items"]
+                                all_unreadable.extend(result["unreadable"])
+                                extraction_runs.append(result["run"])
+                                resultados.append(result["resultado"])
                             logger.info(f"[PARALELO] {eid} concluído: {len(result['items'])} items")
                         else:
                             logger.warning(f"[PARALELO] {eid} retornou None - ignorado")
@@ -2740,6 +2743,7 @@ OUTPUT: Same JSON format as other auditors, plus include a "devils_advocate_conc
             }
 
         logger.info(f"[PARALELO] Lançando {n_auditores} auditores em paralelo...")
+        _audit_lock = threading.Lock()
         with ThreadPoolExecutor(max_workers=min(4, n_auditores)) as executor:
             futures = {}
             for i, model in enumerate(self.auditor_models):
@@ -2752,7 +2756,8 @@ OUTPUT: Same JSON format as other auditors, plus include a "devils_advocate_conc
                 try:
                     result = future.result()
                     if result is not None:
-                        auditor_results.append(result)
+                        with _audit_lock:
+                            auditor_results.append(result)
                         logger.info(f"[PARALELO] {aid} concluído: {len(result['report'].findings)} findings")
                     else:
                         logger.warning(f"[PARALELO] {aid} falhou - ignorado")
@@ -3121,6 +3126,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
             }
 
         logger.info(f"[PARALELO] Lançando {len(self.relator_models)} relatores em paralelo...")
+        _judge_lock = threading.Lock()
         with ThreadPoolExecutor(max_workers=min(3, len(self.relator_models))) as executor:
             futures = {}
             for i, model in enumerate(self.relator_models):
@@ -3133,7 +3139,8 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                 try:
                     result = future.result()
                     if result is not None:
-                        judge_results.append(result)
+                        with _judge_lock:
+                            judge_results.append(result)
                         logger.info(f"[PARALELO] {jid} concluído: {result['opinion'].recommendation.value}")
                     else:
                         logger.warning(f"[PARALELO] {jid} falhou - ignorado")

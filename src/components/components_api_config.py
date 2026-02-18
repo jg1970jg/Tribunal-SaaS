@@ -51,24 +51,37 @@ def load_api_keys() -> dict:
     }
 
 
+ALLOWED_KEY_NAMES = {"OPENAI_API_KEY", "OPENROUTER_API_KEY"}
+
+
 def save_api_key(key_name: str, key_value: str) -> bool:
     """
     Guarda API key no ficheiro .env
-    
+
     Args:
         key_name: "OPENAI_API_KEY" ou "OPENROUTER_API_KEY"
         key_value: Valor da key
-    
+
     Returns:
         True se sucesso
     """
     try:
+        # Validar key_name contra whitelist
+        if key_name not in ALLOWED_KEY_NAMES:
+            st.error(f"Nome de chave inválido: {key_name}")
+            return False
+
+        # Sanitizar key_value: rejeitar newlines e caracteres de controlo
+        if any(c in key_value for c in ('\n', '\r', '\x00')):
+            st.error("Valor da key contém caracteres inválidos")
+            return False
+
         env_file = get_env_file_path()
-        
+
         # Criar .env se não existir
         if not env_file.exists():
             env_file.touch()
-        
+
         # Guardar key
         set_key(str(env_file), key_name, key_value)
         
@@ -84,14 +97,19 @@ def save_api_key(key_name: str, key_value: str) -> bool:
 def delete_api_key(key_name: str) -> bool:
     """
     Apaga API key do ficheiro .env
-    
+
     Args:
         key_name: "OPENAI_API_KEY" ou "OPENROUTER_API_KEY"
-    
+
     Returns:
         True se sucesso
     """
     try:
+        # Validar key_name contra whitelist
+        if key_name not in ALLOWED_KEY_NAMES:
+            st.error(f"Nome de chave inválido: {key_name}")
+            return False
+
         env_file = get_env_file_path()
         
         if env_file.exists():

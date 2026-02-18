@@ -20,6 +20,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
+from src.utils.sanitize import sanitize_run_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,6 +107,7 @@ def carregar_fase1_existente(run_id: str, output_dir: Path) -> str:
         )
     
     # CASO NORMAL: Análise organizada em pasta
+    run_id = sanitize_run_id(run_id)
     analise_dir = output_dir / run_id
     
     if not analise_dir.exists():
@@ -153,6 +156,7 @@ def carregar_historico_perguntas(run_id: str, output_dir: Path) -> List[Dict]:
     if run_id == "__FICHEIROS_SOLTOS__":
         perguntas_dir = output_dir / "perguntas"
     else:
+        run_id = sanitize_run_id(run_id)
         perguntas_dir = output_dir / run_id / "perguntas"
     
     if not perguntas_dir.exists():
@@ -211,6 +215,7 @@ def carregar_documentos_anexados(run_id: str, output_dir: Path) -> Dict[str, str
     if run_id == "__FICHEIROS_SOLTOS__":
         docs_dir = output_dir / "perguntas" / "documentos_anexados"
     else:
+        run_id = sanitize_run_id(run_id)
         docs_dir = output_dir / run_id / "perguntas" / "documentos_anexados"
     
     if not docs_dir.exists():

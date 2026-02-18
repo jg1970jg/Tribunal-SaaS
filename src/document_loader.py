@@ -57,6 +57,9 @@ class DocumentContent:
         }
 
 
+MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100MB limite por ficheiro
+
+
 class DocumentLoader:
     """
     Carrega e extrai texto de documentos.
@@ -96,13 +99,25 @@ class DocumentLoader:
             name = filename
             ext = Path(filename).suffix.lower()
             file_bytes = file_path.getvalue()
-            file_hash = hashlib.md5(file_bytes).hexdigest()
+            file_hash = hashlib.sha256(file_bytes).hexdigest()
         else:
             path = Path(file_path)
             name = path.name
             ext = path.suffix.lower()
             file_bytes = path.read_bytes()
-            file_hash = hashlib.md5(file_bytes).hexdigest()
+            file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+        # Verificar tamanho do ficheiro
+        if len(file_bytes) > MAX_FILE_SIZE_BYTES:
+            logger.error(f"Ficheiro demasiado grande: {name} ({len(file_bytes)} bytes, max={MAX_FILE_SIZE_BYTES})")
+            self._stats["failed"] += 1
+            return DocumentContent(
+                filename=name,
+                extension=ext,
+                text="",
+                success=False,
+                error=f"Ficheiro demasiado grande ({len(file_bytes) / 1024 / 1024:.1f}MB). Máximo: {MAX_FILE_SIZE_BYTES / 1024 / 1024:.0f}MB",
+            )
 
         # Verificar extensão suportada
         if ext not in SUPPORTED_EXTENSIONS:
@@ -428,7 +443,7 @@ class DocumentLoader:
             name = path.name
             file_bytes = path.read_bytes()
 
-        file_hash = hashlib.md5(file_bytes).hexdigest()
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
         ext = Path(name).suffix.lower()
 
         if ext != ".pdf":

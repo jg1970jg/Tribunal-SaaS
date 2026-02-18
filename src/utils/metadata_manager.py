@@ -18,6 +18,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+from src.utils.sanitize import sanitize_run_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,12 +46,13 @@ def guardar_metadata(
         area_direito: Área de direito
         num_documentos: Número de documentos analisados
     """
+    run_id = sanitize_run_id(run_id)
     analise_dir = output_dir / run_id
-    
+
     if not analise_dir.exists():
         logger.error(f"Análise não existe: {analise_dir}")
         return
-    
+
     metadata = {
         "run_id": run_id,
         "titulo": titulo,
@@ -75,14 +78,15 @@ def guardar_metadata(
 def carregar_metadata(run_id: str, output_dir: Path) -> Optional[Dict]:
     """
     Carrega metadata de uma análise.
-    
+
     Args:
         run_id: ID da análise
         output_dir: Pasta outputs
-    
+
     Returns:
         Dict com metadata ou None se não existir
     """
+    run_id = sanitize_run_id(run_id)
     analise_dir = output_dir / run_id
     metadata_path = analise_dir / "metadata.json"
     
@@ -113,8 +117,9 @@ def atualizar_metadata(
         titulo: Novo título (None = não alterar)
         descricao: Nova descrição (None = não alterar)
     """
+    run_id = sanitize_run_id(run_id)
     metadata = carregar_metadata(run_id, output_dir)
-    
+
     if metadata is None:
         # Criar metadata nova se não existir
         metadata = {
@@ -241,14 +246,15 @@ def gerar_titulo_automatico(documento_filename: str, area_direito: str = "") -> 
 def tem_metadata(run_id: str, output_dir: Path) -> bool:
     """
     Verifica se análise tem metadata.
-    
+
     Args:
         run_id: ID da análise
         output_dir: Pasta outputs
-    
+
     Returns:
         True se tem metadata.json
     """
+    run_id = sanitize_run_id(run_id)
     analise_dir = output_dir / run_id
     metadata_path = analise_dir / "metadata.json"
     return metadata_path.exists()
