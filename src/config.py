@@ -283,7 +283,7 @@ LLM_CONFIGS = [
     {
         "id": "E6",
         "role": "Extrator Visual",
-        "model": "amazon/nova-pro-v1",                  # Amazon Nova Pro (Amazon) — visual
+        "model": "openai/gpt-5-nano",                   # v5.1: GPT-5 Nano (OpenAI) — visual, 128K output, $0.40/M
         "temperature": 0.0,
         "instructions": PROMPT_EXTRATOR_UNIVERSAL,
         "visual": True,
@@ -416,7 +416,9 @@ MODEL_CONTEXT_LIMITS = {
     "x-ai/grok-4":                      256_000,     # v5.0: Sub A4 (xAI 1st-party)
     "meta-llama/llama-3.1-8b-instruct":  128_000,    # v4.0: Fase 0
     "meta-llama/llama-3.3-70b-instruct": 131_072,    # E5 Llama 3.3 (Meta)
-    "amazon/nova-pro-v1":               300_000,     # E6 Nova Pro (Amazon) — 300k context
+    "openai/gpt-5-nano":                400_000,     # v5.1: E6 GPT-5 Nano (OpenAI) — 400k context
+    "openai/gpt-5-mini":                400_000,     # v5.1: Suplente universal extração (OpenAI) — 400k context
+    "amazon/nova-pro-v1":               300_000,     # DEPRECATED: E6 Nova Pro (Amazon) — 300k context
     "nvidia/llama-3.1-nemotron-70b-instruct": 131_072,  # E7 Nemotron (NVIDIA)
     "qwen/qwen2.5-vl-72b-instruct":   128_000,     # legacy
 }
@@ -444,10 +446,23 @@ MODEL_MAX_OUTPUT = {
     "x-ai/grok-4":                      100_000,     # v5.0: Sub A4 (xAI 1st-party)
     "meta-llama/llama-3.1-8b-instruct":  32_768,     # v4.0: Fase 0
     "meta-llama/llama-3.3-70b-instruct": 16_384,     # E5 Llama 3.3 (Meta) — real OpenRouter
-    "amazon/nova-pro-v1":               5_120,       # E6 Nova Pro (Amazon) — output menor
+    "openai/gpt-5-nano":                128_000,     # v5.1: E6 GPT-5 Nano (OpenAI) — 128K output
+    "openai/gpt-5-mini":                128_000,     # v5.1: Suplente universal extração (OpenAI) — 128K output
+    "amazon/nova-pro-v1":               5_120,       # DEPRECATED: E6 Nova Pro (Amazon) — output menor
     "nvidia/llama-3.1-nemotron-70b-instruct": 16_384,  # E7 Nemotron (NVIDIA) — real OpenRouter
     "qwen/qwen2.5-vl-72b-instruct":   32_768,      # legacy
 }
+
+# =============================================================================
+# SUPLENTES UNIVERSAIS DE EXTRAÇÃO (v5.1)
+# Se titular falha num chunk, suplente assume TODOS os chunks restantes.
+# Chain: titular → gpt-5-mini → gemini-2.5-flash → extractor descartado.
+# =============================================================================
+
+EXTRACTOR_SUBSTITUTES = [
+    "openai/gpt-5-mini",           # Suplente 1: OpenAI, visão, 128K output, $0.25/$2.00
+    "google/gemini-2.5-flash",     # Suplente 2: Google, visão, 65K output, $0.30/$2.50
+]
 
 # =============================================================================
 # FAILOVER: GPT-5.2 → GPT-4.1 → GROK (3 NÍVEIS)
@@ -499,10 +514,12 @@ VISION_OCR_TEMPERATURE = 0.0
 
 # Modelos com capacidade de visão (podem receber imagens)
 VISION_CAPABLE_MODELS = {
-    "anthropic/claude-sonnet-4.6",      # E4
+    "anthropic/claude-sonnet-4.6",      # E4 (Silver/Gold only)
     "google/gemini-3-pro-preview",      # E2 (visual extractor)
     "openai/gpt-4o",
-    "amazon/nova-pro-v1",              # E6 (visual extractor) — NOVO
+    "openai/gpt-5-nano",               # v5.1: E6 (visual extractor) — substitui Nova Pro
+    "openai/gpt-5-mini",               # v5.1: Suplente universal (visual)
+    "google/gemini-2.5-flash",         # v5.1: Suplente universal (visual)
 }
 
 DRE_BASE_URL = "https://diariodarepublica.pt"

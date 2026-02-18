@@ -809,7 +809,14 @@ REVISTO:"""
         self.callback_progresso = callback_progresso
 
         # FIX 2026-02-14: Cópia local de LLM_CONFIGS para thread-safety
+        # v5.1: Filtrar extractores com base em extrator_models (Bronze skip E4)
         self._llm_configs = copy.deepcopy(LLM_CONFIGS)
+        if extrator_models:
+            allowed_models = set(extrator_models)
+            self._llm_configs = [
+                cfg for cfg in self._llm_configs
+                if not cfg["id"].startswith("E") or cfg["model"] in allowed_models
+            ]
 
         self.llm_client = get_llm_client()
         self.legal_verifier = get_legal_verifier()
@@ -1402,25 +1409,8 @@ REVISTO:"""
             extractor_prompt_tokens = 0
             extractor_completion_tokens = 0
 
-            # FIX 2026-02-18: Micro-chunking para modelos com output limitado (ex: nova-pro 5K)
-            from src.config import MODEL_MAX_OUTPUT as _MODEL_MAX_OUTPUT
-            model_max_out = _MODEL_MAX_OUTPUT.get(model, 16_384)
-            if model_max_out <= 8192:
-                micro_chunk_size = 15_000
-                micro_overlap = 3_750
-                extractor_chunks = self._criar_chunks_estruturados(
-                    texto=documento.text, doc_id=doc_id, method="text",
-                    chunk_size=micro_chunk_size, overlap=micro_overlap,
-                )
-                if page_mapper:
-                    self._enrich_chunks_with_pages(extractor_chunks, page_mapper)
-                logger.info(
-                    f"[MICRO-CHUNK] {extractor_id}: max_output={model_max_out} → "
-                    f"re-chunked {num_chunks}→{len(extractor_chunks)} chunks "
-                    f"({micro_chunk_size:,} chars cada)"
-                )
-            else:
-                extractor_chunks = chunks
+            # v5.1: Todos os extractores usam os mesmos chunks (micro-chunking removido — Nova Pro substituído)
+            extractor_chunks = chunks
 
             for chunk_idx, chunk in enumerate(extractor_chunks):
                 chunk_info = f" (chunk {chunk_idx+1}/{len(extractor_chunks)})" if len(extractor_chunks) > 1 else ""
@@ -1500,24 +1490,29 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                     deadline=250,
                 )
 
-                # FIX 2026-02-18: Suplente E4 (Sonnet 4.6) quando extractor falha num chunk
+                # v5.1: Suplentes universais — se titular falha, suplente assume TODOS os chunks restantes
+                from src.config import EXTRACTOR_SUBSTITUTES
                 if response is None or not response.content or not getattr(response, 'success', True):
-                    fallback_model = "anthropic/claude-sonnet-4.6"
-                    if model != fallback_model:
-                        fail_reason = ""
-                        if response and hasattr(response, 'finish_reason') and response.finish_reason:
-                            fail_reason = f" (finish_reason={response.finish_reason})"
-                        elif response and hasattr(response, 'error') and response.error:
-                            fail_reason = f" ({response.error[:80]})"
+                    fail_reason = ""
+                    if response and hasattr(response, 'finish_reason') and response.finish_reason:
+                        fail_reason = f" (finish_reason={response.finish_reason})"
+                    elif response and hasattr(response, 'error') and response.error:
+                        fail_reason = f" ({response.error[:80]})"
+
+                    # Tentar suplentes universais (gpt-5-mini → gemini-2.5-flash)
+                    suplente_ok = False
+                    for sub_model in EXTRACTOR_SUBSTITUTES:
+                        if sub_model == model:
+                            continue  # Não usar o mesmo modelo como suplente
                         logger.warning(
                             f"[SUPLENTE] {extractor_id} chunk {chunk_idx+1}: "
-                            f"{model} falhou{fail_reason} → tentando {fallback_model}"
+                            f"{model} falhou{fail_reason} → tentando {sub_model}"
                         )
-                        fallback_max_tokens = min(32_768, MODEL_MAX_OUTPUT.get(fallback_model, 16_384))
+                        sub_max_tokens = min(32_768, MODEL_MAX_OUTPUT.get(sub_model, 16_384))
 
-                        def _do_fallback_call(
-                            _model=fallback_model, _prompt=prompt, _sys=sys_prompt,
-                            _temp=temperature, _max_tokens=fallback_max_tokens,
+                        def _do_sub_call(
+                            _model=sub_model, _prompt=prompt, _sys=sys_prompt,
+                            _temp=temperature, _max_tokens=sub_max_tokens,
                         ):
                             return self.llm_client.chat_simple(
                                 model=_model, prompt=_prompt,
@@ -1526,24 +1521,36 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                             )
 
                         response = _call_with_retry(
-                            _do_fallback_call,
-                            func_name=f"{extractor_id}-chunk{chunk_idx}-fallback",
+                            _do_sub_call,
+                            func_name=f"{extractor_id}-chunk{chunk_idx}-sub-{sub_model.split('/')[-1]}",
                             max_retries=1,
                         )
                         if response and response.content and getattr(response, 'success', True):
                             logger.info(
                                 f"[SUPLENTE] {extractor_id} chunk {chunk_idx+1}: "
-                                f"Sonnet 4.6 OK ({len(response.content):,} chars)"
+                                f"{sub_model.split('/')[-1]} OK ({len(response.content):,} chars) "
+                                f"→ assume TODOS os chunks restantes"
                             )
-                            # continua normalmente para o parse abaixo
+                            # TITULAR MORTO: suplente assume todos os chunks restantes
+                            model = sub_model
+                            suplente_ok = True
+                            break
                         else:
-                            chunk_errors.append(f"{extractor_id} chunk {chunk_idx}: falhou + suplente falhou")
-                            logger.error(f"✗ {extractor_id} chunk {chunk_idx+1}: suplente também falhou")
-                            continue
-                    else:
-                        chunk_errors.append(f"{extractor_id} chunk {chunk_idx}: LLM falhou após retries")
-                        logger.error(f"✗ {extractor_id} chunk {chunk_idx+1}: sem resposta após retries")
-                        continue
+                            logger.warning(
+                                f"[SUPLENTE] {extractor_id} chunk {chunk_idx+1}: "
+                                f"{sub_model.split('/')[-1]} também falhou"
+                            )
+
+                    if not suplente_ok:
+                        chunk_errors.append(f"{extractor_id} chunk {chunk_idx}: titular + suplentes falharam")
+                        logger.error(
+                            f"✗ {extractor_id} chunk {chunk_idx+1}: TODOS os modelos falharam "
+                            f"(titular={cfg['model']}, suplentes={EXTRACTOR_SUBSTITUTES}) — extrator descartado"
+                        )
+                        run.status = ExtractionStatus.FAILED
+                        run.error_message = "Titular + todos os suplentes falharam"
+                        extraction_runs.append(run)
+                        return  # Descartar este extrator inteiro
 
                 # Acumular tokens REAIS da resposta
                 r_prompt = response.prompt_tokens
@@ -4078,11 +4085,28 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                     cost_controller=self._cost_controller,
                 )
                 self._reportar_progresso("fase0", 2, "Triagem: classificando domínio jurídico...")
+                import time as _time_triage
+                _triage_start = _time_triage.time()
                 fase0_triage = triage_proc.run(
                     text=documento.text,
                     filename=documento.filename,
                     num_pages=getattr(documento, 'num_pages', 0),
                 )
+                _triage_ms = (_time_triage.time() - _triage_start) * 1000
+
+                # v5.1: Logging explícito da Fase 0 (sempre visível nos logs)
+                logger.info(
+                    f"[FASE0] Triagem concluída em {_triage_ms:.0f}ms — "
+                    f"domínio='{fase0_triage.domain}' "
+                    f"(confiança={fase0_triage.domain_confidence:.0%}, "
+                    f"consenso={fase0_triage.consensus})"
+                )
+                logger.info(
+                    f"[FASE0] Votos: {fase0_triage.votes} | "
+                    f"Fotos estimadas: {fase0_triage.photo_estimate} | "
+                    f"User input: '{area_direito}'"
+                )
+
                 # Se triagem detectou domínio com confiança, usar em vez do user input
                 if fase0_triage.domain_confidence >= 0.75 and area_direito in ("Civil", ""):
                     logger.info(

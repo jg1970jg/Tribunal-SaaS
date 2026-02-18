@@ -40,7 +40,7 @@ MODEL_COSTS = {
     "gpt-5.2": 0.12,             # E3
     "sonnet-4.6": 0.08,          # E4
     "llama-3.3-70b": 0.03,        # E5 Llama 3.3 (Meta)
-    "nova-pro": 0.05,             # E6 Amazon Nova Pro (visual)
+    "gpt-5-nano": 0.02,            # E6 GPT-5 Nano (visual) — v5.1
     "nemotron-70b": 0.03,         # E7 Nemotron (NVIDIA)
 
     # Auditores (Fase 3) — v5.0
@@ -85,18 +85,18 @@ TIER_CONFIG = {
         },
 
         "estimated_costs": {
-            "triage": 0.10,          # Fase 0 (3 IAs baratas)
-            "extraction": 3.00,      # Fase 1 (7 IAs incl. GPT-5.2, Gemini Pro)
+            "triage": 0.01,          # Fase 0 (3 IAs baratas) — v5.1 corrigido
+            "extraction": 1.50,      # Fase 1 (6 IAs: sem E4 Sonnet, E6=gpt-5-nano) — v5.1
             "aggregation": 0.80,     # Fase 2 (agregador dedup)
             "audit": 2.10,           # Fase 3 (4 IAs: GPT-5.2, Gemini Pro, Sonnet, Qwen3 Max)
-            "judgment": 3.50,        # Fase 4 (3 IAs reasoning: o1-pro $150/$600, R1, Opus)
+            "judgment": 1.00,        # Fase 4 (J3 Sonnet em vez de Opus) — v5.1
             "president": 0.60,       # Fase 5 (GPT-5.2)
         },
 
         "features": [
             "Análise automática eficiente",
-            "7 IAs na extração + 4 auditores",
-            "3 juízes de raciocínio (o1-pro, R1, Opus)",
+            "6 IAs na extração + 4 auditores",
+            "3 juízes de raciocínio",
             "Relatório estruturado em pt-PT",
         ],
 
@@ -374,8 +374,11 @@ OPENROUTER_MODEL_MAPPING = {
     "llama-3.1-405b": "meta-llama/llama-3.1-405b-instruct",
     "llama-3.1-8b": "meta-llama/llama-3.1-8b-instruct",
     "llama-3.3-70b": "meta-llama/llama-3.3-70b-instruct",      # E5
-    # Amazon
-    "nova-pro": "amazon/nova-pro-v1",                            # E6 visual
+    # OpenAI (extração)
+    "gpt-5-nano": "openai/gpt-5-nano",                          # v5.1: E6 visual
+    "gpt-5-mini": "openai/gpt-5-mini",                          # v5.1: Suplente universal
+    # Amazon (DEPRECATED)
+    "nova-pro": "amazon/nova-pro-v1",                            # DEPRECATED: E6 visual
     # NVIDIA
     "nemotron-70b": "nvidia/llama-3.1-nemotron-70b-instruct",  # E7
     # Mistral / Qwen
