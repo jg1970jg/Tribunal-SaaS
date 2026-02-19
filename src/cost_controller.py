@@ -468,7 +468,9 @@ class CostController:
         self._lock = Lock()
 
         # FIX 2026-02-14: Limpar _models_used entre runs (evita leak/contaminação)
-        DynamicPricing._models_used = {}
+        # v5.2 fix H14: thread-safe reset
+        with DynamicPricing._cache_lock:
+            DynamicPricing._models_used = {}
 
         # Pre-fetch preços (usa cache se válido, fetch se expirado)
         DynamicPricing.prefetch()

@@ -362,10 +362,15 @@ async def get_current_user(
     result = _decode_and_validate_token(token)
 
     if result:
+        # v5.2 fix H11: Cache TTL limitado pelo JWT exp (não servir tokens expirados)
+        jwt_exp = result.get("exp", 0)
+        cache_ttl = TOKEN_CACHE_TTL
+        if jwt_exp and jwt_exp > now:
+            cache_ttl = min(TOKEN_CACHE_TTL, jwt_exp - now)
         with _token_cache_lock:
             _token_cache[token_hash] = {
                 "payload": result,
-                "expires": now + TOKEN_CACHE_TTL,
+                "expires": now + cache_ttl,
             }
         return result
 

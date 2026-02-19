@@ -391,6 +391,7 @@ def executar_analise(
     tier: str = "bronze",
     use_pdf_safe: bool = True,
     callback_progresso: Optional[Callable[[str, int, str], None]] = None,
+    **kwargs,
 ) -> PipelineResult:
     """
     Funcao principal do engine. Executa a analise completa do LexForum.

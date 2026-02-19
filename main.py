@@ -13,6 +13,7 @@ Servidor principal com:
 
 import asyncio
 import collections
+import itertools
 import io
 import os
 import logging
@@ -56,13 +57,13 @@ class InMemoryLogHandler(logging.Handler):
     def __init__(self, capacity: int = 2000):
         super().__init__()
         self._buffer: collections.deque = collections.deque(maxlen=capacity)
-        self._counter: int = 0
+        self._counter = itertools.count(1)
 
     def emit(self, record: logging.LogRecord):
         try:
-            self._counter += 1
+            seq = next(self._counter)
             self._buffer.append({
-                "id": self._counter,
+                "id": seq,
                 "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
@@ -1676,9 +1677,10 @@ async def admin_logs(
     level: Optional[str] = None,
     search: Optional[str] = None,
     since_id: int = 0,
+    user: dict = Depends(get_current_user),
 ):
     """
-    Retorna logs em memória para monitorização remota.
+    Retorna logs em memória para monitorização remota (apenas admin).
 
     Params:
         limit: máx entries (default 1000)
@@ -1686,6 +1688,12 @@ async def admin_logs(
         search: filtrar por texto (case-insensitive)
         since_id: só logs com id > since_id (para polling incremental)
     """
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores podem aceder aos logs.",
+        )
     logs = _log_buffer.get_logs(limit=limit, level=level, search=search, since_id=since_id)
     return {
         "count": len(logs),

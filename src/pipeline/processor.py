@@ -790,6 +790,8 @@ REVISTO:"""
             if self._output_dir:
                 self._log_to_file(f"rlm_{tipo_fase}.md", resultado.content if resultado else "ERRO")
             return resultado.content if resultado else texto
+        except (BudgetExceededError, InsufficientCreditsError):
+            raise  # v5.2 fix C3: nunca engolir budget exceptions
         except Exception as e:
             logger.error(f"[RLM] ERRO: {e}")
             return texto
@@ -1078,6 +1080,14 @@ REVISTO:"""
             retry_system, retry_temp = build_retry_prompt(
                 system_prompt, quality_issue, retry_num, adaptive_hint_text
             )
+
+            # v5.2 fix C2: Reasoning models não aceitam system_prompt nem temperature
+            if modelo_final in REASONING_MODELS:
+                if retry_system:
+                    prompt = f"<system_instructions>\n{retry_system}\n</system_instructions>\n\n{prompt}"
+                    retry_system = None
+                retry_temp = None
+
             effective_temp = retry_temp
 
             response = self.llm_client.chat_simple(
@@ -1878,10 +1888,11 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
             json_module.dump(coverage_data, f, ensure_ascii=False, indent=2)
 
         # 11. Criar bruto para compatibilidade
+        # v5.2 fix H4: Usar role/modelo do próprio FaseResult (não index posicional)
         bruto_parts = ["# EXTRAÇÃO AGREGADA (BRUTO) - MODO UNIFICADO COM PROVENIÊNCIA\n"]
-        for i, r in enumerate(resultados):
-            cfg = extractor_configs[i] if i < len(extractor_configs) else {"id": f"E{i+1}", "role": "Extrator"}
-            bruto_parts.append(f"\n## [EXTRATOR {cfg['id']}: {cfg['role']} - {r.modelo}]\n")
+        for r in resultados:
+            role_label = r.role or "Extrator"
+            bruto_parts.append(f"\n## [EXTRATOR {role_label} - {r.modelo}]\n")
             bruto_parts.append(r.conteudo or "")
             bruto_parts.append("\n---\n")
         bruto = "\n".join(bruto_parts)
@@ -3361,6 +3372,9 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                     else:
                         logger.warning(f"[PARALELO] {jid} falhou - ignorado")
                 except Exception as exc:
+                    # v5.2 fix H3: re-raise budget exceptions (não engolir)
+                    if "Budget" in type(exc).__name__ or "Limit" in type(exc).__name__:
+                        raise
                     logger.error(f"[PARALELO] {jid} excepção: {exc}")
 
         # Ordenar por índice original para manter ordem determinística
@@ -4260,6 +4274,14 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.fase1_agregado_bruto = bruto_f1
             result.fase1_agregado_consolidado = consolidado_f1
             result.fase1_agregado = consolidado_f1  # Backwards compat
+
+            # v5.2 fix H5: Guard — mínimo 2 extractores com sucesso
+            successful_extractors = sum(1 for e in extracoes if e.sucesso)
+            if successful_extractors < 2 and not consolidado_f1:
+                raise ValueError(
+                    f"Extracção insuficiente: apenas {successful_extractors} extractores "
+                    f"com sucesso (mínimo: 2). Pipeline abortado."
+                )
 
             # v5.2: Checkpoint após Fase 1
             self._save_checkpoint(1, "extracao", {

@@ -202,8 +202,9 @@ def prepare_messages_with_cache(
     num_to_cache = min(4, len(user_messages_idx))
     indices_to_cache = user_messages_idx[-num_to_cache:]
     
-    # Adicionar cache_control
-    cached_messages = messages.copy()
+    # Adicionar cache_control (deep copy para não mutar dicts do caller)
+    import copy as _copy
+    cached_messages = _copy.deepcopy(messages)
     for idx in indices_to_cache:
         content = cached_messages[idx]["content"]
         
@@ -252,6 +253,7 @@ OPENAI_MODELS_NO_TEMPERATURE = [
     "o1-pro",
     "o3",
     "o3-pro",
+    "o3-mini",  # v5.2 fix H6: reasoning model, não suporta temperature
 ]
 
 # v4.0: Modelos reasoning de outros providers
