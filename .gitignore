@@ -29,6 +29,19 @@ _backup_supabase/
 # Supabase local/temp
 supabase/.temp/
 
+# Claude Code settings (contains local permissions, may include secrets)
+.claude/settings.local.json
+
+# Ruff cache
+.ruff_cache/
+
+# Node
+node_modules/
+
+# Logs and databases
+*.log
+*.sqlite
+
 # Temp files
 temp_analysis.json
 test_e2e_result.json
