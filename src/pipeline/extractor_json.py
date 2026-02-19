@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Extração JSON estruturada por página - Anti-alucinação.
 
@@ -9,7 +8,6 @@ devolver JSON estrito com page_num validado.
 import json
 import logging
 import re
-from typing import List, Dict
 
 try:
     from json_repair import repair_json
@@ -101,10 +99,10 @@ def extract_json_from_text(text: str) -> dict | list | None:
             # Tentar json_repair no body do markdown
             repaired = _try_json_repair(body)
             if repaired is not None:
-                logger.info(f"[JSON-EXTRACT] Estratégia 2+repair: reparou JSON de markdown")
+                logger.info("[JSON-EXTRACT] Estratégia 2+repair: reparou JSON de markdown")
                 return repaired
     else:
-        logger.debug(f"[JSON-EXTRACT] Estratégia 2: nenhum bloco markdown encontrado")
+        logger.debug("[JSON-EXTRACT] Estratégia 2: nenhum bloco markdown encontrado")
 
     # 2b. Markdown ```json SEM ``` final (JSON truncado pelo max_output)
     md_open = re.search(r'```(?:json)?\s*\n?', text)
@@ -113,12 +111,12 @@ def extract_json_from_text(text: str) -> dict | list | None:
         # Tentar repair directo primeiro (funciona com arrays e objectos)
         repaired = _repair_truncated_json(json_body)
         if repaired is not None:
-            logger.info(f"[JSON-EXTRACT] Estratégia 2b: reparou JSON truncado de markdown")
+            logger.info("[JSON-EXTRACT] Estratégia 2b: reparou JSON truncado de markdown")
             return repaired
         # Tentar json_repair library
         repaired = _try_json_repair(json_body)
         if repaired is not None:
-            logger.info(f"[JSON-EXTRACT] Estratégia 2b+repair: json_repair reparou markdown truncado")
+            logger.info("[JSON-EXTRACT] Estratégia 2b+repair: json_repair reparou markdown truncado")
             return repaired
 
     # 3. Encontrar primeiro { e último } (objectos)
@@ -134,7 +132,7 @@ def extract_json_from_text(text: str) -> dict | list | None:
     if first_brace != -1:
         repaired = _repair_truncated_json(text[first_brace:])
         if repaired is not None:
-            logger.info(f"[JSON-EXTRACT] Estratégia 3b: reparou JSON truncado (objecto)")
+            logger.info("[JSON-EXTRACT] Estratégia 3b: reparou JSON truncado (objecto)")
             return repaired
 
     # 4. Encontrar primeiro [ e último ] (arrays)
@@ -150,11 +148,11 @@ def extract_json_from_text(text: str) -> dict | list | None:
     if first_bracket != -1:
         repaired = _repair_truncated_json(text[first_bracket:])
         if repaired is not None:
-            logger.info(f"[JSON-EXTRACT] Estratégia 4b: reparou JSON truncado (array)")
+            logger.info("[JSON-EXTRACT] Estratégia 4b: reparou JSON truncado (array)")
             return repaired
 
     if first_brace == -1 and first_bracket == -1:
-        logger.debug(f"[JSON-EXTRACT] Estratégia 3+4: nenhum par {{}} ou [] encontrado")
+        logger.debug("[JSON-EXTRACT] Estratégia 3+4: nenhum par {} ou [] encontrado")
 
     # 5. Remover prefixo comum e tentar de novo
     for prefix in ["Here is", "Here's", "Below is", "The following", "json\n", "JSON\n"]:
@@ -169,7 +167,7 @@ def extract_json_from_text(text: str) -> dict | list | None:
     # 6. Último recurso: json_repair no texto inteiro
     repaired = _try_json_repair(text)
     if repaired is not None:
-        logger.info(f"[JSON-EXTRACT] Estratégia 6: json_repair recuperou do texto inteiro")
+        logger.info("[JSON-EXTRACT] Estratégia 6: json_repair recuperou do texto inteiro")
         return repaired
 
     logger.warning(f"[JSON-EXTRACT] TODAS AS ESTRATÉGIAS FALHARAM para input de {len(text)} chars")
@@ -224,7 +222,7 @@ Inclui TODAS as entidades numéricas e legais de cada página, mesmo que pareça
 """
 
 
-def build_extractor_input(pages_batch: List[Dict]) -> str:
+def build_extractor_input(pages_batch: list[dict]) -> str:
     """
     Constrói input JSON para os extratores.
 
@@ -260,9 +258,9 @@ def build_extractor_input(pages_batch: List[Dict]) -> str:
 
 def parse_extractor_output(
     output: str,
-    valid_page_nums: List[int],
+    valid_page_nums: list[int],
     extractor_id: str
-) -> Dict:
+) -> dict:
     """
     Parseia e valida output JSON do extrator.
 
@@ -326,7 +324,7 @@ def parse_extractor_output(
     return result
 
 
-def _fallback_parse_markdown(output: str, valid_page_nums: List[int]) -> List[Dict]:
+def _fallback_parse_markdown(output: str, valid_page_nums: list[int]) -> list[dict]:
     """
     Fallback: tenta extrair informação de output markdown tradicional.
 
@@ -372,7 +370,7 @@ def _fallback_parse_markdown(output: str, valid_page_nums: List[int]) -> List[Di
     return extractions
 
 
-def extractions_to_markdown(extractions: List[Dict], extractor_id: str) -> str:
+def extractions_to_markdown(extractions: list[dict], extractor_id: str) -> str:
     """
     Converte extrações JSON para formato markdown tradicional.
 
@@ -416,7 +414,7 @@ def extractions_to_markdown(extractions: List[Dict], extractor_id: str) -> str:
     return "\n".join(lines)
 
 
-def merge_extractor_results(results: List[Dict]) -> Dict:
+def merge_extractor_results(results: list[dict]) -> dict:
     """
     Combina resultados de múltiplos extratores.
 
@@ -455,9 +453,9 @@ def merge_extractor_results(results: List[Dict]) -> Dict:
 
 def validate_coverage_against_signals(
     page_num: int,
-    extractions: Dict,  # {E1: ext, E2: ext, ...}
-    detected_signals: Dict  # {dates: [...], values: [...], legal_refs: [...]}
-) -> List[str]:
+    extractions: dict,  # {E1: ext, E2: ext, ...}
+    detected_signals: dict  # {dates: [...], values: [...], legal_refs: [...]}
+) -> list[str]:
     """
     Valida se os sinais detetados por regex foram extraídos pelos LLMs.
 

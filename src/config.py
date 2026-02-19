@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 CONFIGURAÇÃO LEXFORUM - PIPELINE v4.0
 ═══════════════════════════════════════════════════════════════════════════
@@ -220,7 +219,7 @@ def get_max_tokens_para_fase(role_name: str) -> Optional[int]:
         int ou None (None = usar calcular_max_tokens dinâmico)
     """
     role_lower = role_name.lower()
-    
+
     if "agregador" in role_lower:
         return MAX_TOKENS_POR_FASE["agregador"]
     elif "chefe" in role_lower:
@@ -229,7 +228,7 @@ def get_max_tokens_para_fase(role_name: str) -> Optional[int]:
         return MAX_TOKENS_POR_FASE["conselheiro"]
     elif "sintese" in role_lower:
         return MAX_TOKENS_POR_FASE["sintese"]
-    
+
     # Extratores, auditores, relatores → None = dinâmico
     return None
 

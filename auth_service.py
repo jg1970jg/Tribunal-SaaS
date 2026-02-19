@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 AUTH SERVICE - LexForum
 ============================================================
@@ -99,6 +98,9 @@ def _fetch_jwks() -> list[dict] | None:
 
     for url in endpoints:
         try:
+            # NOTE: Synchronous call — acceptable because JWKS is cached for 1 hour
+            # and only fetched once per hour. Converting to async would require
+            # making _decode_and_validate_token async, which cascades changes.
             resp = httpx.get(url, timeout=10.0)
             if resp.status_code == 200:
                 data = resp.json()

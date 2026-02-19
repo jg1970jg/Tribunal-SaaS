@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 FASE 0 — TRIAGEM + NORMALIZAÇÃO (v4.0 Handover)
 
@@ -11,13 +10,12 @@ Votação: 2/3 concordam → domínio definido. Empate → "multi-dominio"
 Detecção de fotos: ≤20 OK, >20 aviso, >50 modo fila
 """
 
-import json
 import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Any
 
 from src.pipeline.extractor_json import extract_json_from_text
 
@@ -61,15 +59,15 @@ class TriageResult:
     """Resultado da Fase 0 — Triagem."""
     domain: str = "Civil"  # Default
     domain_confidence: float = 0.0
-    keywords: List[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
     photo_estimate: int = 0
     photo_warning: str = ""  # "", "warning", "queue_mode"
-    votes: Dict[str, str] = field(default_factory=dict)  # {T1: "Civil", T2: "Civil", T3: "Penal"}
+    votes: dict[str, str] = field(default_factory=dict)  # {T1: "Civil", T2: "Civil", T3: "Penal"}
     consensus: str = "none"  # "unanimous", "majority", "split"
     duration_ms: float = 0.0
     cost_usd: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "domain": self.domain,
             "domain_confidence": self.domain_confidence,
@@ -186,7 +184,7 @@ class TriageProcessor:
 
         # Votação por maioria
         result.votes = votes
-        domain_counts: Dict[str, int] = {}
+        domain_counts: dict[str, int] = {}
         for d in votes.values():
             domain_counts[d] = domain_counts.get(d, 0) + 1
 
@@ -298,7 +296,7 @@ FINAL DO DOCUMENTO:
         return mapping.get(domain_lower, "Civil")
 
 
-def inject_page_markers(text: str, page_breaks: Optional[List[int]] = None) -> str:
+def inject_page_markers(text: str, page_breaks: Optional[list[int]] = None) -> str:
     """
     Injecta marcadores [Pág_X] no texto do documento.
 
@@ -321,7 +319,7 @@ def inject_page_markers(text: str, page_breaks: Optional[List[int]] = None) -> s
     if page_breaks:
         result_parts = []
         prev_pos = 0
-        result_parts.append(f"[Pág_1]\n")
+        result_parts.append("[Pág_1]\n")
         for i, pos in enumerate(page_breaks):
             if pos > prev_pos:
                 result_parts.append(text[prev_pos:pos])
@@ -337,7 +335,7 @@ def inject_page_markers(text: str, page_breaks: Optional[List[int]] = None) -> s
         result_parts = []
         for i, part in enumerate(parts):
             if i == 0:
-                result_parts.append(f"[Pág_1]\n")
+                result_parts.append("[Pág_1]\n")
             else:
                 result_parts.append(f"\n[Pág_{i + 1}]\n")
             result_parts.append(part)

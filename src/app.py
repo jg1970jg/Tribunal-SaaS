@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 LEXFORUM GUI - Interface Principal (Streamlit)
 Pipeline de 3 Fases com LLMs via OpenRouter
@@ -10,9 +9,8 @@ import streamlit as st
 from pathlib import Path
 import sys
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import io
-from typing import List
 import shutil  # ← NOVO: Para apagar pastas
 
 # Adicionar diretório raiz ao path
@@ -36,10 +34,6 @@ from src.config import (
 from src.pipeline.processor import LexForumProcessor, PipelineResult
 from src.pipeline.constants import (
     FLAGS_BLOQUEANTES,
-    ESTADOS_RESOLVIDOS,
-    OVERRIDE_TYPES,
-    is_resolvida,
-    has_flags_bloqueantes,
     precisa_reparacao,
 )
 from src.document_loader import DocumentLoader, DocumentContent
@@ -69,7 +63,6 @@ logger = logging.getLogger(__name__)
 def carregar_resultado(run_id: str) -> PipelineResult:
     """Carrega resultado de análise antiga do histórico."""
     from src.pipeline.processor import PipelineResult, FaseResult
-    from pathlib import Path
 
     run_id = sanitize_run_id(run_id)
     filepath = OUTPUT_DIR / run_id / "resultado.json"
@@ -79,7 +72,7 @@ def carregar_resultado(run_id: str) -> PipelineResult:
         filepath = HISTORICO_DIR / f"{run_id}.json"
 
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, encoding='utf-8') as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
         logger.error(f"[carregar_resultado] Erro ao ler {filepath}: {e}")
@@ -105,7 +98,7 @@ def carregar_resultado(run_id: str) -> PipelineResult:
         documento=documento,
         area_direito=data.get('area_direito', ''),
         perguntas_utilizador=data.get('perguntas_utilizador', []),
-        timestamp_inicio=datetime.fromisoformat(data['timestamp_inicio']) if data.get('timestamp_inicio') else datetime.now(),
+        timestamp_inicio=datetime.fromisoformat(data['timestamp_inicio']) if data.get('timestamp_inicio') else datetime.now(timezone.utc),
     )
 
     # Reconstruir FaseResults
@@ -437,7 +430,7 @@ def renderizar_sidebar():
         st.caption("LexForum v2.0\nApenas Direito Português 🇵🇹")
 
 
-def carregar_documentos(uploaded_files, use_pdf_safe: bool = True, out_dir: Path = None) -> List[DocumentContent]:
+def carregar_documentos(uploaded_files, use_pdf_safe: bool = True, out_dir: Path = None) -> list[DocumentContent]:
     """
     Carrega múltiplos documentos.
 
@@ -466,7 +459,7 @@ def carregar_documentos(uploaded_files, use_pdf_safe: bool = True, out_dir: Path
         # Usar PDF Seguro para PDFs se ativado
         if ext == ".pdf" and use_pdf_safe:
             # CORREÇÃO #1: Criar diretório ÚNICO por documento
-            file_hash = hashlib.md5(file_bytes).hexdigest()[:8]
+            file_hash = hashlib.md5(file_bytes, usedforsecurity=False).hexdigest()[:8]
             stem = Path(uploaded_file.name).stem
             # Sanitizar nome (remover caracteres problemáticos)
             stem_safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in stem)
@@ -571,7 +564,6 @@ def pagina_analisar_documento():
         if st.session_state.ficheiros_acumulados:
             # Criar objectos UploadedFile-like a partir dos bytes guardados
             import uuid
-            from io import BytesIO
 
             class FicheiroPseudo:
                 def __init__(self, name, data):
@@ -607,7 +599,7 @@ def pagina_analisar_documento():
             st.markdown("---")
             st.markdown("**Documentos processados:**")
 
-            for i, doc in enumerate(documentos):
+            for _, doc in enumerate(documentos):
                 if doc.success:
                     # Mostrar info adicional para PDF Seguro
                     extra_info = ""
@@ -682,7 +674,7 @@ def pagina_analisar_documento():
 
     # ← NOVO: Interface escolha modelos premium
     model_choices = selecao_modelos_premium()
-    
+
     # Guardar escolhas no session_state
     st.session_state.model_choices = model_choices
 
@@ -835,7 +827,7 @@ Nos termos do artigo 1083º do Código Civil, o requerente pretende a resoluçã
 
     # ← NOVO: Interface escolha modelos premium
     model_choices = selecao_modelos_premium()
-    
+
     # Guardar escolhas no session_state
     st.session_state.model_choices = model_choices
 
@@ -859,7 +851,7 @@ Nos termos do artigo 1083º do Código Civil, o requerente pretende a resoluçã
         renderizar_resultado(st.session_state.resultado)
 
 
-def executar_pipeline_documentos(documentos: List[DocumentContent], area: str, perguntas_raw: str = "", titulo: str = ""):
+def executar_pipeline_documentos(documentos: list[DocumentContent], area: str, perguntas_raw: str = "", titulo: str = ""):
     """Executa o pipeline para múltiplos documentos."""
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -1440,18 +1432,17 @@ def pagina_historico():
     if analises:
         st.markdown(f"*{len(analises)} análises encontradas*")
 
-        for run_id, titulo_display, data in analises[:20]:
+        for run_id, titulo_display, _data in analises[:20]:
             # Carregar dados completos
             processor = LexForumProcessor()
             data_completa = processor.carregar_run(run_id)
-            
+
             if not data_completa:
                 continue
-            
+
             # Extrair informações
             simbolo = data_completa.get("simbolo_final", "")
-            veredicto = data_completa.get("status_final", "")
-            
+
             # Criar título do expander
             if simbolo:
                 titulo_expander = f"{simbolo} {titulo_display}"
@@ -1465,7 +1456,7 @@ def pagina_historico():
                     st.markdown(f"**Run ID:** `{run_id}`")
                     st.markdown(f"**Área:** {data_completa.get('area_direito', 'N/A')}")
                     st.markdown(f"**Tokens:** {data_completa.get('total_tokens', 0):,}")
-                    
+
                     # Documento original
                     doc_info = data_completa.get('documento', {})
                     if isinstance(doc_info, dict):
@@ -1498,23 +1489,23 @@ def pagina_historico():
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Erro ao carregar: {e}")
-                    
+
                     # ← NOVO: Botão apagar com confirmação
                     if st.button("🗑️ Apagar", key=f"del_{run_id}", use_container_width=True, type="secondary"):
                         # Usar session_state para confirmação
                         if f"confirm_delete_{run_id}" not in st.session_state:
                             st.session_state[f"confirm_delete_{run_id}"] = False
-                        
+
                         st.session_state[f"confirm_delete_{run_id}"] = True
-                
+
                 # Mostrar confirmação se botão apagar foi clicado
                 if st.session_state.get(f"confirm_delete_{run_id}", False):
-                    st.warning(f"⚠️ **TEM CERTEZA?** Isto apaga PERMANENTEMENTE a análise!")
+                    st.warning("⚠️ **TEM CERTEZA?** Isto apaga PERMANENTEMENTE a análise!")
                     st.caption(f"Análise: {titulo_display}")
                     st.caption(f"Run ID: {run_id}")
-                    
+
                     col_confirm, col_cancel = st.columns(2)
-                    
+
                     with col_confirm:
                         if st.button("✅ SIM, APAGAR!", key=f"confirm_yes_{run_id}", use_container_width=True, type="primary"):
                             try:
@@ -1529,19 +1520,19 @@ def pagina_historico():
                                 historico_file = HISTORICO_DIR / f"{safe_run_id}.json"
                                 if historico_file.exists():
                                     historico_file.unlink()
-                                
+
                                 st.success(f"✅ Análise '{titulo_display}' apagada com sucesso!")
                                 st.session_state[f"confirm_delete_{run_id}"] = False
-                                
+
                                 # Aguardar um pouco para mostrar mensagem
                                 import time
                                 time.sleep(1)
                                 st.rerun()
-                            
+
                             except Exception as e:
                                 st.error(f"❌ Erro ao apagar: {e}")
                                 st.session_state[f"confirm_delete_{run_id}"] = False
-                    
+
                     with col_cancel:
                         if st.button("❌ Cancelar", key=f"confirm_no_{run_id}", use_container_width=True):
                             st.session_state[f"confirm_delete_{run_id}"] = False
@@ -1619,7 +1610,7 @@ def pagina_configuracoes():
                 try:
                     client = get_llm_client()
                     results = client.test_connection()
-                    
+
                     if results.get("openai", {}).get("success"):
                         st.success(results["openai"]["message"])
                     else:
@@ -1633,7 +1624,7 @@ def pagina_configuracoes():
                 try:
                     client = get_llm_client()
                     results = client.test_connection()
-                    
+
                     if results.get("openrouter", {}).get("success"):
                         st.success(results["openrouter"]["message"])
                     else:
@@ -1770,12 +1761,12 @@ def pagina_perguntas():
     # ← NOVO: Interface escolha modelos premium
     st.markdown("### ⚙️ Configuração Modelos")
     model_choices = selecao_modelos_premium()
-    
+
     # Guardar escolhas no session_state
     st.session_state.model_choices_perguntas = model_choices
-    
+
     st.markdown("---")
-    
+
     # v4.0 FIX: Calcular modelos localmente, NÃO mutar config global
     if "model_choices_perguntas" in st.session_state:
         _local_chefe_perguntas = get_chefe_model(st.session_state.model_choices_perguntas["chefe"])
@@ -1783,7 +1774,7 @@ def pagina_perguntas():
     else:
         _local_chefe_perguntas = CHEFE_MODEL
         presidente_model_escolhido = PRESIDENTE_MODEL
-    
+
     tab_perguntas_adicionais(
         output_dir=OUTPUT_DIR,
         auditor_models=AUDITOR_MODELS,
@@ -1797,38 +1788,38 @@ def pagina_perguntas():
 def pagina_gerir_titulos():
     """Página para gerir títulos de análises existentes."""
     st.title("✏️ Gerir Títulos das Análises")
-    
+
     st.markdown("""
     Edite os títulos das suas análises para facilitar identificação.
     Análises sem título mostram apenas o código.
     """)
-    
+
     # Listar análises
     analises = listar_analises_com_titulos(OUTPUT_DIR)
-    
+
     if not analises:
         st.warning("📭 Nenhuma análise encontrada!")
         return
-    
+
     # Contar sem título
     sem_titulo = contar_analises_sem_titulo(OUTPUT_DIR)
-    
+
     if sem_titulo > 0:
         st.info(f"📝 {sem_titulo} análise(s) sem título personalizado")
-    
+
     st.markdown("---")
-    
+
     # Editor de títulos
     st.markdown("### 📋 Editar Títulos")
-    
+
     for run_id, titulo_display, data in analises:
         with st.expander(f"📁 {titulo_display}", expanded=False):
             # Carregar metadata para pegar título atual
             from src.utils.metadata_manager import carregar_metadata
             metadata = carregar_metadata(run_id, OUTPUT_DIR)
-            
+
             titulo_atual = metadata.get('titulo', '') if metadata else ''
-            
+
             # Linha 1: Campo de título
             novo_titulo = st.text_input(
                 "Título:",
@@ -1836,35 +1827,35 @@ def pagina_gerir_titulos():
                 placeholder="Ex: Contrato Arrendamento - João Silva",
                 key=f"titulo_{run_id}"
             )
-            
+
             # Linha 2: Botões Guardar e Apagar
             col_save, col_delete = st.columns(2)
-            
+
             with col_save:
                 if st.button("💾 Guardar Título", key=f"save_{run_id}", use_container_width=True, type="primary"):
                     if novo_titulo and novo_titulo != titulo_atual:
                         atualizar_metadata(run_id, OUTPUT_DIR, titulo=novo_titulo)
-                        st.success(f"✅ Título atualizado!")
+                        st.success("✅ Título atualizado!")
                         st.rerun()
                     elif not novo_titulo:
                         st.warning("⚠️ Título não pode ser vazio!")
-            
+
             with col_delete:
                 if st.button("🗑️ Apagar Análise", key=f"del_{run_id}", use_container_width=True, type="secondary"):
                     # Usar session_state para confirmação
                     if f"confirm_delete_{run_id}" not in st.session_state:
                         st.session_state[f"confirm_delete_{run_id}"] = False
-                    
+
                     st.session_state[f"confirm_delete_{run_id}"] = True
-            
+
             # Mostrar info adicional
             st.caption(f"**Run ID:** `{run_id}`")
             st.caption(f"**Data:** {data}")
-            
+
             if metadata:
                 area = metadata.get('area_direito', 'N/A')
                 st.caption(f"**Área:** {area}")
-            
+
             # Mostrar confirmação se botão apagar foi clicado
             if st.session_state.get(f"confirm_delete_{run_id}", False):
                 st.markdown("---")
@@ -1872,9 +1863,9 @@ def pagina_gerir_titulos():
                 st.warning(f"**Análise:** {titulo_display}")
                 st.warning(f"**Run ID:** {run_id}")
                 st.caption("⚠️ Esta ação NÃO PODE SER DESFEITA! Todos os ficheiros serão eliminados!")
-                
+
                 col_yes, col_no = st.columns(2)
-                
+
                 with col_yes:
                     if st.button("✅ SIM, APAGAR TUDO!", key=f"yes_{run_id}", use_container_width=True, type="primary"):
                         try:
@@ -1889,19 +1880,19 @@ def pagina_gerir_titulos():
                             historico_file = HISTORICO_DIR / f"{safe_run_id}.json"
                             if historico_file.exists():
                                 historico_file.unlink()
-                            
+
                             st.success(f"✅ Análise '{titulo_display}' apagada com sucesso!")
                             st.session_state[f"confirm_delete_{run_id}"] = False
-                            
+
                             # Aguardar para mostrar mensagem
                             import time
                             time.sleep(1.5)
                             st.rerun()
-                        
+
                         except Exception as e:
                             st.error(f"❌ Erro ao apagar: {e}")
                             st.session_state[f"confirm_delete_{run_id}"] = False
-                
+
                 with col_no:
                     if st.button("❌ CANCELAR", key=f"no_{run_id}", use_container_width=True):
                         st.session_state[f"confirm_delete_{run_id}"] = False

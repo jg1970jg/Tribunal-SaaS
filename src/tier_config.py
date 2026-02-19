@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 TIER CONFIGURATION - Sistema Bronze/Prata/Ouro
 ==================================================
@@ -17,7 +16,7 @@ PALAVRAS VETADAS (NUNCA usar):
   ❌ Versões (4.5, 5.2, etc.)
 """
 
-from typing import Dict, List, Any
+from typing import Any
 from enum import Enum
 
 
@@ -213,7 +212,7 @@ TIER_CONFIG = {
 # FUNÇÕES DE CÁLCULO
 # ============================================================
 
-def calculate_tier_cost(tier: TierLevel, document_tokens: int = 0) -> Dict[str, float]:
+def calculate_tier_cost(tier: TierLevel, document_tokens: int = 0) -> dict[str, float]:
     """
     Calcula o custo estimado para um tier específico.
 
@@ -252,12 +251,12 @@ def calculate_tier_cost(tier: TierLevel, document_tokens: int = 0) -> Dict[str, 
     }
 
 
-def get_tier_models(tier: TierLevel) -> Dict[str, str]:
+def get_tier_models(tier: TierLevel) -> dict[str, str]:
     """Retorna os modelos associados a um tier."""
     return TIER_CONFIG[tier]["models"].copy()
 
 
-def _get_models_per_phase(tier_level: TierLevel) -> Dict[str, Any]:
+def _get_models_per_phase(tier_level: TierLevel) -> dict[str, Any]:
     """Retorna modelos detalhados por fase para um tier."""
     try:
         from src.config import LLM_CONFIGS, AUDITOR_MODELS, RELATOR_MODELS
@@ -286,7 +285,7 @@ def _get_models_per_phase(tier_level: TierLevel) -> Dict[str, Any]:
     }
 
 
-def get_all_tiers_info() -> List[Dict[str, Any]]:
+def get_all_tiers_info() -> list[dict[str, Any]]:
     """Retorna informação de todos os tiers para o frontend."""
     result = []
     for tier_level in [TierLevel.BRONZE, TierLevel.SILVER, TierLevel.GOLD]:
@@ -315,7 +314,7 @@ def get_all_tiers_info() -> List[Dict[str, Any]]:
     return result
 
 
-def validate_tier_selection(selection: Dict[str, str]) -> bool:
+def validate_tier_selection(selection: dict[str, str]) -> bool:
     """
     Valida que a seleção de tiers por fase é válida.
     """
@@ -330,9 +329,9 @@ def validate_tier_selection(selection: Dict[str, str]) -> bool:
 
 
 def calculate_custom_selection_cost(
-    selection: Dict[str, str],
+    selection: dict[str, str],
     document_tokens: int = 0
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Calcula o custo para uma seleção personalizada de tiers por fase.
     """

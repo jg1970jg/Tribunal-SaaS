@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 SANITIZAÇÃO DE INPUTS - Prevenção de Path Traversal
 =====================================================
@@ -50,22 +49,22 @@ def sanitize_run_id(run_id: str) -> str:
     # Rejeitar path traversal explícito
     if '..' in run_id:
         logger.warning(f"[SECURITY] Path traversal detectado em run_id: {run_id!r}")
-        raise ValueError(f"run_id inválido: contém '..'")
+        raise ValueError("run_id inválido: contém '..'")
 
     # Rejeitar separadores de caminho
     if '/' in run_id or '\\' in run_id:
         logger.warning(f"[SECURITY] Separador de caminho detectado em run_id: {run_id!r}")
-        raise ValueError(f"run_id inválido: contém separador de caminho")
+        raise ValueError("run_id inválido: contém separador de caminho")
 
     # Rejeitar caracteres nulos
     if '\x00' in run_id:
-        logger.warning(f"[SECURITY] Null byte detectado em run_id")
-        raise ValueError(f"run_id inválido: contém null byte")
+        logger.warning("[SECURITY] Null byte detectado em run_id")
+        raise ValueError("run_id inválido: contém null byte")
 
     # Validar formato (alfanumérico + _ + -)
     if not _RUN_ID_PATTERN.match(run_id):
         logger.warning(f"[SECURITY] run_id com formato inválido: {run_id!r}")
-        raise ValueError(f"run_id inválido: formato não reconhecido")
+        raise ValueError("run_id inválido: formato não reconhecido")
 
     return run_id
 
@@ -139,7 +138,7 @@ def safe_join_path(base_dir: Path, *parts: str) -> Path:
                 f"[SECURITY] Path traversal detectado: "
                 f"resultado={resolved} fora de base={base_resolved}"
             )
-            raise ValueError(f"Caminho resultante fora do diretório base")
+            raise ValueError("Caminho resultante fora do diretório base")
     except OSError:
         # Em Windows, resolve() pode falhar para caminhos que não existem
         # Verificar textualmente como fallback
@@ -150,6 +149,6 @@ def safe_join_path(base_dir: Path, *parts: str) -> Path:
                 f"[SECURITY] Path traversal detectado (textual check): "
                 f"resultado={result_str} fora de base={base_str}"
             )
-            raise ValueError(f"Caminho resultante fora do diretório base")
+            raise ValueError("Caminho resultante fora do diretório base")
 
     return result

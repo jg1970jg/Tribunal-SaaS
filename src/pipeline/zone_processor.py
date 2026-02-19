@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 PROCESSADOR POR ZONAS - Tribunal SaaS
 ============================================================
@@ -25,7 +24,7 @@ INTEGRAÇÃO:
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
+from typing import Optional, Any
 from pathlib import Path
 
 
@@ -63,8 +62,8 @@ class DocumentZone:
     end_page: Optional[int] = None
     text: str = ""
     num_chars: int = 0
-    
-    def to_dict(self) -> Dict:
+
+    def to_dict(self) -> dict:
         return {
             "zone_id": self.zone_id,
             "start_char": self.start_char,
@@ -83,9 +82,9 @@ class ZoneResult:
     auditoria: str = ""       # Markdown da auditoria consolidada
     parecer: str = ""         # Markdown do parecer dos juízes
     confidence: float = 0.85
-    errors: List[str] = field(default_factory=list)
-    
-    def to_dict(self) -> Dict:
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
         return {
             "zone": self.zone.to_dict(),
             "extracao_chars": len(self.extracao),
@@ -101,11 +100,11 @@ class ZoneProcessingPlan:
     """Plano de processamento por zonas."""
     total_chars: int
     total_pages: Optional[int] = None
-    zones: List[DocumentZone] = field(default_factory=list)
+    zones: list[DocumentZone] = field(default_factory=list)
     use_zones: bool = False
     reason: str = ""
-    
-    def to_dict(self) -> Dict:
+
+    def to_dict(self) -> dict:
         return {
             "total_chars": self.total_chars,
             "total_pages": self.total_pages,
@@ -147,19 +146,19 @@ def create_zone_plan(
         ZoneProcessingPlan com as zonas definidas
     """
     total_chars = len(document_text)
-    
+
     plan = ZoneProcessingPlan(
         total_chars=total_chars,
     )
-    
+
     # Documento pequeno — sem zonas
     if total_chars <= ZONE_THRESHOLD_CHARS:
         plan.use_zones = False
         plan.reason = f"Documento pequeno ({total_chars:,} chars < {ZONE_THRESHOLD_CHARS:,} threshold)"
         return plan
-    
+
     plan.use_zones = True
-    
+
     # Tentar divisão por páginas
     if page_mapper is not None and hasattr(page_mapper, 'get_page_boundaries'):
         zones = _split_by_pages(document_text, page_mapper, zone_max_chars, zone_overlap)
@@ -167,7 +166,7 @@ def create_zone_plan(
     else:
         zones = _split_by_chars(document_text, zone_max_chars, zone_overlap)
         plan.reason = f"Divisão por chars: {len(zones)} zonas"
-    
+
     # Limitar número de zonas
     if len(zones) > MAX_ZONES:
         logger.warning(f"Demasiadas zonas ({len(zones)}), limitando a {MAX_ZONES}")
@@ -175,9 +174,9 @@ def create_zone_plan(
         new_zone_size = total_chars // MAX_ZONES + zone_overlap
         zones = _split_by_chars(document_text, new_zone_size, zone_overlap)
         plan.reason = f"Divisão ajustada: {len(zones)} zonas (max_zone_chars={new_zone_size:,})"
-    
+
     plan.zones = zones
-    
+
     # Tentar obter páginas para cada zona
     if page_mapper is not None and hasattr(page_mapper, 'get_page'):
         for zone in zones:
@@ -187,12 +186,12 @@ def create_zone_plan(
             except Exception:
                 pass
         plan.total_pages = zones[-1].end_page if zones else None
-    
+
     logger.info(
         f"[ZONAS] Plano: {len(zones)} zonas para {total_chars:,} chars "
         f"(max {zone_max_chars:,}/zona, overlap {zone_overlap:,})"
     )
-    
+
     return plan
 
 
@@ -200,16 +199,16 @@ def _split_by_chars(
     document_text: str,
     zone_max_chars: int,
     zone_overlap: int,
-) -> List[DocumentZone]:
+) -> list[DocumentZone]:
     """Divide documento por chars com overlap."""
     total = len(document_text)
     zones = []
     zone_id = 1
     start = 0
-    
+
     while start < total:
         end = min(start + zone_max_chars, total)
-        
+
         # Tentar encontrar um parágrafo perto do fim para cortar limpo
         if end < total:
             # Procurar \n\n dentro dos últimos 500 chars
@@ -217,9 +216,9 @@ def _split_by_chars(
             last_para = document_text.rfind("\n\n", search_start, end)
             if last_para > start + zone_max_chars // 2:
                 end = last_para + 2  # Incluir o \n\n
-        
+
         zone_text = document_text[start:end]
-        
+
         zone = DocumentZone(
             zone_id=zone_id,
             start_char=start,
@@ -228,7 +227,7 @@ def _split_by_chars(
             num_chars=len(zone_text),
         )
         zones.append(zone)
-        
+
         zone_id += 1
         # Avançar com overlap (garantir progresso mínimo)
         new_start = end - zone_overlap
@@ -240,7 +239,7 @@ def _split_by_chars(
         # Evitar loop infinito
         if start >= total:
             break
-    
+
     return zones
 
 
@@ -249,7 +248,7 @@ def _split_by_pages(
     page_mapper: Any,
     zone_max_chars: int,
     zone_overlap: int,
-) -> List[DocumentZone]:
+) -> list[DocumentZone]:
     """
     Divide documento por fronteiras de página.
     Agrupa páginas até atingir zone_max_chars.
@@ -258,24 +257,24 @@ def _split_by_pages(
         boundaries = page_mapper.get_page_boundaries()
     except (AttributeError, Exception):
         return _split_by_chars(document_text, zone_max_chars, zone_overlap)
-    
+
     if not boundaries:
         return _split_by_chars(document_text, zone_max_chars, zone_overlap)
-    
+
     zones = []
     zone_id = 1
     zone_start_char = 0
     zone_start_page = 1
     current_chars = 0
-    
+
     for page_num, (page_start, page_end) in enumerate(boundaries, 1):
         page_chars = page_end - page_start
-        
+
         # Se adicionar esta página excede o máximo, fechar zona actual
         if current_chars + page_chars > zone_max_chars and current_chars > 0:
             # Fechar zona com overlap
             overlap_end = min(page_start + zone_overlap, len(document_text))
-            
+
             zone = DocumentZone(
                 zone_id=zone_id,
                 start_char=zone_start_char,
@@ -286,7 +285,7 @@ def _split_by_pages(
                 num_chars=overlap_end - zone_start_char,
             )
             zones.append(zone)
-            
+
             # Nova zona começa com overlap
             zone_id += 1
             zone_start_char = max(page_start - zone_overlap, zone_start_char)
@@ -294,7 +293,7 @@ def _split_by_pages(
             current_chars = page_chars + min(zone_overlap, page_start - zone_start_char)
         else:
             current_chars += page_chars
-    
+
     # Última zona
     if zone_start_char < len(document_text):
         zone = DocumentZone(
@@ -307,7 +306,7 @@ def _split_by_pages(
             num_chars=len(document_text) - zone_start_char,
         )
         zones.append(zone)
-    
+
     return zones
 
 
@@ -315,7 +314,7 @@ def _split_by_pages(
 # CONSOLIDAÇÃO DE ZONAS
 # ============================================================================
 
-def build_zone_summary(zone_results: List[ZoneResult]) -> str:
+def build_zone_summary(zone_results: list[ZoneResult]) -> str:
     """
     Constrói resumo consolidado de todas as zonas para o Presidente.
     
@@ -323,20 +322,20 @@ def build_zone_summary(zone_results: List[ZoneResult]) -> str:
     """
     parts = []
     parts.append(f"# ANÁLISE POR ZONAS ({len(zone_results)} zonas processadas)\n")
-    
+
     for zr in zone_results:
         zone = zr.zone
         pages_info = ""
         if zone.start_page and zone.end_page:
             pages_info = f" (Páginas {zone.start_page}-{zone.end_page})"
-        
+
         parts.append(f"\n## ZONA {zone.zone_id}{pages_info}")
         parts.append(f"**Chars:** {zone.start_char:,}-{zone.end_char:,} ({zone.num_chars:,} chars)")
         parts.append(f"**Confiança:** {zr.confidence:.0%}")
-        
+
         if zr.errors:
             parts.append(f"**Warnings:** {len(zr.errors)}")
-        
+
         # Extracção resumida
         if zr.extracao:
             parts.append(f"\n### Extracção (Zona {zone.zone_id})")
@@ -345,7 +344,7 @@ def build_zone_summary(zone_results: List[ZoneResult]) -> str:
             if len(zr.extracao) > 3000:
                 extracao_trimmed += f"\n\n[... truncado, {len(zr.extracao):,} chars total]"
             parts.append(extracao_trimmed)
-        
+
         # Auditoria resumida
         if zr.auditoria:
             parts.append(f"\n### Auditoria (Zona {zone.zone_id})")
@@ -353,7 +352,7 @@ def build_zone_summary(zone_results: List[ZoneResult]) -> str:
             if len(zr.auditoria) > 2000:
                 auditoria_trimmed += f"\n\n[... truncado, {len(zr.auditoria):,} chars total]"
             parts.append(auditoria_trimmed)
-        
+
         # Parecer resumido
         if zr.parecer:
             parts.append(f"\n### Parecer Jurídico (Zona {zone.zone_id})")
@@ -361,42 +360,42 @@ def build_zone_summary(zone_results: List[ZoneResult]) -> str:
             if len(zr.parecer) > 2000:
                 parecer_trimmed += f"\n\n[... truncado, {len(zr.parecer):,} chars total]"
             parts.append(parecer_trimmed)
-        
+
         parts.append("\n---")
-    
+
     # Sumário global
     avg_confidence = sum(zr.confidence for zr in zone_results) / len(zone_results) if zone_results else 0
     total_errors = sum(len(zr.errors) for zr in zone_results)
-    
-    parts.append(f"\n## SUMÁRIO GLOBAL")
+
+    parts.append("\n## SUMÁRIO GLOBAL")
     parts.append(f"- **Zonas processadas:** {len(zone_results)}")
     parts.append(f"- **Confiança média:** {avg_confidence:.0%}")
     parts.append(f"- **Total warnings:** {total_errors}")
-    
+
     return "\n".join(parts)
 
 
-def merge_zone_confidences(zone_results: List[ZoneResult]) -> float:
+def merge_zone_confidences(zone_results: list[ZoneResult]) -> float:
     """
     Calcula confiança final ponderada por tamanho de cada zona.
     Zonas maiores têm mais peso.
     """
     if not zone_results:
         return 0.0
-    
+
     total_weight = sum(zr.zone.num_chars for zr in zone_results)
     if total_weight == 0:
         return 0.0
-    
+
     weighted_sum = sum(
-        zr.confidence * zr.zone.num_chars 
+        zr.confidence * zr.zone.num_chars
         for zr in zone_results
     )
-    
+
     return weighted_sum / total_weight
 
 
-def merge_zone_errors(zone_results: List[ZoneResult]) -> List[str]:
+def merge_zone_errors(zone_results: list[ZoneResult]) -> list[str]:
     """Consolida erros de todas as zonas."""
     all_errors = []
     for zr in zone_results:
@@ -413,10 +412,10 @@ def merge_zone_errors(zone_results: List[ZoneResult]) -> List[str]:
 def log_zone_plan(plan: ZoneProcessingPlan, output_dir: Optional[Path] = None):
     """Grava plano de zonas em ficheiro JSON."""
     import json
-    
+
     if output_dir is None:
         return
-    
+
     filepath = output_dir / "zone_plan.json"
     try:
         with open(filepath, "w", encoding="utf-8") as f:
@@ -426,13 +425,13 @@ def log_zone_plan(plan: ZoneProcessingPlan, output_dir: Optional[Path] = None):
         logger.warning(f"[ZONAS] Erro ao guardar plano: {e}")
 
 
-def log_zone_results(zone_results: List[ZoneResult], output_dir: Optional[Path] = None):
+def log_zone_results(zone_results: list[ZoneResult], output_dir: Optional[Path] = None):
     """Grava resultados por zona em ficheiro JSON."""
     import json
-    
+
     if output_dir is None:
         return
-    
+
     filepath = output_dir / "zone_results.json"
     try:
         data = {
@@ -454,21 +453,21 @@ def log_zone_results(zone_results: List[ZoneResult], output_dir: Optional[Path] 
 
 if __name__ == "__main__":
     print("=== Teste Zone Processor ===\n")
-    
+
     # Criar documento teste
     doc_text = "Página 1. " * 5000  # ~50K chars
     doc_text += "Página 2. " * 5000  # Total ~100K chars
-    
+
     print(f"Documento: {len(doc_text):,} chars")
     print(f"Usar zonas: {should_use_zones(doc_text)}")
-    
+
     plan = create_zone_plan(doc_text)
     print(f"\nPlano: {plan.reason}")
     print(f"Zonas: {len(plan.zones)}")
-    
+
     for zone in plan.zones:
         print(f"  Zona {zone.zone_id}: chars {zone.start_char:,}-{zone.end_char:,} ({zone.num_chars:,} chars)")
-    
+
     # Simular resultados
     zone_results = []
     for zone in plan.zones:
@@ -480,7 +479,7 @@ if __name__ == "__main__":
             confidence=0.85,
         )
         zone_results.append(zr)
-    
+
     summary = build_zone_summary(zone_results)
     print(f"\nResumo consolidado: {len(summary):,} chars")
     print(f"Confiança ponderada: {merge_zone_confidences(zone_results):.0%}")

@@ -1,0 +1,52 @@
+# Ruff linter config for TRIBUNAL_SAAS_V2
+# Run: ruff check src/ main.py auth_service.py
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes (unused imports, undefined names)
+    "W",      # pycodestyle warnings
+    "B",      # flake8-bugbear (common bugs)
+    "SIM",    # flake8-simplify
+    "UP",     # pyupgrade (Python 3.10+ patterns)
+    "DTZ",    # flake8-datetimez — CATCHES datetime.now() WITHOUT tz!
+    "S",      # flake8-bandit (security)
+    "T20",    # flake8-print (catches print() in production code)
+]
+
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module-level import not at top (conditional/heavy imports)
+    "S101",   # assert used (OK in tests)
+    "S603",   # subprocess call (not applicable)
+    "S607",   # partial executable path
+    "S112",   # try-except-continue (sometimes intentional)
+    "T201",   # print found — only warn, don't block (some are in __main__)
+    "B008",   # Depends() in defaults (FastAPI pattern, by design)
+    "B904",   # raise from (too noisy)
+    "S110",   # try-except-pass (sometimes intentional)
+    "S108",   # hardcoded temp dir
+    "UP007",  # Optional[X] vs X | None (keep compat)
+    "UP045",  # Optional[X] → X | None in annotations (keep compat)
+    "UP035",  # typing.Dict/List deprecated (keep compat)
+    "W293",   # whitespace before ':' (cosmetic)
+    "W291",   # trailing whitespace (cosmetic)
+    "E701",   # multiple statements on one line (rare, OK)
+    "SIM102", # collapsible if (style preference)
+    "SIM105", # use contextlib.suppress (style preference)
+    "SIM108", # use ternary (style preference)
+    "SIM103", # return bool directly (style preference)
+    "SIM114", # combine if branches (style preference)
+    "SIM118", # use key in dict (style preference)
+]
+
+# Only check source files, not venv/tests
+[lint.per-file-ignores]
+"src/app.py" = ["T201"]  # Streamlit app uses print in __main__
+"src/tier_config.py" = ["T201"]  # Has __main__ test
+"src/wallet_manager.py" = ["T201"]  # Has __main__ test
+"src/pipeline/integrity.py" = ["T201"]  # Has __main__ test
+"src/pipeline/zone_processor.py" = ["T201"]  # Has __main__ test
+"monitor_logs.py" = ["T201", "DTZ"]  # Monitor script, local time OK
+"src/perguntas/tab_perguntas.py" = ["DTZ"]  # Streamlit UI, local time OK
+"tests/*" = ["S101", "DTZ"]  # Tests can use assert and naive datetime

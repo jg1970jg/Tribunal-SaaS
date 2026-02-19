@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 TRIBUNAL SAAS - Utilitário de Limpeza
 ============================================================
@@ -9,14 +8,13 @@ Não apaga runs válidos.
 
 import shutil
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Tuple
 
 logger = logging.getLogger(__name__)
 
 
-def get_temp_folders(output_dir: Path) -> List[Path]:
+def get_temp_folders(output_dir: Path) -> list[Path]:
     """
     Lista todas as pastas temporárias em outputs/.
 
@@ -47,8 +45,8 @@ def get_folder_age(folder: Path) -> timedelta:
     Returns:
         timedelta com a idade
     """
-    mtime = datetime.fromtimestamp(folder.stat().st_mtime)
-    return datetime.now() - mtime
+    mtime = datetime.fromtimestamp(folder.stat().st_mtime, tz=timezone.utc)
+    return datetime.now(timezone.utc) - mtime
 
 
 def get_folder_size(folder: Path) -> int:
@@ -102,7 +100,7 @@ def cleanup_temp_folders(
     output_dir: Path,
     max_age_hours: int = 24,
     dry_run: bool = True,
-) -> Tuple[int, int, List[str]]:
+) -> tuple[int, int, list[str]]:
     """
     Remove pastas temporárias antigas.
 
@@ -162,7 +160,7 @@ def cleanup_temp_folders(
 def cleanup_all_temp_folders(
     output_dir: Path,
     dry_run: bool = True,
-) -> Tuple[int, int, List[str]]:
+) -> tuple[int, int, list[str]]:
     """
     Remove TODAS as pastas temp_* (independente da idade).
 

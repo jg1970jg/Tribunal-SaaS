@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Schemas Estruturados para Fases 2-4 (Auditoria, Juízes, Presidente).
 
@@ -18,11 +17,10 @@ CHANGELOG:
 - 2026-02-10: Fix Bug #4 — confidence dinâmica baseada em evidência quando LLM não envia valor
 """
 
-import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple
+from typing import Optional
 from enum import Enum
 
 from src.pipeline.schema_unified import SourceSpan, ExtractionMethod
@@ -122,7 +120,7 @@ class Citation:
             confidence=span.confidence,
         )
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "doc_id": self.doc_id,
             "chunk_id": self.chunk_id,
@@ -170,9 +168,9 @@ class AuditFinding:
     claim: str
     finding_type: FindingType
     severity: Severity
-    citations: List[Citation]
-    evidence_item_ids: List[str] = field(default_factory=list)
-    conflicts: List[str] = field(default_factory=list)
+    citations: list[Citation]
+    evidence_item_ids: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
     notes: str = ""
     is_determinant: bool = False
 
@@ -180,7 +178,7 @@ class AuditFinding:
         if not self.finding_id:
             self.finding_id = f"finding_{uuid.uuid4().hex[:8]}"
 
-    def validate(self) -> Tuple[bool, List[str]]:
+    def validate(self) -> tuple[bool, list[str]]:
         """Valida o finding. Retorna (is_valid, errors)."""
         errors = []
         if not self.claim:
@@ -189,7 +187,7 @@ class AuditFinding:
             errors.append(f"Finding '{self.finding_id}' sem citations")
         return len(errors) == 0, errors
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "finding_id": self.finding_id,
             "claim": self.claim,
@@ -203,7 +201,7 @@ class AuditFinding:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'AuditFinding':
+    def from_dict(cls, data: dict) -> 'AuditFinding':
         return cls(
             finding_id=data.get("finding_id", ""),
             claim=data.get("claim", ""),
@@ -220,14 +218,14 @@ class AuditFinding:
 @dataclass
 class CoverageCheck:
     """Verificação de cobertura feita pelo auditor."""
-    docs_seen: List[str] = field(default_factory=list)
-    pages_seen: List[int] = field(default_factory=list)
-    chunks_seen: List[str] = field(default_factory=list)
-    unreadable_units: List[Dict] = field(default_factory=list)
+    docs_seen: list[str] = field(default_factory=list)
+    pages_seen: list[int] = field(default_factory=list)
+    chunks_seen: list[str] = field(default_factory=list)
+    unreadable_units: list[dict] = field(default_factory=list)
     coverage_percent: float = 0.0
     notes: str = ""
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "docs_seen": self.docs_seen,
             "pages_seen": self.pages_seen,
@@ -238,7 +236,7 @@ class CoverageCheck:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'CoverageCheck':
+    def from_dict(cls, data: dict) -> 'CoverageCheck':
         return cls(
             docs_seen=data.get("docs_seen", []),
             pages_seen=data.get("pages_seen", []),
@@ -255,18 +253,18 @@ class AuditReport:
     auditor_id: str
     model_name: str
     run_id: str
-    findings: List[AuditFinding] = field(default_factory=list)
+    findings: list[AuditFinding] = field(default_factory=list)
     coverage_check: CoverageCheck = field(default_factory=CoverageCheck)
-    open_questions: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self):
         if isinstance(self.coverage_check, dict):
             self.coverage_check = CoverageCheck.from_dict(self.coverage_check)
 
-    def validate(self) -> Tuple[bool, List[str]]:
+    def validate(self) -> tuple[bool, list[str]]:
         """Valida o relatório completo."""
         errors = []
         for finding in self.findings:
@@ -275,7 +273,7 @@ class AuditReport:
                 errors.extend(finding_errors)
         return len(errors) == 0, errors
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "auditor_id": self.auditor_id,
             "model_name": self.model_name,
@@ -289,7 +287,7 @@ class AuditReport:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'AuditReport':
+    def from_dict(cls, data: dict) -> 'AuditReport':
         report = cls(
             auditor_id=data.get("auditor_id", ""),
             model_name=data.get("model_name", ""),
@@ -332,7 +330,7 @@ class AuditReport:
                     lines.append(f"\n**[{f.finding_id}]** {f.claim}")
                     lines.append(f"- Tipo: {f.finding_type.value}")
                     if f.citations:
-                        lines.append(f"- Citações:")
+                        lines.append("- Citações:")
                         for c in f.citations[:3]:
                             page_info = f" (pág. {c.page_num})" if c.page_num else ""
                             lines.append(f"  - chars {c.start_char}-{c.end_char}{page_info}")
@@ -369,19 +367,19 @@ class JudgePoint:
     point_id: str
     conclusion: str
     rationale: str
-    citations: List[Citation] = field(default_factory=list)
-    legal_basis: List[str] = field(default_factory=list)
-    risks: List[str] = field(default_factory=list)
-    alternatives: List[str] = field(default_factory=list)
+    citations: list[Citation] = field(default_factory=list)
+    legal_basis: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    alternatives: list[str] = field(default_factory=list)
     confidence: float = 0.8
-    finding_refs: List[str] = field(default_factory=list)
+    finding_refs: list[str] = field(default_factory=list)
     is_determinant: bool = False
 
     def __post_init__(self):
         if not self.point_id:
             self.point_id = f"point_{uuid.uuid4().hex[:8]}"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "point_id": self.point_id,
             "conclusion": self.conclusion,
@@ -448,13 +446,13 @@ class Disagreement:
     target_type: str
     reason: str
     alternative_view: str
-    citations: List[Citation] = field(default_factory=list)
+    citations: list[Citation] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.disagreement_id:
             self.disagreement_id = f"disagree_{uuid.uuid4().hex[:8]}"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "disagreement_id": self.disagreement_id,
             "target_id": self.target_id,
@@ -487,14 +485,14 @@ class JudgeOpinion:
     model_name: str
     run_id: str
     recommendation: DecisionType
-    decision_points: List[JudgePoint] = field(default_factory=list)
-    disagreements: List[Disagreement] = field(default_factory=list)
-    qa_responses: List[Dict] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    decision_points: list[JudgePoint] = field(default_factory=list)
+    disagreements: list[Disagreement] = field(default_factory=list)
+    qa_responses: list[dict] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "judge_id": self.judge_id,
             "model_name": self.model_name,
@@ -509,7 +507,7 @@ class JudgeOpinion:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'JudgeOpinion':
+    def from_dict(cls, data: dict) -> 'JudgeOpinion':
         try:
             recommendation = DecisionType(data.get("recommendation", "inconclusivo"))
         except ValueError:
@@ -591,17 +589,17 @@ class JudgeOpinion:
 class ConflictResolution:
     """Resolução de conflito entre juízes/auditores."""
     conflict_id: str
-    conflicting_ids: List[str]
+    conflicting_ids: list[str]
     resolution: str
     chosen_value: str
     reasoning: str
-    citations: List[Citation] = field(default_factory=list)
+    citations: list[Citation] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.conflict_id:
             self.conflict_id = f"resolution_{uuid.uuid4().hex[:8]}"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "conflict_id": self.conflict_id,
             "conflicting_ids": self.conflicting_ids,
@@ -636,16 +634,16 @@ class FinalDecision:
     decision_type: DecisionType
     decision_id: str = ""
     confidence: float = 0.8
-    decision_points_final: List[JudgePoint] = field(default_factory=list)
-    proofs: List[Citation] = field(default_factory=list)
-    unreadable_parts: List[Dict] = field(default_factory=list)
-    conflicts_resolved: List[ConflictResolution] = field(default_factory=list)
-    conflicts_unresolved: List[Dict] = field(default_factory=list)
-    qa_final: List[Dict] = field(default_factory=list)
-    judges_consulted: List[str] = field(default_factory=list)
-    auditors_consulted: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    decision_points_final: list[JudgePoint] = field(default_factory=list)
+    proofs: list[Citation] = field(default_factory=list)
+    unreadable_parts: list[dict] = field(default_factory=list)
+    conflicts_resolved: list[ConflictResolution] = field(default_factory=list)
+    conflicts_unresolved: list[dict] = field(default_factory=list)
+    qa_final: list[dict] = field(default_factory=list)
+    judges_consulted: list[str] = field(default_factory=list)
+    auditors_consulted: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
     output_markdown: str = ""
 
@@ -653,7 +651,7 @@ class FinalDecision:
         if not self.decision_id:
             self.decision_id = f"decision_{uuid.uuid4().hex[:8]}"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "decision_id": self.decision_id,
             "run_id": self.run_id,
@@ -675,7 +673,7 @@ class FinalDecision:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'FinalDecision':
+    def from_dict(cls, data: dict) -> 'FinalDecision':
         try:
             decision_type = DecisionType(data.get("decision_type", "inconclusivo"))
         except ValueError:
@@ -798,7 +796,7 @@ class FinalDecision:
 # PARSING JSON COM FALLBACK
 # ============================================================================
 
-def parse_json_safe(output: str, context: str = "unknown") -> Tuple[Optional[Dict], List[str]]:
+def parse_json_safe(output: str, context: str = "unknown") -> tuple[Optional[dict], list[str]]:
     """Tenta extrair JSON de output LLM de forma robusta."""
     from src.pipeline.extractor_json import extract_json_from_text
     errors = []
@@ -875,8 +873,8 @@ class ConsolidatedFinding:
     claim: str
     finding_type: FindingType
     severity: Severity
-    sources: List[str]
-    citations: List[Citation] = field(default_factory=list)
+    sources: list[str]
+    citations: list[Citation] = field(default_factory=list)
     consensus_level: str = "unico"
     notes: str = ""
 
@@ -884,7 +882,7 @@ class ConsolidatedFinding:
         if not self.finding_id:
             self.finding_id = f"finding_consolidated_{uuid.uuid4().hex[:8]}"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "finding_id": self.finding_id, "claim": self.claim,
             "finding_type": self.finding_type.value, "severity": self.severity.value,
@@ -893,7 +891,7 @@ class ConsolidatedFinding:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'ConsolidatedFinding':
+    def from_dict(cls, data: dict) -> 'ConsolidatedFinding':
         return cls(
             finding_id=data.get("finding_id", ""), claim=data.get("claim", ""),
             finding_type=FindingType(data.get("finding_type", "facto")),
@@ -908,15 +906,15 @@ class ConsolidatedFinding:
 class Divergence:
     """Divergência entre auditores identificada pelo Chefe."""
     topic: str
-    positions: List[Dict]
+    positions: list[dict]
     resolution: str = ""
     unresolved: bool = True
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {"topic": self.topic, "positions": self.positions, "resolution": self.resolution, "unresolved": self.unresolved}
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'Divergence':
+    def from_dict(cls, data: dict) -> 'Divergence':
         return cls(topic=data.get("topic", ""), positions=data.get("positions", []), resolution=data.get("resolution", ""), unresolved=data.get("unresolved", True))
 
 
@@ -926,21 +924,21 @@ class ChefeConsolidatedReport:
     chefe_id: str
     model_name: str
     run_id: str
-    consolidated_findings: List[ConsolidatedFinding] = field(default_factory=list)
-    divergences: List[Divergence] = field(default_factory=list)
+    consolidated_findings: list[ConsolidatedFinding] = field(default_factory=list)
+    divergences: list[Divergence] = field(default_factory=list)
     coverage_check: CoverageCheck = field(default_factory=CoverageCheck)
-    recommendations_phase3: List[Dict] = field(default_factory=list)
-    legal_refs_consolidated: List[Dict] = field(default_factory=list)
-    open_questions: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    recommendations_phase3: list[dict] = field(default_factory=list)
+    legal_refs_consolidated: list[dict] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self):
         if isinstance(self.coverage_check, dict):
             self.coverage_check = CoverageCheck.from_dict(self.coverage_check)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "chefe_id": self.chefe_id, "model_name": self.model_name, "run_id": self.run_id,
             "consolidated_findings": [f.to_dict() for f in self.consolidated_findings],
@@ -953,7 +951,7 @@ class ChefeConsolidatedReport:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'ChefeConsolidatedReport':
+    def from_dict(cls, data: dict) -> 'ChefeConsolidatedReport':
         return cls(
             chefe_id=data.get("chefe_id", "CHEFE"), model_name=data.get("model_name", ""),
             run_id=data.get("run_id", ""),
@@ -969,7 +967,7 @@ class ChefeConsolidatedReport:
     def to_markdown(self) -> str:
         """Renderiza o relatório consolidado como Markdown."""
         lines = [
-            f"# Relatório Consolidado do Chefe",
+            "# Relatório Consolidado do Chefe",
             f"**Modelo:** {self.model_name}",
             f"**Run:** {self.run_id}",
             f"**Timestamp:** {self.timestamp.isoformat()}",

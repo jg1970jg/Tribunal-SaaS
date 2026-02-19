@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Schema Unificado para Extração com Proveniência e Cobertura.
 
@@ -14,8 +13,8 @@ REGRAS NÃO-NEGOCIÁVEIS:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import List, Dict, Optional, Any, Set, Tuple
+from datetime import datetime, timezone
+from typing import Optional, Any
 from enum import Enum
 import hashlib
 import json
@@ -72,7 +71,7 @@ class DocumentMeta:
         if not self.doc_id:
             self.doc_id = f"doc_{uuid.uuid4().hex[:8]}"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "doc_id": self.doc_id,
             "filename": self.filename,
@@ -116,7 +115,7 @@ class Chunk:
     def char_length(self) -> int:
         return self.end_char - self.start_char
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "doc_id": self.doc_id,
             "chunk_id": self.chunk_id,
@@ -168,7 +167,7 @@ class SourceSpan:
         overlap_end = min(self.end_char, other.end_char)
         return (overlap_end - overlap_start) >= min_overlap
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "doc_id": self.doc_id,
             "chunk_id": self.chunk_id,
@@ -192,10 +191,10 @@ class EvidenceItem:
     item_id: str
     item_type: ItemType
     value_normalized: str  # Valor normalizado (ex: data ISO, valor numérico)
-    source_spans: List[SourceSpan]  # OBRIGATÓRIO - pelo menos 1
+    source_spans: list[SourceSpan]  # OBRIGATÓRIO - pelo menos 1
     raw_text: Optional[str] = None  # Texto original como aparece no doc
     context: Optional[str] = None   # Contexto circundante
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.item_id:
@@ -209,7 +208,7 @@ class EvidenceItem:
             )
 
     @property
-    def extractor_ids(self) -> Set[str]:
+    def extractor_ids(self) -> set[str]:
         """Retorna set de extractors que encontraram este item."""
         return {span.extractor_id for span in self.source_spans}
 
@@ -222,7 +221,7 @@ class EvidenceItem:
         """Adiciona mais uma fonte a este item."""
         self.source_spans.append(span)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "item_id": self.item_id,
             "item_type": self.item_type.value,
@@ -246,12 +245,12 @@ class ExtractionRun:
     chunks_processed: int = 0
     chunks_failed: int = 0
     items_extracted: int = 0
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=datetime.now)
     finished_at: Optional[datetime] = None
     duration_ms: float = 0.0
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "run_id": self.run_id,
             "extractor_id": self.extractor_id,
@@ -290,7 +289,7 @@ class CharRange:
             extractor_id=self.extractor_id or other.extractor_id
         )
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "start": self.start,
             "end": self.end,
@@ -307,11 +306,11 @@ class Coverage:
     REGRA: char_ranges_missing deve estar vazio no final OK.
     """
     total_chars: int
-    char_ranges_covered: List[CharRange] = field(default_factory=list)
-    char_ranges_missing: List[CharRange] = field(default_factory=list)
-    coverage_by_extractor: Dict[str, List[CharRange]] = field(default_factory=dict)
-    pages_covered: List[int] = field(default_factory=list)
-    pages_unreadable: List[Dict] = field(default_factory=list)  # [{page_num, reason}]
+    char_ranges_covered: list[CharRange] = field(default_factory=list)
+    char_ranges_missing: list[CharRange] = field(default_factory=list)
+    coverage_by_extractor: dict[str, list[CharRange]] = field(default_factory=dict)
+    pages_covered: list[int] = field(default_factory=list)
+    pages_unreadable: list[dict] = field(default_factory=list)  # [{page_num, reason}]
     coverage_percent: float = 0.0
     is_complete: bool = False
 
@@ -336,7 +335,7 @@ class Coverage:
         significant_gaps = [g for g in self.char_ranges_missing if g.length >= 100]
         self.is_complete = len(significant_gaps) == 0
 
-    def _merge_ranges(self, ranges: List[CharRange]) -> List[CharRange]:
+    def _merge_ranges(self, ranges: list[CharRange]) -> list[CharRange]:
         """Merge ranges sobrepostos."""
         if not ranges:
             return []
@@ -353,7 +352,7 @@ class Coverage:
 
         return merged
 
-    def _find_gaps(self, merged_ranges: List[CharRange], total: int) -> List[CharRange]:
+    def _find_gaps(self, merged_ranges: list[CharRange], total: int) -> list[CharRange]:
         """Encontra intervalos não cobertos."""
         gaps = []
         prev_end = 0
@@ -368,7 +367,7 @@ class Coverage:
 
         return gaps
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "total_chars": self.total_chars,
             "coverage_percent": round(self.coverage_percent, 2),
@@ -394,7 +393,7 @@ class Conflict:
     conflict_id: str
     item_type: ItemType
     span_key: str  # Identificador do span em conflito
-    values: List[Dict]  # [{extractor_id, value, confidence}]
+    values: list[dict]  # [{extractor_id, value, confidence}]
     resolution: Optional[str] = None  # Se resolvido, qual valor escolhido
     resolved_by: Optional[str] = None  # "manual" | "auto" | None
 
@@ -402,7 +401,7 @@ class Conflict:
         if not self.conflict_id:
             self.conflict_id = f"conflict_{uuid.uuid4().hex[:8]}"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "conflict_id": self.conflict_id,
             "item_type": self.item_type.value,
@@ -425,33 +424,33 @@ class UnifiedExtractionResult:
     document_meta: DocumentMeta
 
     # Chunks processados
-    chunks: List[Chunk] = field(default_factory=list)
+    chunks: list[Chunk] = field(default_factory=list)
 
     # Runs de extração (1 por extrator)
-    extraction_runs: List[ExtractionRun] = field(default_factory=list)
+    extraction_runs: list[ExtractionRun] = field(default_factory=list)
 
     # Items extraídos (com proveniência)
-    evidence_items: List[EvidenceItem] = field(default_factory=list)
+    evidence_items: list[EvidenceItem] = field(default_factory=list)
 
     # Agregação final (união sem dedup)
-    union_items: List[EvidenceItem] = field(default_factory=list)
+    union_items: list[EvidenceItem] = field(default_factory=list)
 
     # Conflitos detectados
-    conflicts: List[Conflict] = field(default_factory=list)
+    conflicts: list[Conflict] = field(default_factory=list)
 
     # Cobertura
     coverage: Optional[Coverage] = None
 
     # Status geral
     status: ExtractionStatus = ExtractionStatus.PENDING
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self):
         if not self.result_id:
-            self.result_id = f"result_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+            self.result_id = f"result_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
-    def validate(self) -> Tuple[bool, List[str]]:
+    def validate(self) -> tuple[bool, list[str]]:
         """
         Valida o resultado completo.
 
@@ -484,11 +483,11 @@ class UnifiedExtractionResult:
 
         return len(errors) == 0, errors
 
-    def get_items_by_type(self, item_type: ItemType) -> List[EvidenceItem]:
+    def get_items_by_type(self, item_type: ItemType) -> list[EvidenceItem]:
         """Retorna items filtrados por tipo."""
         return [i for i in self.union_items if i.item_type == item_type]
 
-    def get_items_by_span(self, start_char: int, end_char: int) -> List[EvidenceItem]:
+    def get_items_by_span(self, start_char: int, end_char: int) -> list[EvidenceItem]:
         """Retorna items que se sobrepõem com o intervalo dado."""
         results = []
         for item in self.union_items:
@@ -498,7 +497,7 @@ class UnifiedExtractionResult:
                     break
         return results
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "result_id": self.result_id,
             "document_meta": self.document_meta.to_dict(),
@@ -540,7 +539,7 @@ def calculate_chunks_for_document(
     total_chars: int,
     chunk_size: int = 50000,
     overlap: int = 2500
-) -> List[Tuple[int, int]]:
+) -> list[tuple[int, int]]:
     """
     Calcula os intervalos de chunks para um documento.
 
@@ -571,7 +570,7 @@ def calculate_chunks_for_document(
     return chunks
 
 
-def validate_evidence_item(item: EvidenceItem) -> Tuple[bool, Optional[str]]:
+def validate_evidence_item(item: EvidenceItem) -> tuple[bool, Optional[str]]:
     """
     Valida um EvidenceItem.
 
@@ -591,8 +590,8 @@ def validate_evidence_item(item: EvidenceItem) -> Tuple[bool, Optional[str]]:
 
 
 def merge_evidence_items_preserve_provenance(
-    items_by_extractor: Dict[str, List[EvidenceItem]]
-) -> Tuple[List[EvidenceItem], List[Conflict]]:
+    items_by_extractor: dict[str, list[EvidenceItem]]
+) -> tuple[list[EvidenceItem], list[Conflict]]:
     """
     Combina items de múltiplos extratores preservando proveniência.
 
@@ -608,7 +607,7 @@ def merge_evidence_items_preserve_provenance(
     conflicts = []
 
     # Índice para detecção de conflitos: span_key -> [(extractor_id, value, item)]
-    span_index: Dict[str, List[Tuple[str, str, EvidenceItem]]] = {}
+    span_index: dict[str, list[tuple[str, str, EvidenceItem]]] = {}
 
     for extractor_id, items in items_by_extractor.items():
         for item in items:

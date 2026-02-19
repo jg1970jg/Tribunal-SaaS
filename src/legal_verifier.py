@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Verificador de Legislação Portuguesa — Self-Healing.
 
@@ -11,8 +10,8 @@ import re
 import sqlite3
 import hashlib
 import logging
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Tuple, Set
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Any
 from dataclasses import dataclass, field
 from pathlib import Path
 from difflib import SequenceMatcher
@@ -24,7 +23,6 @@ _MAX_CACHE_SIZE = 10000
 
 from src.config import (
     DATABASE_PATH,
-    LOG_LEVEL,
     SIMBOLOS_VERIFICACAO,
     API_TIMEOUT,
 )
@@ -65,7 +63,7 @@ class VerificacaoLegal:
     status: str = ""
     simbolo: str = ""
     aplicabilidade: str = "⚠"
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     hash_texto: str = ""
     mensagem: str = ""
     # Campos temporais (verificação dual: lei à data dos factos vs lei actual)
@@ -75,7 +73,7 @@ class VerificacaoLegal:
     existe_actual: Optional[bool] = None         # Artigo existe hoje?
     artigo_alterado: bool = False                # Versão do diploma mudou?
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         artigo = self.citacao.artigo.replace("ºº", "º") if self.citacao.artigo else ""
         d = {
             "diploma": self.citacao.diploma,
@@ -129,7 +127,7 @@ class LegalVerifier:
 
     # --- Mapeamento estático VERIFICADO (fallback se auto-descoberta falhar) ---
     # Cada NID foi confirmado individualmente contra o PGDL.
-    _STATIC_NIDS: Dict[str, int] = {
+    _STATIC_NIDS: dict[str, int] = {
         # Constituição
         "Constituição da República Portuguesa": 4,
         # Códigos fundamentais
@@ -172,7 +170,7 @@ class LegalVerifier:
 
     # --- Diplomas que NÃO existem no PGDL (verificado) ---
     # Para estes, devolvemos "atenção" em vez de "rejeitado".
-    _KNOWN_NO_PGDL: Set[str] = {
+    _KNOWN_NO_PGDL: set[str] = {
         "Código do IRS",
         "Código do IRC",
         "Código do IVA",
@@ -183,7 +181,7 @@ class LegalVerifier:
     }
 
     # --- Aliases: abreviatura / variante → nome canónico ---
-    _ALIASES: Dict[str, str] = {
+    _ALIASES: dict[str, str] = {
         "cc": "Código Civil",
         "código civil": "Código Civil",
         "cp": "Código Penal",
@@ -349,15 +347,15 @@ class LegalVerifier:
             "nao_encontrados": 0,
         }
         # Mapeamento dinâmico: nome canónico → nid
-        self._nid_map: Dict[str, int] = dict(self._STATIC_NIDS)
+        self._nid_map: dict[str, int] = dict(self._STATIC_NIDS)
         # Cache em memória: (nid, nversao) → set de números de artigo
-        self._pgdl_articles_cache: Dict[Tuple[int, Optional[int]], set] = {}
+        self._pgdl_articles_cache: dict[tuple[int, Optional[int]], set] = {}
         # Timestamp da última auto-descoberta
         self._last_discovery: Optional[datetime] = None
         # Verificação temporal: data dos factos
         self._data_factos: Optional[datetime] = None
         # Cache em memória: nid → [(nversao, lei_alteradora, data_publicacao)]
-        self._version_history_cache: Dict[int, Tuple[List[Tuple[int, str, Optional[datetime]]], datetime]] = {}
+        self._version_history_cache: dict[int, tuple[list[tuple[int, str, Optional[datetime]]], datetime]] = {}
         # Carregar NIDs descobertos anteriormente do SQLite
         self._load_discovered_nids()
 
@@ -434,7 +432,7 @@ class LegalVerifier:
                 c = conn.cursor()
                 c.execute("SELECT diploma, nid, discovered_at FROM pgdl_nid_map")
                 rows = c.fetchall()
-            for diploma, nid, discovered_at in rows:
+            for diploma, nid, _discovered_at in rows:
                 if diploma not in self._nid_map:
                     self._nid_map[diploma] = nid
             if rows:
@@ -450,7 +448,7 @@ class LegalVerifier:
                 c.execute("""
                     INSERT OR REPLACE INTO pgdl_nid_map (diploma, nid, discovered_at, source)
                     VALUES (?, ?, ?, ?)
-                """, (diploma, nid, datetime.now().isoformat(), source))
+                """, (diploma, nid, datetime.now(timezone.utc).isoformat(), source))
                 conn.commit()
         except Exception as e:
             logger.warning(f"[LEGAL] Erro ao guardar NID: {e}")
@@ -469,7 +467,7 @@ class LegalVerifier:
         Self-healing: se o PGDL mudar, re-descobre automaticamente.
         """
         if not force and self._last_discovery:
-            if datetime.now() - self._last_discovery < self._DISCOVERY_TTL:
+            if datetime.now(timezone.utc) - self._last_discovery < self._DISCOVERY_TTL:
                 return  # Ainda dentro do TTL
 
         try:
@@ -514,7 +512,7 @@ class LegalVerifier:
                     self._save_discovered_nid(diploma_name, nid, "area32")
                     discovered += 1
 
-            self._last_discovery = datetime.now()
+            self._last_discovery = datetime.now(timezone.utc)
             logger.info(
                 f"[LEGAL] Auto-descoberta: {len(matches)} diplomas na área 32, "
                 f"{discovered} novos, total mapa={len(self._nid_map)}"
@@ -565,7 +563,7 @@ class LegalVerifier:
 
         # 4. Forçar auto-descoberta e tentar de novo
         if not self._last_discovery or (
-            datetime.now() - self._last_discovery > timedelta(minutes=5)
+            datetime.now(timezone.utc) - self._last_discovery > timedelta(minutes=5)
         ):
             self.auto_discover_nids(force=True)
             # Retry directo + fuzzy
@@ -664,7 +662,7 @@ class LegalVerifier:
             if year < 100:
                 year += 2000
             try:
-                return datetime(year, month, day)
+                return datetime(year, month, day, tzinfo=timezone.utc)
             except ValueError:
                 pass
 
@@ -682,7 +680,7 @@ class LegalVerifier:
             else:
                 return None  # Sem ano → não adivinhar
             try:
-                return datetime(year, month, day)
+                return datetime(year, month, day, tzinfo=timezone.utc)
             except ValueError:
                 pass
 
@@ -703,17 +701,17 @@ class LegalVerifier:
                 return None  # Sem ano → não adivinhar
             if month:
                 try:
-                    return datetime(year, month, day)
+                    return datetime(year, month, day, tzinfo=timezone.utc)
                 except ValueError:
                     pass
 
         # Padrão: apenas ano "YYYY" — usar 1 de Janeiro
         if year_from_lei and year_from_lei >= 1900:
-            return datetime(year_from_lei, 1, 1)
+            return datetime(year_from_lei, 1, 1, tzinfo=timezone.utc)
 
         return None
 
-    def _load_version_history_from_db(self, nid: int) -> Optional[List[Tuple[int, str, Optional[datetime]]]]:
+    def _load_version_history_from_db(self, nid: int) -> Optional[list[tuple[int, str, Optional[datetime]]]]:
         """Carrega histórico de versões do SQLite se dentro do TTL."""
         try:
             with sqlite3.connect(str(self.db_path)) as conn:
@@ -728,7 +726,7 @@ class LegalVerifier:
                 return None
             # Verificar TTL pelo cached_at da primeira entrada
             cached_at = datetime.fromisoformat(rows[0][3])
-            if datetime.now() - cached_at > self._VERSION_HISTORY_TTL:
+            if datetime.now(timezone.utc) - cached_at > self._VERSION_HISTORY_TTL:
                 return None  # Expirado
             versions = []
             for nversao, lei, data_pub_str, _ in rows:
@@ -739,12 +737,12 @@ class LegalVerifier:
             logger.debug(f"[LEGAL] Erro ao ler version_history do SQLite: {e}")
             return None
 
-    def _save_version_history_to_db(self, nid: int, versions: List[Tuple[int, str, Optional[datetime]]]):
+    def _save_version_history_to_db(self, nid: int, versions: list[tuple[int, str, Optional[datetime]]]):
         """Guarda histórico de versões no SQLite."""
         try:
             with sqlite3.connect(str(self.db_path)) as conn:
                 c = conn.cursor()
-                now = datetime.now().isoformat()
+                now = datetime.now(timezone.utc).isoformat()
                 for nversao, lei, data_pub in versions:
                     c.execute("""
                         INSERT OR REPLACE INTO pgdl_version_history
@@ -759,7 +757,7 @@ class LegalVerifier:
         except Exception as e:
             logger.warning(f"[LEGAL] Erro ao guardar version_history: {e}")
 
-    def _load_version_history(self, nid: int) -> List[Tuple[int, str, Optional[datetime]]]:
+    def _load_version_history(self, nid: int) -> list[tuple[int, str, Optional[datetime]]]:
         """
         Carrega o histórico de versões de um diploma do PGDL.
 
@@ -769,14 +767,14 @@ class LegalVerifier:
         # 1. Cache em memória
         if nid in self._version_history_cache:
             versions, cached_at = self._version_history_cache[nid]
-            if datetime.now() - cached_at < self._VERSION_HISTORY_TTL:
+            if datetime.now(timezone.utc) - cached_at < self._VERSION_HISTORY_TTL:
                 return versions
 
         # 2. Cache SQLite
         db_versions = self._load_version_history_from_db(nid)
         if db_versions:
             self._evict_cache(self._version_history_cache)
-            self._version_history_cache[nid] = (db_versions, datetime.now())
+            self._version_history_cache[nid] = (db_versions, datetime.now(timezone.utc))
             return db_versions
 
         # 3. Carregar do PGDL
@@ -822,7 +820,7 @@ class LegalVerifier:
                 )
                 if title_match:
                     current_lei = re.sub(r'<[^>]+>', '', title_match.group(1)).strip()
-                versions.append((current_nversao, current_lei or "Versão actual", datetime.now()))
+                versions.append((current_nversao, current_lei or "Versão actual", datetime.now(timezone.utc)))
 
             # Ordenar por nversao
             versions.sort(key=lambda v: v[0])
@@ -831,7 +829,7 @@ class LegalVerifier:
                 logger.info(f"[LEGAL] Version history nid={nid}: {len(versions)} versões ({versions[-1][0]} actual)")
                 # Guardar caches
                 self._evict_cache(self._version_history_cache)
-                self._version_history_cache[nid] = (versions, datetime.now())
+                self._version_history_cache[nid] = (versions, datetime.now(timezone.utc))
                 self._save_version_history_to_db(nid, versions)
             else:
                 logger.debug(f"[LEGAL] Version history nid={nid}: nenhuma versão histórica encontrada")
@@ -886,7 +884,7 @@ class LegalVerifier:
         if nversao is None:
             return None
         versions = self._load_version_history(nid)
-        for nv, lei, dt in versions:
+        for nv, lei, _dt in versions:
             if nv == nversao:
                 label = f"Versão {nv}"
                 if lei:
@@ -960,7 +958,7 @@ class LegalVerifier:
             texto_normalizado=texto_norm,
         )
 
-    def extrair_citacoes(self, texto: str) -> List[CitacaoLegal]:
+    def extrair_citacoes(self, texto: str) -> list[CitacaoLegal]:
         citacoes = []
         padroes = [
             r"art(?:igo)?[.º°]?\s*\d+\.?[º°]?(?:-[A-Z])?(?:[,\s]+(?:n\.?[º°]?\s*\d+|al[ií]nea\s*[a-z]\)?))*[,\s]*(?:(?:do|da|dos|das)\s+)?(?:[^\n.;]{0,80})(?=\.|;|\n|$)",
@@ -1028,7 +1026,7 @@ class LegalVerifier:
                     fonte=f"cache_local ({fonte})",
                     status="aprovado",
                     simbolo=SIMBOLOS_VERIFICACAO["aprovado"],
-                    timestamp=datetime.fromisoformat(ts) if ts else datetime.now(),
+                    timestamp=datetime.fromisoformat(ts) if ts else datetime.now(timezone.utc),
                     hash_texto=hash_texto or "",
                     mensagem=f"Encontrado no cache (fonte: {fonte})",
                 )
@@ -1140,7 +1138,7 @@ class LegalVerifier:
 
             if art_num in articles:
                 self._stats["encontrados"] += 1
-                hash_texto = hashlib.md5(
+                hash_texto = hashlib.sha256(
                     f"{citacao.diploma}:{art_num}".encode()
                 ).hexdigest()
                 return VerificacaoLegal(
@@ -1253,7 +1251,7 @@ class LegalVerifier:
             diff = abs(versao_actual_num - versao_factos)
             partes_msg.append(f"DIPLOMA ALTERADO ({diff} versões de diferença)")
 
-        hash_texto = hashlib.md5(
+        hash_texto = hashlib.sha256(
             f"{citacao.diploma}:{art_num}:temporal".encode()
         ).hexdigest()
 
@@ -1289,7 +1287,7 @@ class LegalVerifier:
                     citacao.alinea,
                     resultado.texto_encontrado,
                     resultado.fonte,
-                    datetime.now().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                     resultado.hash_texto,
                     1 if resultado.existe else 0,
                 ))
@@ -1301,20 +1299,20 @@ class LegalVerifier:
     # API pública
     # ------------------------------------------------------------------
 
-    def verificar_multiplas(self, citacoes: List[CitacaoLegal]) -> List[VerificacaoLegal]:
+    def verificar_multiplas(self, citacoes: list[CitacaoLegal]) -> list[VerificacaoLegal]:
         return [self.verificar_citacao(c) for c in citacoes]
 
-    def verificar_texto(self, texto: str) -> Tuple[List[CitacaoLegal], List[VerificacaoLegal]]:
+    def verificar_texto(self, texto: str) -> tuple[list[CitacaoLegal], list[VerificacaoLegal]]:
         citacoes = self.extrair_citacoes(texto)
         verificacoes = self.verificar_multiplas(citacoes)
         return citacoes, verificacoes
 
-    def gerar_relatorio(self, verificacoes: List[VerificacaoLegal]) -> str:
+    def gerar_relatorio(self, verificacoes: list[VerificacaoLegal]) -> str:
         linhas = [
             "=" * 60,
             "RELATÓRIO DE VERIFICAÇÃO LEGAL",
             "=" * 60,
-            f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+            f"Data: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}",
             f"Total: {len(verificacoes)}",
             "",
         ]
@@ -1346,11 +1344,11 @@ class LegalVerifier:
                     linhas.append(f"   À data dos factos ({data_str}): {v.versao_data_factos} — {estado_f}")
                 if v.existe_actual is not None and v.versao_actual:
                     estado_a = "EXISTE" if v.existe_actual else "NÃO ENCONTRADO"
-                    linhas.append(f"   Versão actual ({datetime.now().strftime('%d/%m/%Y')}): {v.versao_actual} — {estado_a}")
+                    linhas.append(f"   Versão actual ({datetime.now(timezone.utc).strftime('%d/%m/%Y')}): {v.versao_actual} — {estado_a}")
                 if v.artigo_alterado:
-                    linhas.append(f"   ⚠ DIPLOMA ALTERADO entre as duas datas")
+                    linhas.append("   ⚠ DIPLOMA ALTERADO entre as duas datas")
                     if not v.existe_actual and v.existe_data_factos:
-                        linhas.append(f"   ⚠ ARTIGO POSSIVELMENTE REVOGADO ou renumerado")
+                        linhas.append("   ⚠ ARTIGO POSSIVELMENTE REVOGADO ou renumerado")
             elif v.texto_encontrado:
                 linhas.append(f"   Texto: {v.texto_encontrado[:200]}...")
         linhas.extend([
@@ -1361,7 +1359,7 @@ class LegalVerifier:
         ])
         return "\n".join(linhas)
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Verifica se o PGDL está acessível e o sistema funciona."""
         result = {
             "pgdl_online": False,
@@ -1386,7 +1384,7 @@ class LegalVerifier:
             pass
         return result
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         return {**self._stats, "nids_conhecidos": len(self._nid_map)}
 
     def close(self):

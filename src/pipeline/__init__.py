@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Módulo de pipeline - orquestração do processo de análise.
 """

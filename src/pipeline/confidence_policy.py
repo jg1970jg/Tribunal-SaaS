@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Policy Determinística de Confiança para o Pipeline do Tribunal.
 
@@ -21,7 +20,7 @@ MUDANÇAS (v2.1):
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Optional, Any
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -52,7 +51,7 @@ class PenaltyRule:
 
 
 # Regras padrão de penalidade
-DEFAULT_PENALTY_RULES: Dict[str, PenaltyRule] = {
+DEFAULT_PENALTY_RULES: dict[str, PenaltyRule] = {
 
     # ── Erros de Integridade ──
 
@@ -232,7 +231,7 @@ class PenaltyBreakdown:
     total_penalty: float
     occurrences: int
     capped_at: float
-    error_types: Dict[str, int] = field(default_factory=dict)
+    error_types: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -250,16 +249,16 @@ class ConfidencePenaltyResult:
     adjusted_confidence: float = 1.0
 
     # Breakdown por categoria
-    by_category: Dict[str, PenaltyBreakdown] = field(default_factory=dict)
+    by_category: dict[str, PenaltyBreakdown] = field(default_factory=dict)
 
     # Lista de erros que causaram penalidade
-    penalties_applied: List[Dict] = field(default_factory=list)
+    penalties_applied: list[dict] = field(default_factory=list)
 
     # Resumo
     is_severely_penalized: bool = False
     dominant_category: Optional[str] = None
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "total_penalty": round(self.total_penalty, 4),
             "confidence_ceiling": self.confidence_ceiling,
@@ -293,7 +292,7 @@ class ConfidencePolicyCalculator:
 
     def __init__(
         self,
-        rules: Optional[Dict[str, PenaltyRule]] = None,
+        rules: Optional[dict[str, PenaltyRule]] = None,
         global_max_penalty: float = 0.40,  # AJUSTADO: era 0.50
         severe_ceiling: float = 0.80,      # AJUSTADO: era 0.75
     ):
@@ -310,8 +309,8 @@ class ConfidencePolicyCalculator:
     def compute_penalty(
         self,
         integrity_report: Optional[Any] = None,
-        coverage_report: Optional[Dict] = None,
-        errors_list: Optional[List[str]] = None,
+        coverage_report: Optional[dict] = None,
+        errors_list: Optional[list[str]] = None,
         original_confidence: float = 1.0
     ) -> ConfidencePenaltyResult:
         """
@@ -327,7 +326,7 @@ class ConfidencePolicyCalculator:
             ConfidencePenaltyResult com breakdown completo
         """
         # Contadores por tipo de erro
-        error_counts: Dict[str, int] = {}
+        error_counts: dict[str, int] = {}
 
         # 1. Processar IntegrityReport
         if integrity_report is not None:
@@ -344,7 +343,7 @@ class ConfidencePolicyCalculator:
         # 4. Calcular penalidades
         return self._calculate_penalties(error_counts, original_confidence)
 
-    def _count_integrity_errors(self, report: Any, counts: Dict[str, int]):
+    def _count_integrity_errors(self, report: Any, counts: dict[str, int]):
         """Conta erros de um IntegrityReport."""
         if isinstance(report, dict):
             top_errors = report.get("top_errors", [])
@@ -374,7 +373,7 @@ class ConfidencePolicyCalculator:
                     continue
                 counts[error_type] = counts.get(error_type, 0) + 1
 
-    def _count_coverage_errors(self, coverage: Dict, counts: Dict[str, int]):
+    def _count_coverage_errors(self, coverage: dict, counts: dict[str, int]):
         """Conta erros de um coverage_report.json."""
         # Cobertura baixa
         coverage_percent = coverage.get("coverage_percent", 100)
@@ -397,7 +396,7 @@ class ConfidencePolicyCalculator:
         if pages_unreadable > 0:
             counts["PAGES_UNREADABLE"] = counts.get("PAGES_UNREADABLE", 0) + pages_unreadable
 
-    def _count_string_errors(self, errors: List[str], counts: Dict[str, int]):
+    def _count_string_errors(self, errors: list[str], counts: dict[str, int]):
         """Conta erros de uma lista de strings."""
         for error in errors:
             if not error:
@@ -445,7 +444,7 @@ class ConfidencePolicyCalculator:
 
     def _calculate_penalties(
         self,
-        error_counts: Dict[str, int],
+        error_counts: dict[str, int],
         original_confidence: float
     ) -> ConfidencePenaltyResult:
         """Calcula penalidades finais."""
@@ -457,7 +456,7 @@ class ConfidencePolicyCalculator:
         penalties_applied = []
 
         # Agrupar por categoria
-        category_penalties: Dict[ErrorCategory, List[Tuple[str, int, float]]] = {}
+        category_penalties: dict[ErrorCategory, list[tuple[str, int, float]]] = {}
 
         for error_type, count in error_counts.items():
             if error_type not in self.rules:
@@ -555,8 +554,8 @@ class ConfidencePolicyCalculator:
 
 def compute_penalty(
     integrity_report: Optional[Any] = None,
-    coverage_report: Optional[Dict] = None,
-    errors_list: Optional[List[str]] = None,
+    coverage_report: Optional[dict] = None,
+    errors_list: Optional[list[str]] = None,
     original_confidence: float = 1.0
 ) -> ConfidencePenaltyResult:
     """

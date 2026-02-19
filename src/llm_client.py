@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Cliente LLM UNIFICADO - Dual API System + PROMPT CACHING
 ═══════════════════════════════════════════════════════════════════════════
@@ -24,8 +23,8 @@ import httpx
 import json
 import logging
 from pathlib import Path
-from datetime import datetime
-from typing import Optional, Dict, Any, List, Union
+from datetime import datetime, timezone
+from typing import Optional, Any, Union
 from dataclasses import dataclass, field
 from tenacity import (
     retry,
@@ -37,6 +36,8 @@ from tenacity import (
 
 import os
 import threading
+
+logger = logging.getLogger(__name__)
 
 
 def _is_retryable_http_error(exception: BaseException) -> bool:
@@ -74,7 +75,7 @@ def _is_retryable_http_error(exception: BaseException) -> bool:
     return False
 
 
-def _safe_parse_json(response: httpx.Response, context: str = "") -> Dict[str, Any]:
+def _safe_parse_json(response: httpx.Response, context: str = "") -> dict[str, Any]:
     """
     FIX 2026-02-10: Parse JSON defensivo com validação do body.
 
@@ -129,9 +130,6 @@ def _safe_parse_json(response: httpx.Response, context: str = "") -> Dict[str, A
     return data
 
 
-logger = logging.getLogger(__name__)
-
-
 # =============================================================================
 # PROMPT CACHING - CONFIGURAÇÃO
 # =============================================================================
@@ -165,10 +163,10 @@ def requires_manual_cache(model: str) -> bool:
 
 
 def prepare_messages_with_cache(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     model: str,
     enable_cache: bool = True
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Adiciona cache_control às mensagens para modelos Anthropic.
     
@@ -187,26 +185,26 @@ def prepare_messages_with_cache(
     """
     if not enable_cache or not requires_manual_cache(model):
         return messages
-    
+
     # Encontrar mensagens 'user' longas (>4096 chars ≈ 1024 tokens)
     user_messages_idx = [
         i for i, msg in enumerate(messages)
         if msg.get("role") == "user" and len(str(msg.get("content", ""))) > 4096
     ]
-    
+
     if not user_messages_idx:
         return messages
-    
+
     # Cachear os últimos 1-4 blocos (max 4 breakpoints)
     num_to_cache = min(4, len(user_messages_idx))
     indices_to_cache = user_messages_idx[-num_to_cache:]
-    
+
     # Adicionar cache_control (deep copy para não mutar dicts do caller)
     import copy as _copy
     cached_messages = _copy.deepcopy(messages)
     for idx in indices_to_cache:
         content = cached_messages[idx]["content"]
-        
+
         if isinstance(content, str):
             cached_messages[idx]["content"] = [
                 {
@@ -221,7 +219,7 @@ def prepare_messages_with_cache(
                 if item.get("type") == "text":
                     item["cache_control"] = {"type": "ephemeral"}
                     break
-    
+
     logger.info(f"[CACHE] ✅ Adicionado cache_control a {num_to_cache} mensagens ({model})")
     return cached_messages
 
@@ -275,8 +273,8 @@ class LLMResponse:
     total_tokens: int = 0
     cached_tokens: int = 0  # NOVO: tokens que vieram do cache
     latency_ms: float = 0.0
-    timestamp: datetime = field(default_factory=datetime.now)
-    raw_response: Optional[Dict] = None
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    raw_response: Optional[dict] = None
     error: Optional[str] = None
     success: bool = True
     api_used: str = ""  # "openai" ou "openrouter"
@@ -289,7 +287,7 @@ class LLMResponse:
             return 0.0
         return 100.0 * self.cached_tokens / self.prompt_tokens
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "content": self.content,
             "model": self.model,
@@ -349,7 +347,8 @@ def uses_responses_api(model_name: str) -> bool:
     clean_name = model_name.replace("openai/", "").lower()
 
     for responses_model in OPENAI_MODELS_USE_RESPONSES_API:
-        if responses_model.lower() in clean_name:
+        rm = responses_model.lower()
+        if clean_name == rm or clean_name.startswith(rm + "-"):
             return True
 
     return False
@@ -454,7 +453,7 @@ class OpenAIClient:
         # FIX H8: Thread-safe stats mutations
         self._stats_lock = threading.Lock()
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self) -> dict[str, str]:
         """Retorna headers para a API."""
         return {
             "Authorization": f"Bearer {self.api_key}",
@@ -470,11 +469,11 @@ class OpenAIClient:
     def _make_request(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: int = 16384,
         timeout: Optional[int] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Faz uma requisição à API Chat Completions com retry automático."""
         url = f"{self.base_url}/chat/completions"
 
@@ -513,7 +512,7 @@ class OpenAIClient:
         temperature: float = 0.7,
         max_output_tokens: int = 16384,
         timeout: Optional[int] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Faz requisição à API Responses (/v1/responses) com retry automático.
 
@@ -558,7 +557,7 @@ class OpenAIClient:
     def chat(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
@@ -572,7 +571,7 @@ class OpenAIClient:
         """
         with self._stats_lock:
             self._stats["total_calls"] += 1
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         # Adicionar system prompt se fornecido
         full_messages = []
@@ -616,7 +615,7 @@ class OpenAIClient:
                 with self._stats_lock:
                     self._stats["cache_misses"] += 1
 
-            latency_ms = (datetime.now() - start_time).total_seconds() * 1000
+            latency_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
 
             # Capturar finish_reason para metadata
             openai_finish_reason = choice.get("finish_reason") or ""
@@ -714,7 +713,7 @@ class OpenAIClient:
     def chat_responses(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
@@ -729,7 +728,7 @@ class OpenAIClient:
         """
         with self._stats_lock:
             self._stats["total_calls"] += 1
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         # Extrair instructions (system prompt) separadamente
         instructions = system_prompt
@@ -808,14 +807,14 @@ class OpenAIClient:
 
             # FIX 2026-02-10: Se output_text continua vazio, marcar como falha
             if not output_text or not output_text.strip():
-                logger.error(f"[RESPONSES-API] FALHA: output_text VAZIO após todas as tentativas!")
+                logger.error("[RESPONSES-API] FALHA: output_text VAZIO após todas as tentativas!")
                 logger.error(f"[RESPONSES-API] Raw response (first 2000 chars): {str(raw_response)[:2000]}")
                 with self._stats_lock:
                     self._stats["failed_calls"] += 1
 
                 usage = raw_response.get("usage", {})
-                latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-                
+                latency_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+
                 # FIX H5: Extrair cached_tokens (null-safe)
                 ptd = usage.get("prompt_tokens_details") or {}
                 cached_tokens = ptd.get("cached_tokens", 0)
@@ -865,7 +864,7 @@ class OpenAIClient:
                 with self._stats_lock:
                     self._stats["cache_misses"] += 1
 
-            latency_ms = (datetime.now() - start_time).total_seconds() * 1000
+            latency_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
 
             # Responses API usa input_tokens/output_tokens (não prompt_tokens/completion_tokens)
             prompt_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
@@ -929,7 +928,7 @@ class OpenAIClient:
             )
 
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Retorna estatísticas de uso."""
         stats = self._stats.copy()
         if stats["successful_calls"] > 0:
@@ -938,11 +937,11 @@ class OpenAIClient:
         else:
             stats["avg_latency_ms"] = 0
             stats["avg_tokens"] = 0
-        
+
         # NOVO: Cache hit rate
         total_requests = stats["cache_hits"] + stats["cache_misses"]
         stats["cache_hit_rate"] = 100 * stats["cache_hits"] / total_requests if total_requests > 0 else 0
-        
+
         return stats
 
     def close(self):
@@ -990,7 +989,7 @@ class OpenRouterClient:
         # FIX H8: Thread-safe stats mutations
         self._stats_lock = threading.Lock()
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self) -> dict[str, str]:
         """Retorna headers para a API."""
         return {
             "Authorization": f"Bearer {self.api_key}",
@@ -1008,11 +1007,11 @@ class OpenRouterClient:
     def _make_request(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: int = 16384,
         timeout: Optional[int] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Faz uma requisição à API com retry automático."""
         url = f"{self.base_url}/chat/completions"
 
@@ -1051,7 +1050,7 @@ class OpenRouterClient:
     def chat(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
@@ -1065,7 +1064,7 @@ class OpenRouterClient:
         """
         with self._stats_lock:
             self._stats["total_calls"] += 1
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         # Adicionar system prompt se fornecido
         full_messages = []
@@ -1124,7 +1123,7 @@ class OpenRouterClient:
                 with self._stats_lock:
                     self._stats["cache_misses"] += 1
 
-            latency_ms = (datetime.now() - start_time).total_seconds() * 1000
+            latency_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
 
             # Log raw usage for debugging
             logger.info(f"[USAGE-RAW] {model}: {usage}")
@@ -1152,7 +1151,7 @@ class OpenRouterClient:
                     cached_tokens=cached_tokens,
                     latency_ms=latency_ms,
                     raw_response=raw_response,
-                    error=f"Output truncado (finish_reason=length)",
+                    error="Output truncado (finish_reason=length)",
                     success=False,
                     api_used="openrouter",
                     finish_reason="length",
@@ -1177,7 +1176,7 @@ class OpenRouterClient:
                     cached_tokens=cached_tokens,
                     latency_ms=latency_ms,
                     raw_response=raw_response,
-                    error=f"Filtro de conteudo ativado (finish_reason=content_filter)",
+                    error="Filtro de conteudo ativado (finish_reason=content_filter)",
                     success=False,
                     api_used="openrouter",
                     finish_reason="content_filter",
@@ -1273,7 +1272,7 @@ class OpenRouterClient:
             timeout=timeout,
         )
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Retorna estatísticas de uso."""
         stats = self._stats.copy()
         if stats["successful_calls"] > 0:
@@ -1282,11 +1281,11 @@ class OpenRouterClient:
         else:
             stats["avg_latency_ms"] = 0
             stats["avg_tokens"] = 0
-        
+
         # NOVO: Cache hit rate
         total_requests = stats["cache_hits"] + stats["cache_misses"]
         stats["cache_hit_rate"] = 100 * stats["cache_hits"] / total_requests if total_requests > 0 else 0
-        
+
         return stats
 
     def close(self):
@@ -1435,7 +1434,7 @@ class UnifiedLLMClient:
     def chat(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: int = 16384,
         system_prompt: Optional[str] = None,
@@ -1456,7 +1455,7 @@ class UnifiedLLMClient:
         if use_openai_direct:
             # FIX 2026-02-19: Circuit breaker auto-reset após 5 minutos
             if self._openai_circuit_open and self._openai_circuit_opened_at:
-                if (datetime.now() - self._openai_circuit_opened_at).total_seconds() > 300:
+                if (datetime.now(timezone.utc) - self._openai_circuit_opened_at).total_seconds() > 300:
                     self._openai_circuit_open = False
                     self._openai_circuit_reason = ""
                     logger.info("[CIRCUIT-BREAKER] Auto-reset após 5 minutos")
@@ -1519,7 +1518,7 @@ class UnifiedLLMClient:
             if "insufficient_quota" in error_str or "exceeded your current quota" in error_str:
                 self._openai_circuit_open = True
                 self._openai_circuit_reason = "insufficient_quota"
-                self._openai_circuit_opened_at = datetime.now()
+                self._openai_circuit_opened_at = datetime.now(timezone.utc)
                 logger.warning(
                     "🔴 CIRCUIT BREAKER ACTIVADO: OpenAI saldo esgotado! "
                     "Todas as chamadas seguintes vão directo para OpenRouter."
@@ -1528,7 +1527,7 @@ class UnifiedLLMClient:
             # Se falhou E fallback habilitado
             if self.enable_fallback:
                 logger.warning(f"⚠️ OpenAI API falhou: {response.error}")
-                logger.info(f"🔄 Usando fallback OpenRouter...")
+                logger.info("🔄 Usando fallback OpenRouter...")
 
                 # Tentar OpenRouter como backup
                 response_fallback = self.openrouter_client.chat(
@@ -1550,11 +1549,11 @@ class UnifiedLLMClient:
             else:
                 # Fallback desabilitado, retornar erro
                 return response
-        
+
         else:
             # Modelo não-OpenAI
             logger.info(f"🎯 Modelo não-OpenAI detectado: {model}")
-            
+
             return self.openrouter_client.chat(
                 model=model,
                 messages=messages,
@@ -1565,11 +1564,11 @@ class UnifiedLLMClient:
                 timeout=timeout,
             )
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Retorna estatísticas combinadas de ambas APIs."""
         openai_stats = self.openai_client.get_stats()
         openrouter_stats = self.openrouter_client.get_stats()
-        
+
         return {
             "openai": openai_stats,
             "openrouter": openrouter_stats,
@@ -1579,7 +1578,7 @@ class UnifiedLLMClient:
             "total_cache_misses": openai_stats["cache_misses"] + openrouter_stats["cache_misses"],
         }
 
-    def test_connection(self) -> Dict[str, Any]:
+    def test_connection(self) -> dict[str, Any]:
         """
         Testa conexão com ambas APIs (OpenAI e OpenRouter).
         
@@ -1591,19 +1590,19 @@ class UnifiedLLMClient:
             }
         """
         results = {}
-        
+
         # Testar OpenAI API
         logger.info("🔵 Testando OpenAI API...")
         try:
-            start = datetime.now()
+            start = datetime.now(timezone.utc)
             response = self.openai_client.chat_simple(
                 model="gpt-4o-mini",  # Modelo mais barato para teste
                 prompt="Responde apenas: OK",
                 temperature=0,
                 max_tokens=5,
             )
-            latency = (datetime.now() - start).total_seconds() * 1000
-            
+            latency = (datetime.now(timezone.utc) - start).total_seconds() * 1000
+
             if response.success:
                 results["openai"] = {
                     "success": True,
@@ -1626,19 +1625,19 @@ class UnifiedLLMClient:
                 "latency_ms": 0,
             }
             logger.error(f"❌ OpenAI API exceção: {e}")
-        
+
         # Testar OpenRouter API
         logger.info("🟠 Testando OpenRouter API...")
         try:
-            start = datetime.now()
+            start = datetime.now(timezone.utc)
             response = self.openrouter_client.chat_simple(
                 model="openai/gpt-4o-mini",  # Modelo barato via OpenRouter
                 prompt="Responde apenas: OK",
                 temperature=0,
                 max_tokens=5,
             )
-            latency = (datetime.now() - start).total_seconds() * 1000
-            
+            latency = (datetime.now(timezone.utc) - start).total_seconds() * 1000
+
             if response.success:
                 results["openrouter"] = {
                     "success": True,
@@ -1661,7 +1660,7 @@ class UnifiedLLMClient:
                 "latency_ms": 0,
             }
             logger.error(f"❌ OpenRouter API exceção: {e}")
-        
+
         return results
 
     def close(self):

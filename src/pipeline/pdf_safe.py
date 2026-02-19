@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 PDF SEGURO - Extração página-a-página com controlo de cobertura.
 
@@ -13,9 +12,9 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import Optional
 from collections import Counter
 
 logger = logging.getLogger(__name__)
@@ -65,9 +64,9 @@ class PageMetrics:
     has_images: bool = False
     line_count: int = 0
     # Deteção intra-página
-    dates_detected: List[str] = field(default_factory=list)
-    values_detected: List[str] = field(default_factory=list)
-    legal_refs_detected: List[str] = field(default_factory=list)
+    dates_detected: list[str] = field(default_factory=list)
+    values_detected: list[str] = field(default_factory=list)
+    legal_refs_detected: list[str] = field(default_factory=list)
     page_hash: str = ""  # SHA-256 do texto da página
 
 
@@ -82,10 +81,10 @@ class PageRecord:
     status_inicial: str = "OK"  # OK / SUSPEITA / SEM_TEXTO
     status_final: str = "OK"  # OK / SUSPEITA / VISUAL_ONLY / REPARADA
     # Flags de cobertura
-    covered_by: Dict[str, bool] = field(default_factory=dict)  # {E1: True, E2: False, ...}
+    covered_by: dict[str, bool] = field(default_factory=dict)  # {E1: True, E2: False, ...}
     coverage_status: str = ""  # COBERTA / PARCIAL / NAO_COBERTA
     # Flags de suspeita intra-página
-    flags: List[str] = field(default_factory=list)  # SUSPEITA_DATAS, SUSPEITA_VALORES, etc.
+    flags: list[str] = field(default_factory=list)  # SUSPEITA_DATAS, SUSPEITA_VALORES, etc.
     # Override info
     override_type: Optional[str] = None  # upload / manual_transcription / visual_only
     override_text: str = ""
@@ -97,7 +96,7 @@ class PageRecord:
     status_before_ocr: Optional[str] = None
     status_after_ocr: Optional[str] = None
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "page_num": self.page_num,
             "text_raw_preview": self.text_raw[:500] + "..." if len(self.text_raw) > 500 else self.text_raw,
@@ -127,8 +126,8 @@ class PDFSafeResult:
     """Resultado completo da extração PDF Seguro."""
     filename: str
     total_pages: int
-    pages: List[PageRecord] = field(default_factory=list)
-    document_provenance: List[str] = field(default_factory=list)  # Headers/footers removidos
+    pages: list[PageRecord] = field(default_factory=list)
+    document_provenance: list[str] = field(default_factory=list)  # Headers/footers removidos
     pages_ok: int = 0
     pages_suspeita: int = 0
     pages_sem_texto: int = 0
@@ -138,7 +137,7 @@ class PDFSafeResult:
     ocr_recovered: int = 0
     ocr_failed: int = 0
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         # Calculate final status counts (after OCR)
         pages_ok_final = sum(1 for p in self.pages if p.status_final == "OK")
         pages_reparada = sum(1 for p in self.pages if p.status_final == "REPARADA")
@@ -172,7 +171,7 @@ class PDFSafeResult:
             "ocr_failed": self.ocr_failed,
         }
 
-    def get_problematic_pages(self) -> List[PageRecord]:
+    def get_problematic_pages(self) -> list[PageRecord]:
         """Retorna páginas com status SUSPEITA ou SEM_TEXTO."""
         return [p for p in self.pages if p.status_final in ["SUSPEITA", "SEM_TEXTO"]]
 
@@ -243,9 +242,9 @@ class PDFSafeLoader:
             logger.info(f"PDF Seguro: {filename} - {total_pages} páginas")
 
             # Extrair todas as páginas
-            pages: List[PageRecord] = []
-            all_first_lines: List[str] = []
-            all_last_lines: List[str] = []
+            pages: list[PageRecord] = []
+            all_first_lines: list[str] = []
+            all_last_lines: list[str] = []
 
             for page_num in range(total_pages):
                 page = doc[page_num]
@@ -332,7 +331,6 @@ class PDFSafeLoader:
 
     def _extract_page(self, page, page_num: int, pages_dir: Path) -> PageRecord:
         """Extrai uma página individual."""
-        import fitz
 
         # Extrair texto raw
         text_raw = page.get_text("text") or ""
@@ -401,10 +399,10 @@ class PDFSafeLoader:
 
     def _clean_headers_footers(
         self,
-        pages: List[PageRecord],
-        first_lines: List[str],
-        last_lines: List[str]
-    ) -> Tuple[List[str], List[PageRecord]]:
+        pages: list[PageRecord],
+        first_lines: list[str],
+        last_lines: list[str]
+    ) -> tuple[list[str], list[PageRecord]]:
         """
         Deteta e remove headers/footers repetidos.
         Conservador: só remove linhas que aparecem em >30% das páginas.
@@ -722,7 +720,7 @@ class PDFSafeLoader:
 # BATCHING AUTOMÁTICO
 # ============================================================================
 
-def batch_pages(pages: List[PageRecord], max_chars: int = 50000) -> List[List[Dict]]:
+def batch_pages(pages: list[PageRecord], max_chars: int = 50000) -> list[list[dict]]:
     """
     Divide páginas em lotes por limite de caracteres.
 
@@ -790,9 +788,9 @@ def batch_pages(pages: List[PageRecord], max_chars: int = 50000) -> List[List[Di
 @dataclass
 class CoverageMatrix:
     """Matriz de cobertura de páginas pelos extratores."""
-    pages: Dict[int, Dict] = field(default_factory=dict)  # page_num -> info
+    pages: dict[int, dict] = field(default_factory=dict)  # page_num -> info
 
-    def add_extraction(self, extractor_id: str, page_nums: List[int]):
+    def add_extraction(self, extractor_id: str, page_nums: list[int]):
         """Adiciona cobertura de um extrator."""
         for pn in page_nums:
             if pn not in self.pages:
@@ -822,7 +820,7 @@ class CoverageMatrix:
             else:
                 self.pages[pn]["status"] = "COBERTA"
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {"pages": self.pages}
 
     def save(self, out_dir: Path):
@@ -834,10 +832,10 @@ class CoverageMatrix:
 
 
 def update_page_coverage(
-    pages: List[PageRecord],
+    pages: list[PageRecord],
     coverage: CoverageMatrix,
     pdf_result: PDFSafeResult
-) -> List[PageRecord]:
+) -> list[PageRecord]:
     """
     Atualiza status das páginas com base na cobertura e flags intra-página.
 
@@ -895,7 +893,7 @@ def save_override(
     text: str = "",
     note: str = "",
     original_image: str = ""
-) -> Dict:
+) -> dict:
     """
     Guarda override de uma página.
 
@@ -916,7 +914,7 @@ def save_override(
     override_info = {
         "page_num": page_num,
         "override_type": override_type,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "user_note": note,
         "original_page_png": original_image,
         "final_text_used": text,
@@ -937,7 +935,7 @@ def save_override(
     return override_info
 
 
-def load_overrides(out_dir: Path) -> Dict[int, Dict]:
+def load_overrides(out_dir: Path) -> dict[int, dict]:
     """
     Carrega todos os overrides de um run.
 
@@ -951,7 +949,7 @@ def load_overrides(out_dir: Path) -> Dict[int, Dict]:
     overrides = {}
     for json_file in overrides_dir.glob("page_*_override.json"):
         try:
-            with open(json_file, 'r', encoding='utf-8') as f:
+            with open(json_file, encoding='utf-8') as f:
                 info = json.load(f)
                 overrides[info["page_num"]] = info
         except (json.JSONDecodeError, KeyError, OSError) as e:
@@ -960,7 +958,7 @@ def load_overrides(out_dir: Path) -> Dict[int, Dict]:
     return overrides
 
 
-def apply_overrides(pages: List[PageRecord], overrides: Dict[int, Dict]) -> List[PageRecord]:
+def apply_overrides(pages: list[PageRecord], overrides: dict[int, dict]) -> list[PageRecord]:
     """
     Aplica overrides às páginas.
 
@@ -992,7 +990,7 @@ def apply_overrides(pages: List[PageRecord], overrides: Dict[int, Dict]) -> List
 
 def export_selected_pages(
     pdf_bytes: bytes,
-    page_nums: List[int],
+    page_nums: list[int],
     out_path: Path,
     overrides_dir: Optional[Path] = None
 ) -> bool:
@@ -1050,10 +1048,10 @@ def export_selected_pages(
 # ============================================================================
 
 def detetor_intra_pagina(
-    pages: List[PageRecord],
+    pages: list[PageRecord],
     llm_extraction_text: str,
     extractor_id: str = "LLM"
-) -> List[Dict]:
+) -> list[dict]:
     """
     Compara sinais detetados por regex com conteúdo extraído pelo LLM.
     Identifica suspeitas de omissão.
@@ -1137,9 +1135,9 @@ def detetor_intra_pagina(
 
 
 def verificar_cobertura_sinais(
-    pages: List[PageRecord],
-    extractor_outputs: Dict[str, str]
-) -> Dict:
+    pages: list[PageRecord],
+    extractor_outputs: dict[str, str]
+) -> dict:
     """
     Verifica cobertura de sinais por todos os extratores.
 
@@ -1191,7 +1189,7 @@ def verificar_cobertura_sinais(
 
         for signal_type, signal_val in all_signals:
             covered = False
-            for ext_id, ext_text in extractor_outputs.items():
+            for _ext_id, ext_text in extractor_outputs.items():
                 if signal_val.lower() in ext_text.lower():
                     covered = True
                     break

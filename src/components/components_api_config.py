@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 COMPONENTE: Gestão de API Keys
 ═══════════════════════════════════════════════════════════════════════════
@@ -25,7 +24,7 @@ def mask_api_key(key: str) -> str:
     """
     if not key or len(key) < 12:
         return "Não configurada"
-    
+
     # Mostrar primeiros 8 caracteres + ••• + últimos 4
     return f"{key[:8]}•••{key[-4:]}"
 
@@ -44,7 +43,7 @@ def load_api_keys() -> dict:
         dict com 'openai' e 'openrouter'
     """
     load_dotenv(override=True)
-    
+
     return {
         "openai": os.getenv("OPENAI_API_KEY", ""),
         "openrouter": os.getenv("OPENROUTER_API_KEY", ""),
@@ -84,10 +83,10 @@ def save_api_key(key_name: str, key_value: str) -> bool:
 
         # Guardar key
         set_key(str(env_file), key_name, key_value)
-        
+
         # Recarregar env
         load_dotenv(override=True)
-        
+
         return True
     except Exception as e:
         st.error(f"Erro ao guardar: {e}")
@@ -111,13 +110,13 @@ def delete_api_key(key_name: str) -> bool:
             return False
 
         env_file = get_env_file_path()
-        
+
         if env_file.exists():
             unset_key(str(env_file), key_name)
-        
+
         # Recarregar env
         load_dotenv(override=True)
-        
+
         return True
     except Exception as e:
         st.error(f"Erro ao apagar: {e}")
@@ -134,9 +133,9 @@ def pagina_api_keys():
         from components_api_config import pagina_api_keys
         pagina_api_keys()
     """
-    
+
     st.header("🔑 Gestão de API Keys")
-    
+
     st.markdown("""
     Gerir as API keys usadas pelo sistema. As keys são guardadas de forma segura no ficheiro `.env`.
     
@@ -144,20 +143,20 @@ def pagina_api_keys():
     - 🔵 **OpenAI API**: Modelos OpenAI (gpt-5.2, gpt-4o) usam saldo OpenAI
     - 🟠 **OpenRouter API**: Outros modelos + backup automático
     """)
-    
+
     st.divider()
-    
+
     # Carregar keys actuais
     keys = load_api_keys()
-    
+
     # =================================================================
     # OPENAI API KEY
     # =================================================================
-    
+
     st.subheader("🔵 OpenAI API Key")
-    
+
     col_oa1, col_oa2 = st.columns([3, 1])
-    
+
     with col_oa1:
         openai_masked = mask_api_key(keys["openai"])
         st.text_input(
@@ -166,18 +165,18 @@ def pagina_api_keys():
             disabled=True,
             help="Key mascarada por segurança"
         )
-    
+
     with col_oa2:
         if keys["openai"]:
             st.metric("Status", "✅ Configurada")
         else:
             st.metric("Status", "❌ Ausente")
-    
+
     # Expandir para editar/apagar
     with st.expander("✏️ Editar / Apagar OpenAI Key"):
-        
+
         st.markdown("**Obter key:** [platform.openai.com/api-keys](https://platform.openai.com/api-keys)")
-        
+
         nova_key_oa = st.text_input(
             "Nova API Key:",
             type="password",
@@ -185,9 +184,9 @@ def pagina_api_keys():
             help="Cole a key completa da OpenAI",
             key="input_openai_key"
         )
-        
+
         col_btn_oa1, col_btn_oa2 = st.columns(2)
-        
+
         with col_btn_oa1:
             if st.button("💾 Guardar", key="save_oa", use_container_width=True):
                 if nova_key_oa:
@@ -198,7 +197,7 @@ def pagina_api_keys():
                         st.error("❌ Erro ao guardar")
                 else:
                     st.warning("⚠️ Cole a key primeiro")
-        
+
         with col_btn_oa2:
             if st.button("🗑️ Apagar", key="del_oa", use_container_width=True):
                 if delete_api_key("OPENAI_API_KEY"):
@@ -206,17 +205,17 @@ def pagina_api_keys():
                     st.rerun()
                 else:
                     st.error("❌ Erro ao apagar")
-    
+
     st.divider()
-    
+
     # =================================================================
     # OPENROUTER API KEY
     # =================================================================
-    
+
     st.subheader("🟠 OpenRouter API Key")
-    
+
     col_or1, col_or2 = st.columns([3, 1])
-    
+
     with col_or1:
         openrouter_masked = mask_api_key(keys["openrouter"])
         st.text_input(
@@ -225,18 +224,18 @@ def pagina_api_keys():
             disabled=True,
             help="Key mascarada por segurança"
         )
-    
+
     with col_or2:
         if keys["openrouter"]:
             st.metric("Status", "✅ Configurada")
         else:
             st.metric("Status", "❌ Ausente")
-    
+
     # Expandir para editar/apagar
     with st.expander("✏️ Editar / Apagar OpenRouter Key"):
-        
+
         st.markdown("**Obter key:** [openrouter.ai/keys](https://openrouter.ai/keys)")
-        
+
         nova_key_or = st.text_input(
             "Nova API Key:",
             type="password",
@@ -244,9 +243,9 @@ def pagina_api_keys():
             help="Cole a key completa do OpenRouter",
             key="input_openrouter_key"
         )
-        
+
         col_btn_or1, col_btn_or2 = st.columns(2)
-        
+
         with col_btn_or1:
             if st.button("💾 Guardar", key="save_or", use_container_width=True):
                 if nova_key_or:
@@ -257,7 +256,7 @@ def pagina_api_keys():
                         st.error("❌ Erro ao guardar")
                 else:
                     st.warning("⚠️ Cole a key primeiro")
-        
+
         with col_btn_or2:
             if st.button("🗑️ Apagar", key="del_or", use_container_width=True):
                 if delete_api_key("OPENROUTER_API_KEY"):
@@ -265,13 +264,13 @@ def pagina_api_keys():
                     st.rerun()
                 else:
                     st.error("❌ Erro ao apagar")
-    
+
     st.divider()
-    
+
     # =================================================================
     # INFORMAÇÃO ADICIONAL
     # =================================================================
-    
+
     st.info("""
     **💡 Como funciona o Dual API System:**
     
@@ -287,7 +286,7 @@ def pagina_api_keys():
        - Nunca enviadas para servidores externos
        - Mascaradas na interface
     """)
-    
+
     # Botão reiniciar cliente (força recarregar keys)
     if st.button("🔄 Reiniciar Cliente LLM", use_container_width=True):
         # v4.0 FIX: usar função dedicada em vez de mutar global diretamente

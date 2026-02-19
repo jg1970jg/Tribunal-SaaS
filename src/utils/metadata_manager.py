@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 GESTÃO DE METADATA - Títulos e Descrições de Análises
 ═══════════════════════════════════════════════════════════════════════════
@@ -15,8 +14,8 @@ FUNCIONALIDADES:
 import json
 import logging
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Optional
 
 from src.utils.sanitize import sanitize_run_id
 
@@ -59,23 +58,23 @@ def guardar_metadata(
         "descricao": descricao,
         "area_direito": area_direito,
         "num_documentos": num_documentos,
-        "data_criacao": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "data_criacao": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         "versao_metadata": "1.0"
     }
-    
+
     metadata_path = analise_dir / "metadata.json"
-    
+
     try:
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
-        
+
         logger.info(f"✓ Metadata guardada: {titulo}")
-    
+
     except Exception as e:
         logger.error(f"Erro ao guardar metadata: {e}")
 
 
-def carregar_metadata(run_id: str, output_dir: Path) -> Optional[Dict]:
+def carregar_metadata(run_id: str, output_dir: Path) -> Optional[dict]:
     """
     Carrega metadata de uma análise.
 
@@ -89,14 +88,14 @@ def carregar_metadata(run_id: str, output_dir: Path) -> Optional[Dict]:
     run_id = sanitize_run_id(run_id)
     analise_dir = output_dir / run_id
     metadata_path = analise_dir / "metadata.json"
-    
+
     if not metadata_path.exists():
         return None
-    
+
     try:
-        with open(metadata_path, 'r', encoding='utf-8') as f:
+        with open(metadata_path, encoding='utf-8') as f:
             return json.load(f)
-    
+
     except Exception as e:
         logger.error(f"Erro ao carregar metadata: {e}")
         return None
@@ -128,7 +127,7 @@ def atualizar_metadata(
             "descricao": descricao or "",
             "area_direito": "",
             "num_documentos": 0,
-            "data_criacao": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "data_criacao": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             "versao_metadata": "1.0"
         }
     else:
@@ -137,24 +136,24 @@ def atualizar_metadata(
             metadata["titulo"] = titulo
         if descricao is not None:
             metadata["descricao"] = descricao
-        
-        metadata["data_atualizacao"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
+        metadata["data_atualizacao"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
     # Guardar
     analise_dir = output_dir / run_id
     metadata_path = analise_dir / "metadata.json"
-    
+
     try:
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
-        
+
         logger.info(f"✓ Metadata atualizada: {metadata['titulo']}")
-    
+
     except Exception as e:
         logger.error(f"Erro ao atualizar metadata: {e}")
 
 
-def listar_analises_com_titulos(output_dir: Path) -> List[Tuple[str, str, str]]:
+def listar_analises_com_titulos(output_dir: Path) -> list[tuple[str, str, str]]:
     """
     Lista todas as análises com títulos.
     
@@ -166,52 +165,52 @@ def listar_analises_com_titulos(output_dir: Path) -> List[Tuple[str, str, str]]:
         Ordenado por data (mais recente primeiro)
     """
     analises = []
-    
+
     if not output_dir.exists():
         return []
-    
+
     # Procurar pastas de análises
     for item in output_dir.iterdir():
         if not item.is_dir() or item.name.startswith('.') or item.name.startswith('temp'):
             continue
-        
+
         run_id = item.name
-        
+
         # Tentar carregar metadata
         metadata = carregar_metadata(run_id, output_dir)
-        
+
         if metadata:
             # Tem metadata - usar título
             titulo = metadata.get('titulo', run_id)
             data = metadata.get('data_criacao', '')
-            
+
             # Extrair data para ordenação
             try:
-                data_obj = datetime.strptime(data, "%Y-%m-%d %H:%M:%S")
+                data_obj = datetime.strptime(data, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
                 data_display = data_obj.strftime("%d/%m/%Y")
             except Exception:
                 data_display = run_id[:8]  # Fallback para data do run_id
-                data_obj = datetime.strptime(run_id[:8], "%Y%m%d")
-            
+                data_obj = datetime.strptime(run_id[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
+
             titulo_display = f"{titulo} ({data_display})"
-        
+
         else:
             # Sem metadata - usar run_id e extrair data
             try:
                 # run_id formato: 20260203_154057_891a6226
                 data_str = run_id[:8]  # 20260203
-                data_obj = datetime.strptime(data_str, "%Y%m%d")
+                data_obj = datetime.strptime(data_str, "%Y%m%d").replace(tzinfo=timezone.utc)
                 data_display = data_obj.strftime("%d/%m/%Y")
                 titulo_display = f"[Sem título] {run_id[:15]}... ({data_display})"
             except Exception:
                 titulo_display = run_id
-                data_obj = datetime.now()
-        
+                data_obj = datetime.now(timezone.utc)
+
         analises.append((run_id, titulo_display, data_obj))
-    
+
     # Ordenar por data (mais recente primeiro)
     analises.sort(key=lambda x: x[2], reverse=True)
-    
+
     # Retornar só run_id e titulo_display
     return [(run_id, titulo_display, data_obj.strftime("%Y-%m-%d")) for run_id, titulo_display, data_obj in analises]
 
@@ -229,17 +228,17 @@ def gerar_titulo_automatico(documento_filename: str, area_direito: str = "") -> 
     """
     # Remover extensão
     nome = Path(documento_filename).stem
-    
+
     # Limpar underscores e hífens
     nome = nome.replace('_', ' ').replace('-', ' ')
-    
+
     # Capitalizar palavras
     nome = ' '.join(word.capitalize() for word in nome.split())
-    
+
     # Adicionar área se fornecida
     if area_direito and area_direito != "Geral":
         return f"{nome} - {area_direito}"
-    
+
     return nome
 
 
@@ -272,14 +271,14 @@ def contar_analises_sem_titulo(output_dir: Path) -> int:
     """
     if not output_dir.exists():
         return 0
-    
+
     count = 0
-    
+
     for item in output_dir.iterdir():
         if not item.is_dir() or item.name.startswith('.') or item.name.startswith('temp'):
             continue
-        
+
         if not tem_metadata(item.name, output_dir):
             count += 1
-    
+
     return count

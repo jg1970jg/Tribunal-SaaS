@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 CONTROLO DE CUSTOS - Tribunal SaaS
 ============================================================
@@ -11,8 +10,8 @@ Bloqueia execução se limites forem excedidos.
 import os
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Optional
 from threading import Lock
 import httpx
 
@@ -91,10 +90,10 @@ class DynamicPricing:
     FETCH_TIMEOUT = 15  # segundos
 
     # Cache de classe (partilhado entre todas as instâncias/runs)
-    _cache: Dict[str, Dict[str, float]] = {}
+    _cache: dict[str, dict[str, float]] = {}
     _cache_timestamp: Optional[datetime] = None
     _cache_lock = Lock()
-    _models_used: Dict[str, Dict] = {}  # {model: {input, output, fonte}}
+    _models_used: dict[str, dict] = {}  # {model: {input, output, fonte}}
 
     @classmethod
     def fetch_openrouter_prices(cls) -> bool:
@@ -147,7 +146,7 @@ class DynamicPricing:
 
             with cls._cache_lock:
                 cls._cache = new_cache
-                cls._cache_timestamp = datetime.now()
+                cls._cache_timestamp = datetime.now(timezone.utc)
 
             logger.info(
                 f"[PRECO-LIVE] Carregados preços de {len(new_cache)} modelos da OpenRouter "
@@ -167,7 +166,7 @@ class DynamicPricing:
         """Verifica se o cache está dentro do TTL."""
         if not cls._cache_timestamp or not cls._cache:
             return False
-        age_hours = (datetime.now() - cls._cache_timestamp).total_seconds() / 3600
+        age_hours = (datetime.now(timezone.utc) - cls._cache_timestamp).total_seconds() / 3600
         return age_hours < cls.CACHE_TTL_HOURS
 
     @classmethod
@@ -176,7 +175,7 @@ class DynamicPricing:
         return bool(cls._cache) and cls._cache_timestamp is not None
 
     @classmethod
-    def get_pricing(cls, model: str) -> Dict:
+    def get_pricing(cls, model: str) -> dict:
         """
         Retorna preço para um modelo com hierarquia:
         1. Cache válido (<24h) → [PRECO-LIVE] ou [PRECO-CACHE]
@@ -211,7 +210,7 @@ class DynamicPricing:
         if cls._is_cache_stale():
             price = cls._lookup_in_cache(model_clean)
             if price:
-                age_hours = (datetime.now() - cls._cache_timestamp).total_seconds() / 3600
+                age_hours = (datetime.now(timezone.utc) - cls._cache_timestamp).total_seconds() / 3600
                 logger.warning(
                     f"[PRECO-CACHE] Usando cache de {age_hours:.1f}h para {model} "
                     f"(API indisponível)"
@@ -233,7 +232,7 @@ class DynamicPricing:
         return name.replace("-", ".").replace("_", ".")
 
     @classmethod
-    def _lookup_in_cache(cls, model_clean: str) -> Optional[Dict[str, float]]:
+    def _lookup_in_cache(cls, model_clean: str) -> Optional[dict[str, float]]:
         """Procura preço no cache (exact → normalized → partial)."""
         with cls._cache_lock:
             # Exact match
@@ -246,13 +245,16 @@ class DynamicPricing:
                 if cls._normalize(key) == model_norm:
                     return cls._cache[key]
 
-            # Partial match — pick the best (shortest key that contains
-            # model_clean, or shortest model_clean-substring key) to avoid
-            # e.g. "gpt-4o" incorrectly matching "gpt-4o-mini" first.
+            # Partial match — pick the best match, preferring:
+            # 1. key that is a prefix of model_clean (or vice versa)
+            # 2. Shortest length difference
             best_key = None
             best_len_diff = float("inf")
             for key in cls._cache:
-                if key in model_clean or model_clean in key:
+                # Only match if one is a prefix of the other (after provider/ prefix)
+                key_name = key.split("/")[-1] if "/" in key else key
+                model_name = model_clean.split("/")[-1] if "/" in model_clean else model_clean
+                if key_name.startswith(model_name) or model_name.startswith(key_name):
                     diff = abs(len(key) - len(model_clean))
                     if diff < best_len_diff:
                         best_len_diff = diff
@@ -263,7 +265,7 @@ class DynamicPricing:
         return None
 
     @classmethod
-    def _lookup_hardcoded(cls, model_clean: str) -> Dict[str, float]:
+    def _lookup_hardcoded(cls, model_clean: str) -> dict[str, float]:
         """Procura preço na tabela hardcoded."""
         if model_clean in HARDCODED_PRICING:
             return HARDCODED_PRICING[model_clean]
@@ -286,7 +288,7 @@ class DynamicPricing:
         return HARDCODED_PRICING["default"]
 
     @classmethod
-    def _track_model(cls, model: str, pricing: Dict):
+    def _track_model(cls, model: str, pricing: dict):
         """Guarda pricing usado para cada modelo (para relatório final)."""
         with cls._cache_lock:
             cls._models_used[model] = {
@@ -296,7 +298,7 @@ class DynamicPricing:
             }
 
     @classmethod
-    def get_models_used(cls) -> Dict[str, Dict]:
+    def get_models_used(cls) -> dict[str, dict]:
         """Retorna preços usados por modelo neste run."""
         with cls._cache_lock:
             return dict(cls._models_used)
@@ -307,12 +309,12 @@ class DynamicPricing:
         if cls._is_cache_valid():
             return "openrouter_live"
         if cls._is_cache_stale():
-            age = (datetime.now() - cls._cache_timestamp).total_seconds() / 3600
+            age = (datetime.now(timezone.utc) - cls._cache_timestamp).total_seconds() / 3600
             return f"cache_{age:.0f}h"
         return "hardcoded"
 
     @classmethod
-    def get_cache_info(cls) -> Dict:
+    def get_cache_info(cls) -> dict:
         """Retorna info sobre o estado do cache."""
         return {
             "has_cache": bool(cls._cache),
@@ -320,7 +322,7 @@ class DynamicPricing:
             "cache_valid": cls._is_cache_valid(),
             "cache_timestamp": cls._cache_timestamp.isoformat() if cls._cache_timestamp else None,
             "cache_age_hours": round(
-                (datetime.now() - cls._cache_timestamp).total_seconds() / 3600, 1
+                (datetime.now(timezone.utc) - cls._cache_timestamp).total_seconds() / 3600, 1
             ) if cls._cache_timestamp else None,
         }
 
@@ -329,6 +331,12 @@ class DynamicPricing:
         """Pre-fetch não bloqueante. Chama no início do pipeline."""
         if not cls._is_cache_valid():
             cls.fetch_openrouter_prices()
+
+    @classmethod
+    def reset_tracking(cls):
+        """Reset per-run model tracking."""
+        with cls._cache_lock:
+            cls._models_used = {}
 
     @classmethod
     def reset(cls):
@@ -349,9 +357,9 @@ class PhaseUsage:
     total_tokens: int = 0
     cost_usd: float = 0.0
     pricing_source: str = ""  # "openrouter_live", "cache_Xh", "hardcoded"
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "phase": self.phase,
             "model": self.model,
@@ -368,7 +376,7 @@ class PhaseUsage:
 class RunUsage:
     """Uso total de uma execução do pipeline."""
     run_id: str
-    phases: List[PhaseUsage] = field(default_factory=list)
+    phases: list[PhaseUsage] = field(default_factory=list)
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     total_tokens: int = 0
@@ -377,10 +385,10 @@ class RunUsage:
     token_limit: int = 1200000
     blocked: bool = False
     block_reason: Optional[str] = None
-    timestamp_start: datetime = field(default_factory=datetime.now)
+    timestamp_start: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     timestamp_end: Optional[datetime] = None
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "run_id": self.run_id,
             "phases": [p.to_dict() for p in self.phases],
@@ -468,7 +476,7 @@ class CostController:
         self._lock = Lock()
 
         # H10 FIX: Instance-level models_used (was class-level, shared between concurrent runs)
-        self._models_used: Dict[str, Dict] = {}
+        self._models_used: dict[str, dict] = {}
 
         # Pre-fetch preços (usa cache se válido, fetch se expirado)
         DynamicPricing.prefetch()
@@ -479,7 +487,7 @@ class CostController:
             f"precos={DynamicPricing.get_pricing_source()}"
         )
 
-    def get_model_pricing(self, model: str) -> Dict[str, float]:
+    def get_model_pricing(self, model: str) -> dict[str, float]:
         """Retorna preços para um modelo via DynamicPricing."""
         pricing = DynamicPricing.get_pricing(model)
         # Retornar apenas input/output (sem 'fonte') para compatibilidade
@@ -609,7 +617,7 @@ class CostController:
         """Retorna tokens restantes."""
         return max(0, self.token_limit - self.usage.total_tokens)
 
-    def get_usage_percentage(self) -> Dict[str, float]:
+    def get_usage_percentage(self) -> dict[str, float]:
         """Retorna percentagem de uso."""
         return {
             "budget_pct": (self.usage.total_cost_usd / self.budget_limit) * 100 if self.budget_limit > 0 else 0,
@@ -619,10 +627,10 @@ class CostController:
     def finalize(self) -> RunUsage:
         """Finaliza a execução e retorna uso total."""
         with self._lock:
-            self.usage.timestamp_end = datetime.now()
+            self.usage.timestamp_end = datetime.now(timezone.utc)
             return self.usage
 
-    def get_summary(self) -> Dict:
+    def get_summary(self) -> dict:
         """Retorna resumo de uso para UI."""
         pcts = self.get_usage_percentage()
         return {
@@ -640,7 +648,7 @@ class CostController:
             "block_reason": self.usage.block_reason,
         }
 
-    def get_cost_by_phase(self) -> Dict[str, float]:
+    def get_cost_by_phase(self) -> dict[str, float]:
         """Retorna custo agrupado por fase (fase1, fase2, fase3, fase4)."""
         PHASE_MAP = {
             "fase0": "fase0", "triage": "fase0",
@@ -660,7 +668,7 @@ class CostController:
             costs[mapped] += phase.cost_usd
         return {k: round(v, 4) for k, v in costs.items()}
 
-    def get_pricing_info(self) -> Dict:
+    def get_pricing_info(self) -> dict:
         """Retorna informação sobre preços usados neste run."""
         return {
             "fonte": DynamicPricing.get_pricing_source(),
@@ -675,21 +683,24 @@ class CostController:
 # ============================================================
 
 _current_controller: Optional[CostController] = None
+_controller_lock = Lock()
 
 
 def get_cost_controller() -> Optional[CostController]:
     """Retorna controlador atual (se existir)."""
-    global _current_controller
-    return _current_controller
+    with _controller_lock:
+        return _current_controller
 
 
 def set_cost_controller(controller: CostController):
     """Define controlador global."""
     global _current_controller
-    _current_controller = controller
+    with _controller_lock:
+        _current_controller = controller
 
 
 def clear_cost_controller():
     """Limpa controlador global."""
     global _current_controller
-    _current_controller = None
+    with _controller_lock:
+        _current_controller = None

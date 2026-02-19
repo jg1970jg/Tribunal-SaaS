@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 CONSENSUS ENGINE - Validação Determinística + Consenso Adaptativo.
 
@@ -14,14 +13,13 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import Optional
 
 from src.config import (
-    LOG_LEVEL,
     HISTORICO_DIR,
     CITATION_FUZZY_THRESHOLD,
     CITATION_LENGTH_TOLERANCE,
@@ -81,8 +79,8 @@ def validate_citation_2pass(
     excerpt: str,
     declared_page: Optional[int],
     canonical_text: str,
-    page_texts: Dict[int, str],
-    page_offsets: Dict[int, int],
+    page_texts: dict[int, str],
+    page_offsets: dict[int, int],
     fuzzy_threshold: float = CITATION_FUZZY_THRESHOLD,
     length_tolerance: float = CITATION_LENGTH_TOLERANCE,
 ) -> CitationValidationResult:
@@ -158,7 +156,7 @@ def _find_best_match(
     excerpt: str, text: str,
     threshold: float, length_tolerance: float,
     time_budget: float = 2.0,
-) -> Optional[Dict]:
+) -> Optional[dict]:
     """
     Encontra o melhor match de excerpt em text.
     Optimizado: exact → case-insensitive → sampled fuzzy (com time budget).
@@ -216,7 +214,7 @@ def _find_best_match(
 def _find_all_matches(
     excerpt: str, text: str,
     threshold: float, length_tolerance: float
-) -> List[Dict]:
+) -> list[dict]:
     """Encontra todos os matches de excerpt em text."""
     matches = []
 
@@ -238,7 +236,7 @@ def _find_all_matches(
     return []
 
 
-def _offset_to_page(offset: int, page_offsets: Dict[int, int]) -> Optional[int]:
+def _offset_to_page(offset: int, page_offsets: dict[int, int]) -> Optional[int]:
     """Converte offset absoluto para número de página."""
     best_page = None
     best_offset = -1
@@ -255,10 +253,10 @@ CITATION_VALIDATION_TIMEOUT = 120  # 2 minutos máximo para validação de citat
 def validate_all_citations(
     audit_reports: list,
     canonical_text: str,
-    page_texts: Dict[int, str],
-    page_offsets: Dict[int, int],
+    page_texts: dict[int, str],
+    page_offsets: dict[int, int],
     canonical_doc_id: str,
-) -> Dict:
+) -> dict:
     """Valida todas as citations de todos os audit reports (com timeout global)."""
     results = {
         "auditor_scores": {},
@@ -366,7 +364,7 @@ def validate_all_citations(
 # FASE A: JSON COMPLIANCE SCORING
 # ============================================================================
 
-def calculate_format_compliance(audit_reports: list) -> Dict[str, float]:
+def calculate_format_compliance(audit_reports: list) -> dict[str, float]:
     """Calcula score de compliance de formato JSON por auditor."""
     scores = {}
     for report in audit_reports:
@@ -403,7 +401,7 @@ def normalize_severity(
     finding_severity: str,
     citations: list,
     never_below: str = SEVERITY_NEVER_REDUCE_BELOW,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Normaliza severidade de um finding usando critérios objectivos."""
     severity_order = {s: i for i, s in enumerate(SEVERITY_LEVELS)}
     original_idx = severity_order.get(finding_severity, 1)
@@ -451,7 +449,7 @@ def normalize_severity(
     return normalized, reason
 
 
-def normalize_all_severities(audit_reports: list) -> Dict:
+def normalize_all_severities(audit_reports: list) -> dict:
     """Normaliza severidade de todos os findings em todos os reports."""
     normalizations = {}
 
@@ -478,7 +476,7 @@ def normalize_all_severities(audit_reports: list) -> Dict:
 # FASE B: CONTRADICTION SCAN (activa após PHASE_B_MIN_RUNS)
 # ============================================================================
 
-def find_contradictions(audit_reports: list, severity_normalizations: Dict) -> List[Dict]:
+def find_contradictions(audit_reports: list, severity_normalizations: dict) -> list[dict]:
     """Detecta contradições entre auditores baseado em overlap de offsets."""
     contradictions = []
     finding_clusters = _build_finding_clusters(audit_reports)
@@ -519,7 +517,7 @@ def find_contradictions(audit_reports: list, severity_normalizations: Dict) -> L
     return contradictions
 
 
-def _build_finding_clusters(audit_reports: list) -> Dict[str, List[Dict]]:
+def _build_finding_clusters(audit_reports: list) -> dict[str, list[dict]]:
     """Agrupa findings de diferentes auditores por overlap de offsets (>=30%)."""
     all_findings = []
     for report in audit_reports:
@@ -562,7 +560,7 @@ def _build_finding_clusters(audit_reports: list) -> Dict[str, List[Dict]]:
     return clusters
 
 
-def _offsets_overlap(offsets1: List[Tuple], offsets2: List[Tuple], min_overlap: float) -> bool:
+def _offsets_overlap(offsets1: list[tuple], offsets2: list[tuple], min_overlap: float) -> bool:
     """Verifica se dois conjuntos de offsets têm overlap >= min_overlap."""
     for s1, e1 in offsets1:
         for s2, e2 in offsets2:
@@ -580,7 +578,7 @@ def _offsets_overlap(offsets1: List[Tuple], offsets2: List[Tuple], min_overlap: 
 # FASE B: OMISSION DETECTION (activa após PHASE_B_MIN_RUNS)
 # ============================================================================
 
-def detect_omissions(audit_reports: list, finding_clusters: Dict) -> List[Dict]:
+def detect_omissions(audit_reports: list, finding_clusters: dict) -> list[dict]:
     """Detecta omissões entre auditores."""
     omissions = []
     auditor_ids = set(r.auditor_id for r in audit_reports)
@@ -617,12 +615,12 @@ def detect_omissions(audit_reports: list, finding_clusters: Dict) -> List[Dict]:
 # ============================================================================
 
 def calculate_finding_score(
-    finding_cluster: List[Dict],
-    citation_validity_scores: Dict[str, float],
-    format_compliance_scores: Dict[str, float],
-    severity_normalizations: Dict,
+    finding_cluster: list[dict],
+    citation_validity_scores: dict[str, float],
+    format_compliance_scores: dict[str, float],
+    severity_normalizations: dict,
     n_total_auditors: int,
-) -> Dict:
+) -> dict:
     """Calcula score contínuo interno para um cluster de findings."""
     if not finding_cluster:
         return {"score": 0.0, "category": "NAO_FIAVEL", "reason": "Cluster vazio"}
@@ -677,7 +675,7 @@ def calculate_finding_score(
 # FASE C: PESO HISTÓRICO ADAPTATIVO (activa após PHASE_C_MIN_RUNS)
 # ============================================================================
 
-def load_historical_metrics(window: int = HISTORICAL_WINDOW) -> Dict[str, List[Dict]]:
+def load_historical_metrics(window: int = HISTORICAL_WINDOW) -> dict[str, list[dict]]:
     """Carrega métricas históricas dos últimos N runs."""
     metrics_by_auditor = {}
 
@@ -685,7 +683,7 @@ def load_historical_metrics(window: int = HISTORICAL_WINDOW) -> Dict[str, List[D
         consensus_files = sorted(HISTORICO_DIR.glob("*_consensus_metrics.json"))[-window:]
         for fpath in consensus_files:
             try:
-                with open(fpath, 'r', encoding='utf-8') as f:
+                with open(fpath, encoding='utf-8') as f:
                     data = json.load(f)
                 for auditor_id, scores in data.get("auditor_scores", {}).items():
                     if auditor_id not in metrics_by_auditor:
@@ -699,7 +697,7 @@ def load_historical_metrics(window: int = HISTORICAL_WINDOW) -> Dict[str, List[D
     return metrics_by_auditor
 
 
-def calculate_adaptive_weights(historical_metrics: Dict[str, List[Dict]]) -> Dict[str, float]:
+def calculate_adaptive_weights(historical_metrics: dict[str, list[dict]]) -> dict[str, float]:
     """Calcula pesos adaptativos baseados na performance histórica."""
     weights = {}
 
@@ -720,11 +718,11 @@ def calculate_adaptive_weights(historical_metrics: Dict[str, List[Dict]]) -> Dic
 # ============================================================================
 
 def identify_requery_candidates(
-    contradictions: List[Dict],
-    omissions: List[Dict],
+    contradictions: list[dict],
+    omissions: list[dict],
     max_per_run: int,
     max_per_auditor: int,
-) -> List[Dict]:
+) -> list[dict]:
     """Identifica candidatos a re-query baseado em conflitos e omissões."""
     candidates = []
     auditor_counts = {}
@@ -770,11 +768,11 @@ def identify_requery_candidates(
 def run_consensus_engine(
     audit_reports: list,
     canonical_text: str,
-    page_texts: Dict[int, str],
-    page_offsets: Dict[int, int],
+    page_texts: dict[int, str],
+    page_offsets: dict[int, int],
     file_hash: str,
     output_dir: Path,
-) -> Dict:
+) -> dict:
     """
     Executa o consensus engine completo (Fases A + B + C).
     Fases B e C activam automaticamente por threshold de runs.
@@ -795,7 +793,7 @@ def run_consensus_engine(
             "B": run_count >= PHASE_B_MIN_RUNS,
             "C": run_count >= PHASE_C_MIN_RUNS,
         },
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     # =====================================================================
@@ -936,12 +934,12 @@ def run_consensus_engine(
         logger.error(f"[CONSENSUS] Erro ao guardar relatório: {e}")
 
     try:
-        metrics_path = HISTORICO_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_consensus_metrics.json"
+        metrics_path = HISTORICO_DIR / f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_consensus_metrics.json"
         metrics_data = {
             "auditor_scores": citation_results["auditor_scores"],
             "format_compliance": format_scores,
             "run_count": run_count + 1,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         with open(metrics_path, 'w', encoding='utf-8') as f:
             json.dump(metrics_data, f, ensure_ascii=False, indent=2)

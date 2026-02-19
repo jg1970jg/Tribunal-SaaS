@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Constantes partilhadas do sistema TRIBUNAL SAAS.
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MetaIntegrity - Validador de Coerência do Pipeline.
 
@@ -21,9 +20,9 @@ REGRAS:
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Dict, Optional, Set, Tuple
+from typing import Optional
 
 from src.config import OUTPUT_DIR, USE_UNIFIED_PROVENANCE
 from src.utils.sanitize import sanitize_run_id
@@ -91,9 +90,9 @@ class MetaValidationError:
     expected: Optional[str] = None
     actual: Optional[str] = None
     source_file: Optional[str] = None
-    details: Optional[Dict] = None
+    details: Optional[dict] = None
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "check_type": self.check_type,
             "severity": self.severity,
@@ -108,13 +107,13 @@ class MetaValidationError:
 @dataclass
 class FileCheckResult:
     """Resultado de verificação de ficheiros."""
-    expected: List[str] = field(default_factory=list)
-    present: List[str] = field(default_factory=list)
-    missing: List[str] = field(default_factory=list)
-    extra: List[str] = field(default_factory=list)
+    expected: list[str] = field(default_factory=list)
+    present: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    extra: list[str] = field(default_factory=list)
     all_present: bool = False
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "expected_count": len(self.expected),
             "present_count": len(self.present),
@@ -131,10 +130,10 @@ class ConsistencyCheckResult:
     """Resultado de verificação de consistência."""
     check_name: str
     passed: bool
-    details: Dict = field(default_factory=dict)
-    errors: List[MetaValidationError] = field(default_factory=list)
+    details: dict = field(default_factory=dict)
+    errors: list[MetaValidationError] = field(default_factory=list)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "check_name": self.check_name,
             "passed": self.passed,
@@ -154,10 +153,10 @@ class MetaIntegrityReport:
     files_check: FileCheckResult = field(default_factory=FileCheckResult)
 
     # Verificações de consistência
-    consistency_checks: List[ConsistencyCheckResult] = field(default_factory=list)
+    consistency_checks: list[ConsistencyCheckResult] = field(default_factory=list)
 
     # Erros detalhados
-    errors: List[MetaValidationError] = field(default_factory=list)
+    errors: list[MetaValidationError] = field(default_factory=list)
 
     # Status
     is_consistent: bool = True
@@ -177,7 +176,7 @@ class MetaIntegrityReport:
         else:
             self.info_count += 1
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "run_id": self.run_id,
             "timestamp": self.timestamp.isoformat(),
@@ -228,7 +227,7 @@ class MetaIntegrityValidator:
         output_dir: Optional[Path] = None,
         config: Optional[MetaIntegrityConfig] = None,
         run_start: Optional[datetime] = None,
-        loaded_doc_ids: Optional[Set[str]] = None,
+        loaded_doc_ids: Optional[set[str]] = None,
         document_num_pages: Optional[int] = None,
     ):
         """
@@ -243,17 +242,17 @@ class MetaIntegrityValidator:
         self.run_id = sanitize_run_id(run_id)
         self.output_dir = output_dir or (OUTPUT_DIR / self.run_id)
         self.config = config or MetaIntegrityConfig.from_feature_flags(USE_UNIFIED_PROVENANCE)
-        self.run_start = run_start or datetime.now()
+        self.run_start = run_start or datetime.now(timezone.utc)
         self.loaded_doc_ids = loaded_doc_ids or set()
         self.document_num_pages = document_num_pages
 
         # Dados carregados
-        self._unified_result: Optional[Dict] = None
-        self._coverage_report: Optional[Dict] = None
-        self._integrity_report: Optional[Dict] = None
-        self._audit_reports: List[Dict] = []
-        self._judge_opinions: List[Dict] = []
-        self._final_decision: Optional[Dict] = None
+        self._unified_result: Optional[dict] = None
+        self._coverage_report: Optional[dict] = None
+        self._integrity_report: Optional[dict] = None
+        self._audit_reports: list[dict] = []
+        self._judge_opinions: list[dict] = []
+        self._final_decision: Optional[dict] = None
 
         # Relatório
         self.report = MetaIntegrityReport(
@@ -362,7 +361,7 @@ class MetaIntegrityValidator:
         )
         self.report.consistency_checks.append(check)
 
-    def _get_expected_files(self) -> List[str]:
+    def _get_expected_files(self) -> list[str]:
         """Retorna lista de ficheiros esperados baseado em config."""
         files = []
 
@@ -393,7 +392,7 @@ class MetaIntegrityValidator:
 
         return files
 
-    def _get_critical_files(self) -> Set[str]:
+    def _get_critical_files(self) -> set[str]:
         """Retorna set de ficheiros críticos (ausência é ERROR)."""
         return {
             "fase1_unified_result.json",
@@ -423,12 +422,12 @@ class MetaIntegrityValidator:
         if isinstance(all_judges, list):
             self._judge_opinions = all_judges
 
-    def _load_json(self, filename: str) -> Optional[Dict]:
+    def _load_json(self, filename: str) -> Optional[dict]:
         """Carrega ficheiro JSON se existir."""
         filepath = self.output_dir / filename
         if filepath.exists():
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
                 self.report.add_error(MetaValidationError(
@@ -445,8 +444,8 @@ class MetaIntegrityValidator:
 
     def _check_doc_ids(self):
         """Verifica se todos os doc_ids referenciados existem."""
-        referenced_doc_ids: Set[str] = set()
-        invalid_refs: List[Tuple[str, str, str]] = []  # (doc_id, source, context)
+        referenced_doc_ids: set[str] = set()
+        invalid_refs: list[tuple[str, str, str]] = []  # (doc_id, source, context)
 
         # Extrair doc_ids do unified_result
         valid_doc_ids = set(self.loaded_doc_ids)
@@ -727,12 +726,12 @@ class MetaIntegrityValidator:
                         source_file=name,
                     ))
 
-                if ts > datetime.now() + tolerance:
+                if ts > datetime.now(timezone.utc) + tolerance:
                     errors.append(MetaValidationError(
                         check_type="TIMESTAMP_FUTURE",
                         severity="ERROR",
                         message=f"{name} timestamp ({ts}) está no futuro",
-                        expected=f"<= {datetime.now()}",
+                        expected=f"<= {datetime.now(timezone.utc)}",
                         actual=str(ts),
                         source_file=name,
                     ))
@@ -769,7 +768,7 @@ def validate_run_meta_integrity(
     run_id: str,
     output_dir: Optional[Path] = None,
     run_start: Optional[datetime] = None,
-    loaded_doc_ids: Optional[Set[str]] = None,
+    loaded_doc_ids: Optional[set[str]] = None,
     document_num_pages: Optional[int] = None,
     config: Optional[MetaIntegrityConfig] = None,
 ) -> MetaIntegrityReport:

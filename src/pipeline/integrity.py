@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Validador de Integridade para o Pipeline do Tribunal.
 
@@ -28,7 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any, Set
+from typing import Optional, Any
 
 from src.config import OUTPUT_DIR
 
@@ -37,7 +36,6 @@ from src.pipeline.text_normalize import (
     normalize_for_matching,
     text_contains_normalized,
     text_similarity_normalized,
-    normalize_excerpt_for_debug,
     NormalizationConfig,
 )
 
@@ -62,7 +60,7 @@ class ValidationError:
     actual: Optional[str] = None
     source: Optional[str] = None
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "error_type": self.error_type,
             "severity": self.severity,
@@ -103,7 +101,7 @@ class IntegrityReport:
     phase2_errors: int = 0
     phase3_errors: int = 0
     phase4_errors: int = 0
-    errors: List[ValidationError] = field(default_factory=list)
+    errors: list[ValidationError] = field(default_factory=list)
     is_valid: bool = True
     overall_confidence_penalty: float = 0.0
 
@@ -113,7 +111,7 @@ class IntegrityReport:
         if error.severity == "ERROR":
             self.is_valid = False
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "run_id": self.run_id,
             "timestamp": self.timestamp.isoformat(),
@@ -181,12 +179,12 @@ def text_contains(haystack: str, needle: str, threshold: float = 0.7) -> bool:
 # ============================================================================
 
 def validate_citation(
-    citation: Dict,
+    citation: dict,
     document_text: str,
     total_chars: int,
     page_mapper: Optional[Any] = None,
     source: str = ""
-) -> Tuple[bool, List[ValidationError]]:
+) -> tuple[bool, list[ValidationError]]:
     """
     Valida uma citation individual.
 
@@ -274,7 +272,7 @@ def validate_citation(
                 errors.append(ValidationError(
                     error_type="OFFSET_IMPRECISE",
                     severity="INFO",
-                    message=f"excerpt encontrado na janela ±200 chars (offset impreciso)",
+                    message="excerpt encontrado na janela ±200 chars (offset impreciso)",
                     doc_id=doc_id, page_num=page_num,
                     start_char=start_char, end_char=end_char,
                     expected=excerpt[:100], actual=actual_text[:100],
@@ -294,7 +292,7 @@ def validate_citation(
                     errors.append(ValidationError(
                         error_type="OFFSET_WRONG",
                         severity="INFO",
-                        message=f"excerpt encontrado no documento (offset errado, texto real)",
+                        message="excerpt encontrado no documento (offset errado, texto real)",
                         doc_id=doc_id, page_num=page_num,
                         start_char=start_char, end_char=end_char,
                         expected=excerpt[:100], actual=actual_text[:100],
@@ -302,7 +300,6 @@ def validate_citation(
                     ))
                 else:
                     # ── Nível D: NÃO encontrado → EXCERPT_MISMATCH (possível invenção) ──
-                    debug_info = normalize_excerpt_for_debug(excerpt, actual_text)
                     errors.append(ValidationError(
                         error_type="EXCERPT_MISMATCH",
                         severity="WARNING",
@@ -322,7 +319,7 @@ def validate_audit_report(
     document_text: str = "",
     total_chars: int = 0,
     page_mapper: Optional[Any] = None
-) -> Tuple[bool, List[ValidationError], float]:
+) -> tuple[bool, list[ValidationError], float]:
     """Valida um AuditReport completo."""
     errors = []
     is_valid = True
@@ -330,7 +327,7 @@ def validate_audit_report(
 
     auditor_id = getattr(report, 'auditor_id', 'unknown')
 
-    valid_item_ids: Set[str] = set()
+    valid_item_ids: set[str] = set()
     if unified_result is not None:
         union_items = getattr(unified_result, 'union_items', [])
         for item in union_items:
@@ -394,7 +391,7 @@ def validate_judge_opinion(
     document_text: str = "",
     total_chars: int = 0,
     page_mapper: Optional[Any] = None
-) -> Tuple[bool, List[ValidationError], float]:
+) -> tuple[bool, list[ValidationError], float]:
     """
     Valida um JudgeOpinion completo.
     FIX 2026-02-10: Não penalizar quando legal_basis existe.
@@ -497,7 +494,7 @@ def validate_final_decision(
     document_text: str = "",
     total_chars: int = 0,
     page_mapper: Optional[Any] = None
-) -> Tuple[bool, List[ValidationError], float]:
+) -> tuple[bool, list[ValidationError], float]:
     """Valida um FinalDecision completo."""
     errors = []
     is_valid = True
@@ -684,7 +681,7 @@ class IntegrityValidator:
         logger.info(f"Validação Presidente: {len(errors)} erros, penalty={penalty:.2f}")
         return final_decision
 
-    def _update_counts_from_errors(self, errors: List[ValidationError], phase: str):
+    def _update_counts_from_errors(self, errors: list[ValidationError], phase: str):
         """Atualiza contagens do relatório."""
         for error in errors:
             if phase == "phase2":
@@ -826,5 +823,5 @@ O inquilino compromete-se a pagar a renda até ao dia 8 de cada mês.
     for err in errors:
         validator.report.add_error(err)
 
-    print(f"\nRelatório:")
+    print("\nRelatório:")
     print(validator.report.to_json())

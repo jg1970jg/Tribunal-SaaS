@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 INTERFACE PERGUNTAS ADICIONAIS - VERSÃO ACUMULATIVA
 ═══════════════════════════════════════════════════════════════════════════
@@ -22,7 +21,6 @@ import streamlit as st
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Tuple
 import logging
 from io import BytesIO
 
@@ -62,19 +60,19 @@ def extrair_texto_pdf(file_bytes: bytes) -> str:
     """Extrai texto de PDF."""
     if not PDF_DISPONIVEL:
         return "[ERRO: PyPDF2 não instalado - não é possível extrair PDF]"
-    
+
     try:
         pdf_file = BytesIO(file_bytes)
         pdf_reader = PyPDF2.PdfReader(pdf_file)
-        
+
         texto = []
         for page_num, page in enumerate(pdf_reader.pages, 1):
             page_text = page.extract_text()
             if page_text.strip():
                 texto.append(f"--- Página {page_num} ---\n{page_text}")
-        
+
         return "\n\n".join(texto)
-    
+
     except Exception as e:
         logger.error(f"Erro ao extrair PDF: {e}")
         return f"[ERRO AO EXTRAIR PDF: {e}]"
@@ -84,18 +82,18 @@ def extrair_texto_docx(file_bytes: bytes) -> str:
     """Extrai texto de DOCX."""
     if not DOCX_DISPONIVEL:
         return "[ERRO: python-docx não instalado - não é possível extrair DOCX]"
-    
+
     try:
         docx_file = BytesIO(file_bytes)
         doc = Document(docx_file)
-        
+
         texto = []
-        for i, para in enumerate(doc.paragraphs, 1):
+        for _, para in enumerate(doc.paragraphs, 1):
             if para.text.strip():
                 texto.append(para.text)
-        
+
         return "\n\n".join(texto)
-    
+
     except Exception as e:
         logger.error(f"Erro ao extrair DOCX: {e}")
         return f"[ERRO AO EXTRAIR DOCX: {e}]"
@@ -105,23 +103,23 @@ def extrair_texto_xlsx(file_bytes: bytes) -> str:
     """Extrai texto de XLSX."""
     if not XLSX_DISPONIVEL:
         return "[ERRO: openpyxl não instalado - não é possível extrair XLSX]"
-    
+
     try:
         xlsx_file = BytesIO(file_bytes)
         wb = openpyxl.load_workbook(xlsx_file, data_only=True)
-        
+
         texto = []
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
             texto.append(f"=== FOLHA: {sheet_name} ===\n")
-            
+
             for row in ws.iter_rows(values_only=True):
                 row_values = [str(cell) if cell is not None else "" for cell in row]
                 if any(row_values):
                     texto.append(" | ".join(row_values))
-        
+
         return "\n".join(texto)
-    
+
     except Exception as e:
         logger.error(f"Erro ao extrair XLSX: {e}")
         return f"[ERRO AO EXTRAIR XLSX: {e}]"
@@ -153,7 +151,7 @@ def extrair_texto_documento(uploaded_file) -> str:
     """
     file_bytes = uploaded_file.read()
     file_name = uploaded_file.name.lower()
-    
+
     if file_name.endswith('.pdf'):
         return extrair_texto_pdf(file_bytes)
     elif file_name.endswith('.docx'):
@@ -184,7 +182,7 @@ def guardar_pergunta_resposta(
     pergunta: str,
     resultado,
     timestamp: str,
-    documentos_anexados: List[str] = None  # ← NOVO!
+    documentos_anexados: list[str] = None  # ← NOVO!
 ) -> int:
     """
     Guarda pergunta e resposta PERMANENTEMENTE.
@@ -214,10 +212,10 @@ def guardar_pergunta_resposta(
     # Contar perguntas existentes
     perguntas_existentes = list(perguntas_dir.glob("pergunta_*.json"))
     numero = len(perguntas_existentes) + 1
-    
+
     # Nome base
     base_nome = f"pergunta_{numero}"
-    
+
     # 1. ← MODIFICADO: Guardar metadata JSON (COM resposta_final e documentos!)
     metadata = {
         "numero": numero,
@@ -231,10 +229,10 @@ def guardar_pergunta_resposta(
         "custo": resultado.custo_estimado,
         "sucesso": resultado.sucesso
     }
-    
+
     with open(perguntas_dir / f"{base_nome}.json", 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
-    
+
     # 2. Guardar COMPLETA (markdown)
     conteudo_completo = f"""# PERGUNTA #{numero}
 
@@ -244,11 +242,11 @@ def guardar_pergunta_resposta(
 **Tokens:** {resultado.tokens_total:,}  
 **Custo:** ${resultado.custo_estimado:.4f}  
 """
-    
+
     # ← NOVO: Adicionar documentos anexados
     if documentos_anexados and len(documentos_anexados) > 0:
         conteudo_completo += f"\n**Documentos Anexados:** {', '.join(documentos_anexados)}  \n"
-    
+
     conteudo_completo += f"""
 ---
 
@@ -267,7 +265,7 @@ def guardar_pergunta_resposta(
 ## ⚖️ FASE 3: PARECERES JURÍDICOS
 
 """
-    
+
     for i, juiz in enumerate(resultado.juizes, 1):
         conteudo_completo += f"""
 ### Relator {i} ({juiz.modelo})
@@ -276,7 +274,7 @@ def guardar_pergunta_resposta(
 
 ---
 """
-    
+
     conteudo_completo += f"""
 ## 👨‍⚖️ FASE 4: PARECER FINAL DO CONSELHEIRO-MOR
 
@@ -284,28 +282,28 @@ def guardar_pergunta_resposta(
 
 ---
 """
-    
+
     with open(perguntas_dir / f"{base_nome}_completa.md", 'w', encoding='utf-8') as f:
         f.write(conteudo_completo)
-    
+
     # 3. Guardar só auditoria
     with open(perguntas_dir / f"{base_nome}_auditoria.md", 'w', encoding='utf-8') as f:
         f.write(resultado.auditoria_consolidada)
-    
+
     # 4. Guardar só decisão
     with open(perguntas_dir / f"{base_nome}_decisao.md", 'w', encoding='utf-8') as f:
         f.write(resultado.resposta_final)
-    
+
     logger.info(f"✓ Pergunta #{numero} guardada em: {perguntas_dir}")
-    
+
     return numero
 
 
 def guardar_documentos_anexados(
     run_id: str,
     output_dir: Path,
-    uploaded_files: List,
-    textos_extraidos: Dict[str, str]
+    uploaded_files: list,
+    textos_extraidos: dict[str, str]
 ):
     """
     ← NOVA FUNÇÃO!
@@ -349,10 +347,10 @@ def guardar_documentos_anexados(
             texto = textos_extraidos.get(uploaded_file.name, "")
             nome_sem_ext = Path(safe_name).stem
             texto_path = docs_dir / f"{nome_sem_ext}_extraido.txt"
-            
+
             with open(texto_path, 'w', encoding='utf-8') as f:
                 f.write(texto)
-            
+
             logger.info(f"Documento guardado: {safe_name}")
 
         except Exception as e:
@@ -370,13 +368,13 @@ def criar_word_auditoria(auditoria: str, pergunta: str) -> BytesIO:
     """Cria documento Word com auditoria."""
     try:
         from docx import Document
-        
+
         doc = Document()
         doc.add_heading('AUDITORIA CONSOLIDADA', 0)
         doc.add_paragraph(f'Pergunta: {pergunta}')
         doc.add_paragraph('')
         doc.add_paragraph(auditoria)
-        
+
         buffer = BytesIO()
         doc.save(buffer)
         buffer.seek(0)
@@ -390,13 +388,13 @@ def criar_word_decisao(decisao: str, pergunta: str) -> BytesIO:
     """Cria documento Word com decisão."""
     try:
         from docx import Document
-        
+
         doc = Document()
         doc.add_heading('DECISÃO FINAL', 0)
         doc.add_paragraph(f'Pergunta: {pergunta}')
         doc.add_paragraph('')
         doc.add_paragraph(decisao)
-        
+
         buffer = BytesIO()
         doc.save(buffer)
         buffer.seek(0)
@@ -414,11 +412,11 @@ def processar_pergunta_pipeline_completo(
     run_id: str,
     pergunta: str,
     output_dir: Path,
-    auditor_models: List,
-    juiz_models: List,
+    auditor_models: list,
+    juiz_models: list,
     presidente_model: str,
     llm_client,
-    documentos_novos: List[Tuple[str, str]] = None,  # ← NOVO!
+    documentos_novos: list[tuple[str, str]] = None,  # ← NOVO!
     chefe_model: str = None,  # v4.0 FIX: receber modelo como parâmetro
 ):
     """
@@ -447,8 +445,8 @@ def processar_pergunta_pipeline_completo(
 
 def tab_perguntas_adicionais(
     output_dir: Path,
-    auditor_models: List,
-    juiz_models: List,
+    auditor_models: list,
+    juiz_models: list,
     presidente_model: str,
     llm_client,
     chefe_model: str = None,
@@ -459,43 +457,43 @@ def tab_perguntas_adicionais(
     ← MODIFICADO: Agora com upload de documentos!
     """
     st.title("💬 Perguntas Adicionais")
-    
+
     st.markdown("""
     Faça perguntas sobre análises já processadas.  
     **NOVO:** Pode anexar documentos (minuta, comprovativo, etc.)!
     """)
-    
+
     # ═════════════════════════════════════════════════════════════════════
     # SELECIONAR ANÁLISE EXISTENTE
     # ═════════════════════════════════════════════════════════════════════
-    
+
     st.markdown("### 📂 Selecionar Análise")
-    
+
     # ← NOVO: Usar função que retorna títulos
     analises_com_titulos = listar_analises_com_titulos(output_dir)
-    
+
     if not analises_com_titulos:
         st.warning("⚠️ Nenhuma análise encontrada! Processe documentos primeiro.")
         return
-    
+
     # Criar mapeamento: titulo_display -> run_id
     mapa_titulos = {}
     opcoes_display = []
-    
-    for run_id, titulo_display, data in analises_com_titulos:
+
+    for run_id, titulo_display, _data in analises_com_titulos:
         opcoes_display.append(f"📁 {titulo_display}")
         mapa_titulos[f"📁 {titulo_display}"] = run_id
-    
+
     # Selectbox com títulos
     analise_selecionada_display = st.selectbox(
         "Escolha a análise:",
         opcoes_display,
         key="select_analise_perguntas"
     )
-    
+
     # Obter run_id real
     run_id_selecionado = mapa_titulos[analise_selecionada_display]
-    
+
     # ═════════════════════════════════════════════════════════════════════
     # ← NOVO: UPLOAD DOCUMENTOS ADICIONAIS (ACUMULATIVO)
     # ═════════════════════════════════════════════════════════════════════
@@ -544,7 +542,6 @@ def tab_perguntas_adicionais(
 
             with col2:
                 # Extrair texto do ficheiro
-                from io import BytesIO
                 class FicheiroPseudo:
                     def __init__(self, name, data):
                         self.name = name
@@ -572,7 +569,6 @@ def tab_perguntas_adicionais(
     # Criar lista de uploaded_files para compatibilidade com código existente
     uploaded_files = []
     if st.session_state.ficheiros_perguntas_acumulados:
-        from io import BytesIO
         class FicheiroPseudoFull:
             def __init__(self, name, data):
                 self.name = name
@@ -587,29 +583,29 @@ def tab_perguntas_adicionais(
             FicheiroPseudoFull(nome, dados)
             for nome, dados in st.session_state.ficheiros_perguntas_acumulados.items()
         ]
-    
+
     # ═════════════════════════════════════════════════════════════════════
     # HISTÓRICO PERGUNTAS (mostrar visualmente)
     # ═════════════════════════════════════════════════════════════════════
-    
+
     st.markdown("---")
     st.markdown("### 📚 Histórico de Perguntas")
-    
+
     # Determinar pasta perguntas
     if run_id_selecionado == "__FICHEIROS_SOLTOS__":
         perguntas_dir = output_dir / "perguntas"
     else:
         perguntas_dir = output_dir / run_id_selecionado / "perguntas"
-    
+
     if perguntas_dir.exists():
         json_files = sorted(perguntas_dir.glob("pergunta_*.json"))
-        
+
         if json_files:
             st.write(f"**{len(json_files)} pergunta(s) anterior(es):**")
-            
+
             for json_file in json_files:
                 try:
-                    with open(json_file, 'r', encoding='utf-8') as f:
+                    with open(json_file, encoding='utf-8') as f:
                         metadata = json.load(f)
 
                     with st.expander(f"❓ Pergunta #{metadata['numero']} ({metadata['timestamp']})"):
@@ -624,7 +620,7 @@ def tab_perguntas_adicionais(
                             # Carregar do ficheiro _decisao.md (perguntas antigas)
                             decisao_file = json_file.parent / f"pergunta_{metadata['numero']}_decisao.md"
                             if decisao_file.exists():
-                                with open(decisao_file, 'r', encoding='utf-8') as f:
+                                with open(decisao_file, encoding='utf-8') as f:
                                     resposta = f.read()
 
                         st.markdown("**Resposta:**")
@@ -639,44 +635,44 @@ def tab_perguntas_adicionais(
             st.info("📝 Nenhuma pergunta anterior (primeira pergunta nesta análise)")
     else:
         st.info("📝 Nenhuma pergunta anterior (primeira pergunta nesta análise)")
-    
+
     # ═════════════════════════════════════════════════════════════════════
     # NOVA PERGUNTA
     # ═════════════════════════════════════════════════════════════════════
-    
+
     st.markdown("---")
     st.markdown("### ❓ Nova Pergunta")
-    
+
     pergunta = st.text_area(
         "Escreva sua pergunta:",
         height=150,
         placeholder="Ex: Esta minuta de carta protege-me juridicamente? Devo alterar algo?",
         key="nova_pergunta_input"
     )
-    
+
     # ═════════════════════════════════════════════════════════════════════
     # PROCESSAR
     # ═════════════════════════════════════════════════════════════════════
-    
+
     if st.button("🚀 Processar Pergunta", type="primary", use_container_width=True):
         if not pergunta or len(pergunta.strip()) < 10:
             st.error("⚠️ Pergunta muito curta! Escreva pelo menos 10 caracteres.")
             return
-        
+
         try:
             # Barra progresso (fake mas informativa)
             progress_bar = st.progress(0)
             status_text = st.empty()
-            
+
             status_text.text("🔄 Iniciando processamento...")
             progress_bar.progress(10)
-            
+
             # ← NOVO: Preparar documentos para pipeline
             documentos_novos_lista = []
             if documentos_extraidos:
                 for nome, texto in documentos_extraidos.items():
                     documentos_novos_lista.append((nome, texto))
-            
+
             # ← NOVO: Guardar documentos ANTES de processar
             if uploaded_files and documentos_extraidos:
                 status_text.text("💾 Guardando documentos anexados...")
@@ -687,10 +683,10 @@ def tab_perguntas_adicionais(
                     textos_extraidos=documentos_extraidos
                 )
                 progress_bar.progress(20)
-            
+
             status_text.text("🔍 Processando Fases 2-4 (pode demorar 3-5 min)...")
             progress_bar.progress(30)
-            
+
             # PROCESSAR (COM DOCUMENTOS!)
             resultado = processar_pergunta_pipeline_completo(
                 run_id=run_id_selecionado,
@@ -703,18 +699,18 @@ def tab_perguntas_adicionais(
                 documentos_novos=documentos_novos_lista,  # ← NOVO!
                 chefe_model=chefe_model,  # v4.0 FIX: passar modelo explicitamente
             )
-            
+
             progress_bar.progress(100)
             status_text.text("✅ Processamento concluído!")
-            
+
             if not resultado.sucesso:
                 st.error(f"❌ Erro: {resultado.erro}")
                 return
-            
+
             # ═════════════════════════════════════════════════════════════
             # GUARDAR PERMANENTEMENTE
             # ═════════════════════════════════════════════════════════════
-            
+
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             numero_pergunta = guardar_pergunta_resposta(
                 run_id=run_id_selecionado,
@@ -724,18 +720,18 @@ def tab_perguntas_adicionais(
                 timestamp=timestamp,
                 documentos_anexados=[f.name for f in uploaded_files] if uploaded_files else []  # ← NOVO!
             )
-            
+
             st.success(f"💾 Pergunta #{numero_pergunta} guardada permanentemente!")
-            
+
             # ═════════════════════════════════════════════════════════════
             # MOSTRAR RESULTADOS
             # ═════════════════════════════════════════════════════════════
-            
+
             st.divider()
             st.subheader("✅ Resposta do LexForum")
-            
+
             col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-            
+
             with col_m1:
                 st.metric("⏱️ Tempo", f"{resultado.tempo_total_ms/1000:.1f}s")
             with col_m2:
@@ -744,21 +740,21 @@ def tab_perguntas_adicionais(
                 st.metric("💰 Custo", f"${resultado.custo_estimado:.4f}")
             with col_m4:
                 st.metric("🤖 LLMs", "7 (3+3+1)")
-            
+
             st.markdown("---")
-            
+
             st.markdown("### 👨‍⚖️ Parecer Final do Conselheiro-Mor")
             st.success(resultado.resposta_final)
-            
+
             # ═════════════════════════════════════════════════════════════
             # BOTÕES DE EXPORTAÇÃO
             # ═════════════════════════════════════════════════════════════
-            
+
             st.markdown("---")
             st.markdown("### 💾 Exportar Resultados")
-            
+
             col_exp1, col_exp2, col_exp3, col_exp4 = st.columns(4)
-            
+
             with col_exp1:
                 buffer_aud_word = criar_word_auditoria(resultado.auditoria_consolidada, pergunta)
                 if buffer_aud_word:
@@ -769,7 +765,7 @@ def tab_perguntas_adicionais(
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         use_container_width=True
                     )
-            
+
             with col_exp2:
                 buffer_dec_word = criar_word_decisao(resultado.resposta_final, pergunta)
                 if buffer_dec_word:
@@ -780,7 +776,7 @@ def tab_perguntas_adicionais(
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         use_container_width=True
                     )
-            
+
             with col_exp3:
                 st.download_button(
                     label="📝 Auditoria (TXT)",
@@ -789,7 +785,7 @@ def tab_perguntas_adicionais(
                     mime="text/plain",
                     use_container_width=True
                 )
-            
+
             with col_exp4:
                 st.download_button(
                     label="📝 Decisão (TXT)",
@@ -798,25 +794,25 @@ def tab_perguntas_adicionais(
                     mime="text/plain",
                     use_container_width=True
                 )
-            
+
             st.markdown("---")
-            
+
             with st.expander("📋 Ver Detalhes Completos"):
                 st.markdown("#### Fase 2: Auditoria Consolidada")
                 st.info(resultado.auditoria_consolidada)
-                
+
                 st.markdown("#### Fase 3: Pareceres Jurídicos")
                 for i, juiz in enumerate(resultado.juizes, 1):
                     with st.expander(f"⚖️ Relator {i} ({juiz.modelo})"):
                         st.markdown(juiz.conteudo)
-            
+
             st.success("✅ Pergunta processada, guardada e disponível para exportação!")
             st.info("💡 Pode rever esta resposta a qualquer momento no histórico acima!")
-            
+
             # ← NOVO: Mostrar contexto acumulado
             if documentos_extraidos:
                 st.info(f"📎 {len(documentos_extraidos)} documento(s) anexado(s) ao projeto e disponível(is) para futuras perguntas!")
-            
+
         except Exception as e:
             st.error(f"❌ Erro: {e}")
             logger.error(f"Erro processando pergunta: {e}", exc_info=True)

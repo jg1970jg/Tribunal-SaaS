@@ -1,13 +1,11 @@
-# -*- coding: utf-8 -*-
 """Utilidades para parsing e validação de perguntas do utilizador."""
 
 import logging
-from typing import List, Tuple
 
 logger = logging.getLogger(__name__)
 
 
-def parse_perguntas(raw: str) -> List[str]:
+def parse_perguntas(raw: str) -> list[str]:
     """
     Parse robusto de perguntas com separador ---.
 
@@ -52,7 +50,7 @@ def parse_perguntas(raw: str) -> List[str]:
     return blocos
 
 
-def validar_perguntas(perguntas: List[str]) -> Tuple[bool, str]:
+def validar_perguntas(perguntas: list[str]) -> tuple[bool, str]:
     """
     Valida perguntas contra limites configurados.
 

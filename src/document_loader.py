@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Carregador de documentos - Suporta PDF, DOCX, XLSX, TXT.
 Extrai texto real dos ficheiros para análise.
@@ -6,9 +5,9 @@ Extrai texto real dos ficheiros para análise.
 
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Any, Union
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import io
 
@@ -26,8 +25,8 @@ class DocumentContent:
     num_pages: int = 0
     num_chars: int = 0
     num_words: int = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    extraction_time: datetime = field(default_factory=datetime.now)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    extraction_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     file_hash: str = ""
     success: bool = True
     error: Optional[str] = None
@@ -36,7 +35,7 @@ class DocumentContent:
     pages_problematic: int = 0  # Contagem de páginas problemáticas
     pdf_safe_enabled: bool = False  # Se usou extração PDF Seguro
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "filename": self.filename,
             "extension": self.extension,
@@ -229,7 +228,6 @@ class DocumentLoader:
         doc = Document(io.BytesIO(file_bytes))
 
         # Detectar page breaks explícitos no XML do DOCX
-        from lxml import etree
         BREAK_TYPE = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type'
         BREAK_TAG = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}br'
         LAST_RENDERED_PAGE = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}lastRenderedPageBreak'
@@ -268,7 +266,6 @@ class DocumentLoader:
                 if table_text:
                     raw_parts.append("[TABELA]\n" + "\n".join(table_text))
 
-            full_text = "\n\n".join(raw_parts)
             page_num = 1
             text_parts = [f"[Página {page_num}]"]
             char_count = 0
@@ -376,7 +373,7 @@ class DocumentLoader:
     def _extract_txt(self, file_bytes: bytes) -> tuple:
         """Extrai texto de um ficheiro TXT."""
         # Tentar diferentes encodings
-        encodings = ["utf-8", "latin-1", "cp1252", "iso-8859-1"]
+        encodings = ["utf-8", "cp1252", "latin-1"]
 
         text = None
         used_encoding = None
@@ -405,7 +402,7 @@ class DocumentLoader:
         logger.info(f"TXT extraído: {num_lines} linhas, {len(text)} caracteres")
         return text, 1, metadata
 
-    def load_multiple(self, file_paths: List[Union[str, Path]]) -> List[DocumentContent]:
+    def load_multiple(self, file_paths: list[Union[str, Path]]) -> list[DocumentContent]:
         """Carrega múltiplos documentos."""
         return [self.load(fp) for fp in file_paths]
 
@@ -426,7 +423,7 @@ class DocumentLoader:
         Returns:
             DocumentContent com pdf_safe_result preenchido
         """
-        from src.pipeline.pdf_safe import get_pdf_safe_loader, PDFSafeResult
+        from src.pipeline.pdf_safe import get_pdf_safe_loader
 
         self._stats["total_loaded"] += 1
 
@@ -525,7 +522,7 @@ class DocumentLoader:
                 error=str(e),
             )
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Retorna estatísticas de carregamento."""
         return self._stats.copy()
 
@@ -557,6 +554,6 @@ def load_document(file_path: Union[str, Path, io.BytesIO], filename: Optional[st
     return loader.load(file_path, filename)
 
 
-def get_supported_extensions() -> Dict[str, str]:
+def get_supported_extensions() -> dict[str, str]:
     """Retorna as extensões suportadas."""
     return SUPPORTED_EXTENSIONS.copy()

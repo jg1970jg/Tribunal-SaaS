@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Mapeamento de offsets de caracteres para páginas.
 
@@ -11,7 +10,7 @@ Suporta dois modos:
 import re
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Optional, Any
 
 
 logger = logging.getLogger(__name__)
@@ -47,7 +46,7 @@ class CharToPageMapper:
         page_num = mapper.get_page(12345)  # -> 5
         pages = mapper.get_pages_for_range(10000, 15000)  # -> [3, 4, 5]
     """
-    boundaries: List[PageBoundary] = field(default_factory=list)
+    boundaries: list[PageBoundary] = field(default_factory=list)
     total_chars: int = 0
     total_pages: int = 0
     doc_id: str = ""
@@ -199,7 +198,7 @@ class CharToPageMapper:
 
         return None
 
-    def get_page_range(self, start_char: int, end_char: int) -> Tuple[Optional[int], Optional[int]]:
+    def get_page_range(self, start_char: int, end_char: int) -> tuple[Optional[int], Optional[int]]:
         """
         Retorna (page_start, page_end) para um intervalo de caracteres.
 
@@ -215,7 +214,7 @@ class CharToPageMapper:
             return None, None
         return pages[0], pages[-1]
 
-    def get_pages_for_range(self, start_char: int, end_char: int) -> List[int]:
+    def get_pages_for_range(self, start_char: int, end_char: int) -> list[int]:
         """
         Retorna lista de páginas que um intervalo de caracteres abrange.
 
@@ -247,14 +246,14 @@ class CharToPageMapper:
         boundary = self.get_boundary(page_num)
         return boundary.status if boundary else "UNKNOWN"
 
-    def get_unreadable_pages(self) -> List[int]:
+    def get_unreadable_pages(self) -> list[int]:
         """Retorna lista de páginas com status problemático."""
         return [
             b.page_num for b in self.boundaries
             if b.status in ["SUSPEITA", "SEM_TEXTO", "VISUAL_ONLY"]
         ]
 
-    def get_coverage_by_pages(self, char_ranges: List[Tuple[int, int]]) -> Dict:
+    def get_coverage_by_pages(self, char_ranges: list[tuple[int, int]]) -> dict:
         """
         Calcula cobertura por páginas dado um conjunto de intervalos de caracteres.
 
@@ -280,7 +279,7 @@ class CharToPageMapper:
             "coverage_percent": (len(pages_touched) / len(all_pages) * 100) if all_pages else 0,
         }
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Serializa mapper para dict."""
         return {
             "doc_id": self.doc_id,
@@ -300,7 +299,7 @@ class CharToPageMapper:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'CharToPageMapper':
+    def from_dict(cls, data: dict) -> 'CharToPageMapper':
         """Reconstrói mapper a partir de dict."""
         boundaries = [
             PageBoundary(
@@ -330,7 +329,7 @@ def map_char_offset_to_page(
     mapper: Optional[CharToPageMapper] = None,
     pdf_result: Any = None,
     text: str = ""
-) -> Tuple[Optional[int], Optional[int]]:
+) -> tuple[Optional[int], Optional[int]]:
     """
     Mapeia intervalo de caracteres para páginas.
 
@@ -363,9 +362,9 @@ def map_char_offset_to_page(
 
 
 def enrich_citations_with_pages(
-    citations: List[Dict],
+    citations: list[dict],
     mapper: CharToPageMapper
-) -> List[Dict]:
+) -> list[dict]:
     """
     Adiciona page_num às citações que não têm.
 
@@ -395,9 +394,9 @@ def enrich_citations_with_pages(
 
 
 def extend_coverage_report_with_pages(
-    coverage_data: Dict,
+    coverage_data: dict,
     mapper: CharToPageMapper
-) -> Dict:
+) -> dict:
     """
     Estende relatório de cobertura com informação de páginas.
 

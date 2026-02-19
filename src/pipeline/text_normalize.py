@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Normalização de Texto Unificada para o Pipeline do Tribunal.
 
@@ -17,7 +16,7 @@ import re
 import unicodedata
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, Set
+from typing import Optional
 
 
 logger = logging.getLogger(__name__)
@@ -99,7 +98,7 @@ class NormalizationResult:
     """
     raw: str
     normalized: str
-    words: Set[str]
+    words: set[str]
     config_used: str  # "default", "strict", "ocr_tolerant", "custom"
     transformations_applied: int
 
@@ -270,7 +269,7 @@ def text_contains_normalized(
     threshold: float = 0.7,
     config: Optional[NormalizationConfig] = None,
     return_debug: bool = False
-) -> bool | Tuple[bool, dict]:
+) -> bool | tuple[bool, dict]:
     """
     Verifica se haystack contém needle (com tolerância).
 

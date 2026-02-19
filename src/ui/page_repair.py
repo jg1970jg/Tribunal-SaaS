@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 UI de Reparação de Páginas Problemáticas (Streamlit).
 
@@ -18,25 +17,20 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import streamlit as st
-from typing import Dict, Optional
+from typing import Optional
 
 from src.pipeline.pdf_safe import (
     PageRecord,
     PDFSafeResult,
     save_override,
-    load_overrides,
-    apply_overrides,
     export_selected_pages,
     get_pdf_safe_loader,
 )
 from src.pipeline.constants import (
     ESTADOS_BLOQUEANTES,
-    ESTADOS_RESOLVIDOS,
     FLAGS_BLOQUEANTES,
-    OVERRIDE_TYPES,
     is_resolvida,
     has_flags_bloqueantes,
-    precisa_reparacao,
 )
 
 
@@ -324,7 +318,7 @@ def _renderizar_pagina(
                 st.rerun()
 
 
-def renderizar_resumo_cobertura(pdf_result: PDFSafeResult, coverage_matrix: Dict):
+def renderizar_resumo_cobertura(pdf_result: PDFSafeResult, coverage_matrix: dict):
     """
     Renderiza resumo da matriz de cobertura.
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 PERFORMANCE TRACKER - Sistema de Feedback de Performance de IA
 ==============================================================
@@ -9,7 +8,7 @@ adaptive hints para melhorar prompts futuros.
 import time
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 from dataclasses import dataclass, field
 from threading import Lock
 
@@ -23,11 +22,11 @@ class ModelHints:
     """Hints adaptativos em cache para um par modelo+role."""
     model: str
     role: str
-    hints: List[str] = field(default_factory=list)
+    hints: list[str] = field(default_factory=list)
     hint_text: str = ""
     total_calls: int = 0
     success_rate: float = 1.0
-    top_errors: Dict[str, int] = field(default_factory=dict)
+    top_errors: dict[str, int] = field(default_factory=dict)
     loaded_at: float = 0.0
 
 
@@ -115,10 +114,10 @@ class PerformanceTracker:
 
     def __init__(self, supabase_client):
         self.sb = supabase_client
-        self._hints_cache: Dict[Tuple[str, str], ModelHints] = {}
+        self._hints_cache: dict[tuple[str, str], ModelHints] = {}
         self._cache_lock = Lock()
         self._cache_loaded_at: float = 0
-        self._summary_cache: List[Dict] = []
+        self._summary_cache: list[dict] = []
 
     @classmethod
     def get_instance(cls, supabase_client=None):
@@ -151,7 +150,7 @@ class PerformanceTracker:
         was_retry: bool = False,
         retry_number: int = 0,
         retry_of_id: Optional[str] = None,
-        adaptive_hints_used: Optional[List[str]] = None,
+        adaptive_hints_used: Optional[list[str]] = None,
         analysis_id: Optional[str] = None,
         # v5.2: Campos extra
         cached_tokens: int = 0,
@@ -296,7 +295,7 @@ class PerformanceTracker:
                 return
 
             # Agregar por modelo+role
-            agg: Dict[Tuple[str, str], Dict] = {}
+            agg: dict[tuple[str, str], dict] = {}
             for row in rows:
                 key = (row["model"], row["role"])
                 if key not in agg:
@@ -331,7 +330,7 @@ class PerformanceTracker:
                 a["total_cost"] += float(row.get("cost_usd") or 0)
 
             # Construir hints
-            new_cache: Dict[Tuple[str, str], ModelHints] = {}
+            new_cache: dict[tuple[str, str], ModelHints] = {}
             now = time.time()
 
             for (model, role), stats in agg.items():
@@ -400,7 +399,7 @@ class PerformanceTracker:
         except Exception as e:
             logger.warning(f"[PERF] Failed to refresh cache: {e}")
 
-    def get_summary(self) -> List[Dict]:
+    def get_summary(self) -> list[dict]:
         """Retorna o resumo em cache para o dashboard admin."""
         with self._cache_lock:
             return self._summary_cache
@@ -410,7 +409,7 @@ class PerformanceTracker:
 # QUALITY GATE
 # ============================================================
 
-def check_response_quality(content: str, role_name: str) -> Optional[Dict]:
+def check_response_quality(content: str, role_name: str) -> Optional[dict]:
     """
     Verifica qualidade da resposta de IA.
     Retorna None se OK, ou dict com detalhes do problema.
@@ -499,10 +498,10 @@ def check_response_quality(content: str, role_name: str) -> Optional[Dict]:
 
 def build_retry_prompt(
     original_system: str,
-    quality_issue: Dict,
+    quality_issue: dict,
     retry_number: int,
     adaptive_hints: str = "",
-) -> Tuple[str, float]:
+) -> tuple[str, float]:
     """
     Constroi prompt melhorado para retry.
     Retorna (system_prompt, temperatura).

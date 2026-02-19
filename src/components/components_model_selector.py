@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 COMPONENTE: Seleção de Modelos Premium
 ═══════════════════════════════════════════════════════════════════════════
@@ -41,33 +40,32 @@ def selecao_modelos_premium():
     chefe_model = get_chefe_model(choices['chefe'])
     presidente_model = get_presidente_model(choices['presidente'])
     """
-    
+
     st.markdown("---")
     st.subheader("⚙️ Configuração de Modelos Premium")
-    
+
     st.markdown("""
     Escolha a versão dos modelos principais. **GPT-5.2** oferece excelente qualidade 
     a custo controlado. **GPT-5.2-PRO** oferece máxima precisão mas custa ~10x mais.
     """)
-    
+
     col_left, col_right = st.columns(2)
-    
+
     # ===================================================================
     # CONSOLIDADOR DOS AUDITORES
     # ===================================================================
 
     with col_left:
         st.markdown("### 👔 Consolidador dos Auditores")
-        
+
         st.markdown("""
         Consolida as 3 auditorias numa síntese única.
         Qualidade crítica para análise final.
         """)
-        
+
         # Opções
         chefe_options = list(CHEFE_MODEL_OPTIONS.keys())
-        chefe_display = [CHEFE_MODEL_OPTIONS[k]["display_name"] for k in chefe_options]
-        
+
         # Radio buttons
         chefe_choice = st.radio(
             "Escolha o modelo:",
@@ -76,10 +74,10 @@ def selecao_modelos_premium():
             index=0,  # default: primeira opção (económico)
             key="radio_chefe"
         )
-        
+
         # Mostrar detalhes da opção
         chefe_info = CHEFE_MODEL_OPTIONS[chefe_choice]
-        
+
         st.info(f"""
         **{chefe_info['display_name']}**
         
@@ -87,10 +85,10 @@ def selecao_modelos_premium():
         
         📝 {chefe_info['description']}
         """)
-        
+
         if chefe_info["recommended"]:
             st.success("✅ Recomendado para uso geral")
-    
+
     # ===================================================================
     # CONSELHEIRO-MOR
     # ===================================================================
@@ -102,11 +100,10 @@ def selecao_modelos_premium():
         Parecer final baseado em auditorias e relatórios.
         Determina o parecer conclusivo.
         """)
-        
+
         # Opções
         pres_options = list(PRESIDENTE_MODEL_OPTIONS.keys())
-        pres_display = [PRESIDENTE_MODEL_OPTIONS[k]["display_name"] for k in pres_options]
-        
+
         # Radio buttons
         pres_choice = st.radio(
             "Escolha o modelo:",
@@ -115,10 +112,10 @@ def selecao_modelos_premium():
             index=0,  # default: primeira opção (económico)
             key="radio_presidente"
         )
-        
+
         # Mostrar detalhes da opção
         pres_info = PRESIDENTE_MODEL_OPTIONS[pres_choice]
-        
+
         st.info(f"""
         **{pres_info['display_name']}**
         
@@ -126,48 +123,48 @@ def selecao_modelos_premium():
         
         📝 {pres_info['description']}
         """)
-        
+
         if pres_info["recommended"]:
             st.success("✅ Recomendado para uso geral")
-    
+
     # ===================================================================
     # CUSTO TOTAL ESTIMADO
     # ===================================================================
-    
+
     st.markdown("---")
-    
+
     custo_chefe = CHEFE_MODEL_OPTIONS[chefe_choice]["cost_per_analysis"]
     custo_pres = PRESIDENTE_MODEL_OPTIONS[pres_choice]["cost_per_analysis"]
     custo_total_premium = custo_chefe + custo_pres
-    
+
     # Custo base (outros modelos: auditores, juízes, extratores)
     custo_base = 0.30  # estimativa conservadora
-    
+
     custo_total = custo_base + custo_total_premium
-    
+
     col_custo1, col_custo2, col_custo3 = st.columns(3)
-    
+
     with col_custo1:
         st.metric(
             "💰 Custo Base",
             f"${custo_base:.2f}",
             help="Extratores + Auditores + Relatores (outros modelos)"
         )
-    
+
     with col_custo2:
         st.metric(
             "⭐ Custo Premium",
             f"${custo_total_premium:.2f}",
             help="Consolidador + Conselheiro-Mor (modelos escolhidos)"
         )
-    
+
     with col_custo3:
         st.metric(
             "📊 Custo Total Estimado",
             f"${custo_total:.2f}",
             help="Estimativa total da análise completa"
         )
-    
+
     # Aviso se escolher PRO
     if chefe_choice == "gpt-5.2-pro" or pres_choice == "gpt-5.2-pro":
         st.warning("""
@@ -176,9 +173,9 @@ def selecao_modelos_premium():
         O custo será significativamente maior (~$0.40 adicional). 
         Recomendamos GPT-5.2 normal que já oferece excelente qualidade!
         """)
-    
+
     st.markdown("---")
-    
+
     # Retornar escolhas
     return {
         "chefe": chefe_choice,
@@ -200,7 +197,7 @@ def get_model_choices_from_session():
             "chefe": "gpt-5.2",
             "presidente": "gpt-5.2",
         }
-    
+
     return st.session_state.model_choices
 
 

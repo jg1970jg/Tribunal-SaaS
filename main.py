@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MAIN - LexForum (FastAPI)
 ============================================================
@@ -21,10 +20,9 @@ import re
 import secrets
 import signal
 import sys
-import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, Request, UploadFile, File, HTTPException, status
@@ -109,7 +107,7 @@ def _sanitize_filename(filename: str) -> str:
         return "documento"
     # Remove path separators and keep only safe chars
     name = os.path.basename(filename)
-    name = re.sub(r'[^a-zA-Z0-9._\-\s]', '_', name)
+    name = re.sub(r'[^\w._\-\s]', '_', name)
     return name[:255] if name else "documento"
 
 
@@ -394,7 +392,7 @@ if os.environ.get("ENV", "production").lower() in ("development", "dev", "local"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_origin_regex=r"https://.*\.lovable\.(app|dev)",
+    allow_origin_regex=r"https://[a-zA-Z0-9-]+\.lovable\.(app|dev)$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -450,7 +448,7 @@ async def me(request: Request, user: dict = Depends(get_current_user)):
 
 
 # Anti-duplicado: impede 2 análises do mesmo user ao mesmo tempo
-_active_user_analyses: Dict[str, str] = {}  # user_id -> analysis_id
+_active_user_analyses: dict[str, str] = {}  # user_id -> analysis_id
 _active_lock = threading.Lock()
 
 
@@ -642,7 +640,7 @@ async def analyze(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Erro inesperado no endpoint /analyze")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -659,7 +657,7 @@ async def analyze(
 # ============================================================
 
 class ExportRequest(BaseModel):
-    analysis_result: Dict[str, Any]
+    analysis_result: dict[str, Any]
 
     @field_validator("analysis_result")
     @classmethod
@@ -699,14 +697,14 @@ def _sanitize_content(text: str) -> str:
     return text.strip()
 
 
-def _build_pdf(data: Dict[str, Any]) -> bytes:
+def _build_pdf(data: dict[str, Any]) -> bytes:
     """Gera PDF profissional a partir do resultado da análise."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import cm
     from reportlab.lib.colors import HexColor
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
     )
 
     buf = io.BytesIO()
@@ -780,7 +778,7 @@ def _build_pdf(data: Dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
-def _build_docx(data: Dict[str, Any]) -> bytes:
+def _build_docx(data: dict[str, Any]) -> bytes:
     """Gera DOCX profissional a partir do resultado da análise."""
     from docx import Document
     from docx.shared import Pt, RGBColor
@@ -846,7 +844,7 @@ async def export_pdf(request: Request, req: ExportRequest, user: dict = Depends(
             media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="relatorio_{safe_id}.pdf"'},
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Erro ao gerar PDF")
         raise HTTPException(status_code=500, detail="Erro ao gerar PDF.")
 
@@ -864,7 +862,7 @@ async def export_docx(request: Request, req: ExportRequest, user: dict = Depends
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": f'attachment; filename="relatorio_{safe_id}.docx"'},
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Erro ao gerar DOCX")
         raise HTTPException(status_code=500, detail="Erro ao gerar DOCX.")
 
@@ -891,9 +889,9 @@ CONSOLIDATION_SYSTEM_PROMPT = (
 
 class AskRequest(BaseModel):
     question: str
-    analysis_result: Dict[str, Any]
+    analysis_result: dict[str, Any]
     document_id: str = ""
-    previous_qa: List[Dict[str, str]] = Field(default=[], max_length=50)
+    previous_qa: list[dict[str, str]] = Field(default=[], max_length=50)
 
     @field_validator("analysis_result")
     @classmethod
@@ -904,7 +902,7 @@ class AskRequest(BaseModel):
         return v
 
 
-def _build_ask_context(data: Dict[str, Any], previous_qa: List[Dict[str, str]] = None) -> str:
+def _build_ask_context(data: dict[str, Any], previous_qa: list[dict[str, str]] = None) -> str:
     """Extrai contexto relevante do resultado da análise para a pergunta."""
     parts = []
 
@@ -973,7 +971,7 @@ PERGUNTA DO UTILIZADOR:
 Responde de forma clara, citando legislação quando aplicável."""
 
     llm = get_llm_client()
-    individual_responses: List[Dict[str, str]] = []
+    individual_responses: list[dict[str, str]] = []
 
     for model in ASK_MODELS:
         try:
@@ -992,7 +990,7 @@ Responde de forma clara, citando legislação quando aplicável."""
             logger.warning(f"Modelo {model} falhou no /ask: {e}")
             individual_responses.append({
                 "model": model,
-                "response": f"[Erro: modelo indisponível]",
+                "response": "[Erro: modelo indisponível]",
             })
 
     if len([r for r in individual_responses if not r["response"].startswith("[Erro")]) == 0:
@@ -1098,7 +1096,7 @@ async def add_document_to_project(
     try:
         doc = carregar_documento_de_bytes(file_bytes, filename)
         novo_texto = doc.text
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=422, detail="Erro ao extrair texto do documento.")
 
     if not novo_texto or len(novo_texto.strip()) < 50:
@@ -1110,7 +1108,7 @@ async def add_document_to_project(
     try:
         sb = get_supabase_admin()
         doc_resp = sb.table("documents").select("analysis_result, user_id").eq("id", document_id).eq("user_id", user["id"]).single().execute()
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=404, detail="Documento não encontrado.")
 
     if not doc_resp.data:
@@ -1141,7 +1139,7 @@ async def add_document_to_project(
         sb.table("documents").update(
             {"analysis_result": current_result}
         ).eq("id", document_id).execute()
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Erro ao guardar documento.")
 
     logger.info(
@@ -1403,7 +1401,7 @@ async def admin_model_performance(
             a["missing_citations"] += r.get("missing_citations") or 0
 
         models = []
-        for key, a in sorted(agg.items(), key=lambda x: -x[1]["failed"]):
+        for _key, a in sorted(agg.items(), key=lambda x: -x[1]["failed"]):
             tc = max(a["calls"], 1)
             models.append({
                 "model": a.get("model", "?"),
@@ -1655,7 +1653,7 @@ async def admin_verify(request: Request, req: AdminVerifyRequest):
 
     # Gerar token de sessão admin (válido 1 hora)
     admin_token = secrets.token_urlsafe(32)
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     with _admin_sessions_lock:
         _admin_sessions[admin_token] = {
             "created_at": now,

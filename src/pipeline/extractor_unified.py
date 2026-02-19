@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Extrator Unificado com Proveniência para Modo Texto/Chunks.
 
@@ -15,15 +14,13 @@ import json
 import logging
 import re
 import hashlib
-from typing import List, Dict, Optional, Any, Tuple
+from typing import Optional, Any
 from src.pipeline.schema_unified import (
     Chunk,
     SourceSpan,
     EvidenceItem,
     ItemType,
     ExtractionMethod,
-    ExtractionRun,
-    ExtractionStatus,
     create_item_id,
 )
 
@@ -124,7 +121,7 @@ def parse_unified_output(
     extractor_id: str,
     model_name: str,
     page_mapper: Optional[Any] = None
-) -> Tuple[List[EvidenceItem], List[Dict], List[str]]:
+) -> tuple[list[EvidenceItem], list[dict], list[str]]:
     """
     Parseia output do LLM e cria EvidenceItems com source_spans.
 
@@ -197,7 +194,7 @@ def parse_unified_output(
 
 
 def _create_evidence_item(
-    raw_item: Dict,
+    raw_item: dict,
     chunk: Chunk,
     extractor_id: str,
     page_mapper: Optional[Any] = None
@@ -279,7 +276,7 @@ def _fallback_extract_with_offsets(
     chunk: Chunk,
     extractor_id: str,
     page_mapper: Optional[Any] = None
-) -> List[EvidenceItem]:
+) -> list[EvidenceItem]:
     """
     Extração por regex quando LLM falha.
     Extrai datas, valores e referências legais com offsets.
@@ -389,13 +386,13 @@ def normalize_and_hash(text: str) -> str:
     # Minúsculas, sem pontuação, sem espaços extras
     normalizado = _re.sub(r'[^\w\s]', '', sem_acentos.lower())
     normalizado = _re.sub(r'\s+', ' ', normalizado).strip()
-    return hashlib.md5(normalizado.encode()).hexdigest()
+    return hashlib.md5(normalizado.encode(), usedforsecurity=False).hexdigest()
 
 
 def validate_and_filter_extractors(
-    items_by_extractor: Dict[str, List[EvidenceItem]],
+    items_by_extractor: dict[str, list[EvidenceItem]],
     min_ratio: float = 0.20,
-) -> Dict[str, List[EvidenceItem]]:
+) -> dict[str, list[EvidenceItem]]:
     """
     v4.0 Handover — Descarte inteligente de extractores fracos.
 
@@ -425,8 +422,8 @@ def validate_and_filter_extractors(
 
     # Construir hash index de todos os items de todos os extractores
     # hash -> set of extractor_ids that found this item
-    all_hashes: Dict[str, set] = {}
-    item_hash_map: Dict[str, Dict[str, str]] = {}  # extractor_id -> {item_hash: item}
+    all_hashes: dict[str, set] = {}
+    item_hash_map: dict[str, dict[str, str]] = {}  # extractor_id -> {item_hash: item}
 
     for eid, items in items_by_extractor.items():
         item_hash_map[eid] = {}
@@ -474,10 +471,10 @@ def validate_and_filter_extractors(
 # ============================================================================
 
 def aggregate_with_provenance(
-    items_by_extractor: Dict[str, List[EvidenceItem]],
+    items_by_extractor: dict[str, list[EvidenceItem]],
     detect_conflicts: bool = True,
     deduplicate: bool = True,
-) -> Tuple[List[EvidenceItem], List[Dict]]:
+) -> tuple[list[EvidenceItem], list[dict]]:
     """
     Agrega items de múltiplos extratores preservando proveniência.
 
@@ -498,7 +495,7 @@ def aggregate_with_provenance(
 
     # v4.0: Deduplicação semântica
     # Agrupar items por hash normalizado
-    hash_groups: Dict[str, List[Tuple[str, EvidenceItem]]] = {}  # hash -> [(extractor_id, item)]
+    hash_groups: dict[str, list[tuple[str, EvidenceItem]]] = {}  # hash -> [(extractor_id, item)]
     conflicts = []
 
     for extractor_id, items in items_by_extractor.items():
@@ -519,13 +516,13 @@ def aggregate_with_provenance(
             # Múltiplos extractores encontraram o mesmo item
             # Verificar se os valores são realmente iguais ou divergentes
             values = set()
-            for eid, item in entries:
+            for _eid, item in entries:
                 values.add((item.value_normalized or "").strip().lower())
 
             if len(values) <= 1:
                 # Consenso — fundir source_spans
                 base_eid, base_item = entries[0]
-                for eid, item in entries[1:]:
+                for _eid, item in entries[1:]:
                     base_item.source_spans.extend(item.source_spans)
                 # Adicionar info de consenso no contexto
                 source_ids = sorted(set(e[0] for e in entries))
@@ -534,7 +531,7 @@ def aggregate_with_provenance(
                 union_items.append(base_item)
             else:
                 # Divergência — manter ambos e registar conflito
-                for eid, item in entries:
+                for _eid, item in entries:
                     union_items.append(item)
                 conflict = {
                     "conflict_id": f"conflict_{h[:8]}",
@@ -549,7 +546,7 @@ def aggregate_with_provenance(
 
     # Detectar conflitos adicionais por span proximity
     if detect_conflicts:
-        span_index: Dict[str, List[Tuple[str, str, EvidenceItem]]] = {}
+        span_index: dict[str, list[tuple[str, str, EvidenceItem]]] = {}
         for item in union_items:
             for span in item.source_spans:
                 bucket = span.start_char // 100
@@ -564,7 +561,7 @@ def aggregate_with_provenance(
                 if len(span_values) > 1:
                     # Check if already captured
                     existing_ids = {c["conflict_id"] for c in conflicts}
-                    cid = f"conflict_{hashlib.md5(key.encode()).hexdigest()[:8]}"
+                    cid = f"conflict_{hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()[:8]}"
                     if cid not in existing_ids:
                         conflicts.append({
                             "conflict_id": cid,
@@ -586,13 +583,13 @@ def aggregate_with_provenance(
 
 
 def _aggregate_legacy(
-    items_by_extractor: Dict[str, List[EvidenceItem]],
+    items_by_extractor: dict[str, list[EvidenceItem]],
     detect_conflicts: bool = True,
-) -> Tuple[List[EvidenceItem], List[Dict]]:
+) -> tuple[list[EvidenceItem], list[dict]]:
     """Agregação legacy sem deduplicação (backward compatibility)."""
     union_items = []
     conflicts = []
-    span_index: Dict[str, List[Tuple[str, str, EvidenceItem]]] = {}
+    span_index: dict[str, list[tuple[str, str, EvidenceItem]]] = {}
 
     for extractor_id, items in items_by_extractor.items():
         for item in items:
@@ -611,7 +608,7 @@ def _aggregate_legacy(
                 values = set(e[1] for e in entries)
                 if len(values) > 1:
                     conflicts.append({
-                        "conflict_id": f"conflict_{hashlib.md5(key.encode()).hexdigest()[:8]}",
+                        "conflict_id": f"conflict_{hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()[:8]}",
                         "item_type": entries[0][2].item_type.value,
                         "span_key": key,
                         "values": [
@@ -629,12 +626,12 @@ def _aggregate_legacy(
 # ============================================================================
 
 def calculate_coverage(
-    chunks: List[Chunk],
-    items: List[EvidenceItem],
+    chunks: list[Chunk],
+    items: list[EvidenceItem],
     total_chars: int,
     page_mapper: Optional[Any] = None,
     total_pages: Optional[int] = None
-) -> Dict:
+) -> dict:
     """
     Calcula cobertura do documento (chars e páginas).
 
@@ -724,7 +721,7 @@ def calculate_coverage(
     return result
 
 
-def _merge_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
     """Merge ranges sobrepostos."""
     if not ranges:
         return []
@@ -742,7 +739,7 @@ def _merge_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     return merged
 
 
-def _find_gaps(merged_ranges: List[Tuple[int, int]], total: int) -> List[Tuple[int, int]]:
+def _find_gaps(merged_ranges: list[tuple[int, int]], total: int) -> list[tuple[int, int]]:
     """Encontra intervalos não cobertos."""
     gaps = []
     prev_end = 0
@@ -763,7 +760,7 @@ def _find_gaps(merged_ranges: List[Tuple[int, int]], total: int) -> List[Tuple[i
 # ============================================================================
 
 def items_to_markdown(
-    items: List[EvidenceItem],
+    items: list[EvidenceItem],
     include_provenance: bool = True
 ) -> str:
     """
@@ -779,7 +776,7 @@ def items_to_markdown(
     lines = ["# EXTRAÇÃO UNIFICADA COM PROVENIÊNCIA\n"]
 
     # Agrupar por tipo
-    by_type: Dict[ItemType, List[EvidenceItem]] = {}
+    by_type: dict[ItemType, list[EvidenceItem]] = {}
     for item in items:
         if item.item_type not in by_type:
             by_type[item.item_type] = []
@@ -816,7 +813,7 @@ def items_to_markdown(
     return "\n".join(lines)
 
 
-def render_agregado_markdown_from_json(agregado_json: Dict) -> str:
+def render_agregado_markdown_from_json(agregado_json: dict) -> str:
     """
     Renderiza markdown a partir do JSON do agregado (JSON é fonte de verdade).
 
@@ -829,7 +826,6 @@ def render_agregado_markdown_from_json(agregado_json: Dict) -> str:
     lines = []
 
     # Cabeçalho
-    doc_meta = agregado_json.get("doc_meta", {})
     summary = agregado_json.get("summary", {})
     coverage = agregado_json.get("coverage_report", {})
 
@@ -846,7 +842,7 @@ def render_agregado_markdown_from_json(agregado_json: Dict) -> str:
     union_items = agregado_json.get("union_items", [])
     if union_items:
         # Agrupar por tipo
-        by_type: Dict[str, List[Dict]] = {}
+        by_type: dict[str, list[dict]] = {}
         for item in union_items:
             item_type = item.get("item_type", "other")
             if item_type not in by_type:
@@ -1065,7 +1061,7 @@ def recursive_extraction(
     max_iterations: int = 5,
     max_tokens: int = 32768,
     page_mapper=None,
-) -> Tuple[List[Any], List[Dict], List[str]]:
+) -> tuple[list[Any], list[dict], list[str]]:
     """
     v4.0 Handover — Extração recursiva para outputs truncados.
 

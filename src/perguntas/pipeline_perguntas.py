@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 PIPELINE PERGUNTAS ADICIONAIS - VERSÃO ACUMULATIVA
 ═══════════════════════════════════════════════════════════════════════════
@@ -16,8 +15,8 @@ import json
 import time
 import logging
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Optional
 from dataclasses import dataclass
 
 from src.utils.sanitize import sanitize_run_id
@@ -54,26 +53,26 @@ class RespostaPergunta:
     """Resposta completa a uma pergunta."""
     pergunta: str
     timestamp: str
-    
+
     # Fase 2
-    auditores: List[ResultadoAuditor]
+    auditores: list[ResultadoAuditor]
     auditoria_consolidada: str
-    
+
     # Fase 3
-    juizes: List[ResultadoJuiz]
-    
+    juizes: list[ResultadoJuiz]
+
     # Fase 4
     resposta_final: str
-    
+
     # Metadados
     tokens_total: int
     tempo_total_ms: int
     custo_estimado: float
     sucesso: bool
     erro: Optional[str] = None
-    
+
     # ← NOVO: Documentos anexados
-    documentos_anexados: List[str] = None
+    documentos_anexados: list[str] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -93,47 +92,47 @@ def carregar_fase1_existente(run_id: str, output_dir: Path) -> str:
             "fase1_agregado.md",
             "fase1_agregado_consolidado.md"
         ]
-        
+
         for nome in nomes_possiveis:
             filepath = output_dir / nome
             if filepath.exists():
                 logger.info(f"✓ Fase 1 encontrada (solta): {nome}")
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, encoding='utf-8') as f:
                     return f.read()
-        
+
         raise FileNotFoundError(
             f"Fase 1 não encontrada em {output_dir}/\n"
             f"Ficheiros procurados: {nomes_possiveis}"
         )
-    
+
     # CASO NORMAL: Análise organizada em pasta
     run_id = sanitize_run_id(run_id)
     analise_dir = output_dir / run_id
-    
+
     if not analise_dir.exists():
         raise FileNotFoundError(f"Análise não encontrada: {analise_dir}")
-    
+
     # Procurar ficheiro Fase 1
     nomes_possiveis = [
         "fase1_agregada.md",
         "fase1_agregado.md",
         "fase1_agregado_consolidado.md"
     ]
-    
+
     for nome in nomes_possiveis:
         filepath = analise_dir / nome
         if filepath.exists():
             logger.info(f"✓ Fase 1 encontrada: {nome}")
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, encoding='utf-8') as f:
                 return f.read()
-    
+
     raise FileNotFoundError(
         f"Fase 1 não encontrada em {analise_dir}/\n"
         f"Ficheiros procurados: {nomes_possiveis}"
     )
 
 
-def carregar_historico_perguntas(run_id: str, output_dir: Path) -> List[Dict]:
+def carregar_historico_perguntas(run_id: str, output_dir: Path) -> list[dict]:
     """
     ← NOVA FUNÇÃO!
     
@@ -151,36 +150,36 @@ def carregar_historico_perguntas(run_id: str, output_dir: Path) -> List[Dict]:
         ]
     """
     historico = []
-    
+
     # Determinar pasta perguntas
     if run_id == "__FICHEIROS_SOLTOS__":
         perguntas_dir = output_dir / "perguntas"
     else:
         run_id = sanitize_run_id(run_id)
         perguntas_dir = output_dir / run_id / "perguntas"
-    
+
     if not perguntas_dir.exists():
         logger.info("✓ Nenhuma pergunta anterior (primeira pergunta)")
         return []
-    
+
     # Carregar todos os JSONs
     json_files = sorted(perguntas_dir.glob("pergunta_*.json"))
-    
+
     for json_file in json_files:
         try:
-            with open(json_file, 'r', encoding='utf-8') as f:
+            with open(json_file, encoding='utf-8') as f:
                 metadata = json.load(f)
-            
+
             # Carregar resposta_final (pode estar no JSON ou no .md)
             resposta_final = metadata.get('resposta_final', '')
-            
+
             # Se não tiver no JSON, tentar carregar do .md
             if not resposta_final:
                 md_file = json_file.parent / f"pergunta_{metadata['numero']}_decisao.md"
                 if md_file.exists():
-                    with open(md_file, 'r', encoding='utf-8') as f:
+                    with open(md_file, encoding='utf-8') as f:
                         resposta_final = f.read()
-            
+
             historico.append({
                 'numero': metadata['numero'],
                 'pergunta': metadata['pergunta'],
@@ -188,16 +187,16 @@ def carregar_historico_perguntas(run_id: str, output_dir: Path) -> List[Dict]:
                 'timestamp': metadata['timestamp'],
                 'documentos': metadata.get('documentos_anexados', [])
             })
-        
+
         except Exception as e:
             logger.warning(f"⚠️ Erro ao carregar {json_file.name}: {e}")
             continue
-    
+
     logger.info(f"✓ Histórico carregado: {len(historico)} perguntas anteriores")
     return historico
 
 
-def carregar_documentos_anexados(run_id: str, output_dir: Path) -> Dict[str, str]:
+def carregar_documentos_anexados(run_id: str, output_dir: Path) -> dict[str, str]:
     """
     ← NOVA FUNÇÃO!
     
@@ -210,36 +209,36 @@ def carregar_documentos_anexados(run_id: str, output_dir: Path) -> Dict[str, str
         }
     """
     documentos = {}
-    
+
     # Determinar pasta documentos
     if run_id == "__FICHEIROS_SOLTOS__":
         docs_dir = output_dir / "perguntas" / "documentos_anexados"
     else:
         run_id = sanitize_run_id(run_id)
         docs_dir = output_dir / run_id / "perguntas" / "documentos_anexados"
-    
+
     if not docs_dir.exists():
         logger.info("✓ Nenhum documento anexado")
         return {}
-    
+
     # Carregar todos os .txt (extraídos)
     txt_files = list(docs_dir.glob("*_extraido.txt"))
-    
+
     for txt_file in txt_files:
         try:
             # Nome original (remover _extraido.txt)
             nome_original = txt_file.stem.replace('_extraido', '') + txt_file.suffix.replace('.txt', '')
-            
-            with open(txt_file, 'r', encoding='utf-8') as f:
+
+            with open(txt_file, encoding='utf-8') as f:
                 texto = f.read()
-            
+
             documentos[nome_original] = texto
             logger.info(f"✓ Documento carregado: {nome_original} ({len(texto)} chars)")
-        
+
         except Exception as e:
             logger.warning(f"⚠️ Erro ao carregar {txt_file.name}: {e}")
             continue
-    
+
     logger.info(f"✓ Total documentos anexados: {len(documentos)}")
     return documentos
 
@@ -262,12 +261,12 @@ def estimar_custo(tokens: int, modelo_mix: str = "mixed") -> float:
 def executar_fase2_auditores(
     fase1_extracao: str,
     pergunta: str,
-    auditor_models: List[Dict],
+    auditor_models: list[dict],
     llm_client,
-    historico_perguntas: List[Dict] = None,  # ← NOVO!
-    documentos_anexados: Dict[str, str] = None,  # ← NOVO!
+    historico_perguntas: list[dict] = None,  # ← NOVO!
+    documentos_anexados: dict[str, str] = None,  # ← NOVO!
     chefe_model: str = None,  # v4.0 FIX: receber modelo como parâmetro
-) -> Tuple[List[ResultadoAuditor], str]:
+) -> tuple[list[ResultadoAuditor], str]:
     """
     Executa Fase 2: 3 Auditores + Chefe consolidador.
     
@@ -285,34 +284,34 @@ def executar_fase2_auditores(
         (List[ResultadoAuditor], str): (3 auditorias, consolidada)
     """
     logger.info("=== FASE 2: Iniciando auditoria (perguntas) ===")
-    
+
     # ← NOVO: Construir seção histórico
     secao_historico = ""
     if historico_perguntas and len(historico_perguntas) > 0:
         secao_historico = "\n═══════════════════════════════════════════════════════════════\n"
         secao_historico += "HISTÓRICO DE PERGUNTAS ANTERIORES (CONTEXTO ACUMULADO):\n"
         secao_historico += "═══════════════════════════════════════════════════════════════\n\n"
-        
+
         for item in historico_perguntas:
             secao_historico += f"### PERGUNTA #{item['numero']} ({item['timestamp']})\n\n"
             secao_historico += f"**Pergunta:** {item['pergunta']}\n\n"
             secao_historico += f"**Resposta/Decisão:**\n{item['resposta_final']}\n\n"
             secao_historico += "───────────────────────────────────────────────────────────────\n\n"
-    
+
     # ← NOVO: Construir seção documentos
     secao_documentos = ""
     if documentos_anexados and len(documentos_anexados) > 0:
         secao_documentos = "\n═══════════════════════════════════════════════════════════════\n"
         secao_documentos += "DOCUMENTOS ADICIONADOS AO PROJETO:\n"
         secao_documentos += "═══════════════════════════════════════════════════════════════\n\n"
-        
+
         for nome_doc, texto_doc in documentos_anexados.items():
             secao_documentos += f"### 📄 {nome_doc}\n\n"
             secao_documentos += f"{texto_doc}\n\n"
             secao_documentos += "───────────────────────────────────────────────────────────────\n\n"
-    
+
     auditores_resultados = []
-    
+
     # Executar 3 auditores
     for i, auditor_config in enumerate(auditor_models, 1):
         if isinstance(auditor_config, str):
@@ -321,9 +320,9 @@ def executar_fase2_auditores(
             modelo = auditor_config.get('model', auditor_config.get('nome', 'unknown'))
         else:
             modelo = str(auditor_config)
-        
+
         logger.info(f"Auditor {i}/{len(auditor_models)}: {modelo}")
-        
+
         # ← MODIFICADO: Prompt agora inclui TUDO!
         prompt = f"""Você é um AUDITOR JURÍDICO experiente.
 
@@ -382,9 +381,9 @@ FORMATO DA AUDITORIA:
 
 IMPORTANTE: Considere TODO o contexto acumulado (análise + histórico + documentos)!
 """
-        
+
         inicio = time.time()
-        
+
         try:
             resposta = llm_client.chat_simple(
                 model=modelo,
@@ -392,9 +391,9 @@ IMPORTANTE: Considere TODO o contexto acumulado (análise + histórico + documen
                 temperature=0.3,
                 max_tokens=4000
             )
-            
+
             latencia = int((time.time() - inicio) * 1000)
-            
+
             auditores_resultados.append(ResultadoAuditor(
                 auditor_id=f"A{i}",
                 modelo=modelo,
@@ -402,9 +401,9 @@ IMPORTANTE: Considere TODO o contexto acumulado (análise + histórico + documen
                 tokens_usados=resposta.total_tokens,
                 latencia_ms=latencia
             ))
-            
+
             logger.info(f"✓ Auditor {i} concluído ({latencia}ms)")
-        
+
         except Exception as e:
             logger.error(f"✗ Erro Auditor {i}: {e}")
             auditores_resultados.append(ResultadoAuditor(
@@ -414,44 +413,37 @@ IMPORTANTE: Considere TODO o contexto acumulado (análise + histórico + documen
                 tokens_usados=0,
                 latencia_ms=0
             ))
-    
+
     # Chefe consolida
     logger.info("Chefe consolidando auditorias...")
-    
+
     # v4.0 FIX: usar parâmetro em vez de importar global mutável
     if chefe_model is None:
         from src.config import CHEFE_MODEL
         chefe_model = CHEFE_MODEL
 
+    # Build auditor sections dynamically (safe for any number of auditors)
+    auditor_sections = ""
+    for idx, ar in enumerate(auditores_resultados, 1):
+        auditor_sections += (
+            f"═══════════════════════════════════════════════════════════════\n"
+            f"AUDITORIA {idx} ({ar.modelo}):\n"
+            f"═══════════════════════════════════════════════════════════════\n\n"
+            f"{ar.conteudo}\n\n"
+        )
+
+    n_auditorias = len(auditores_resultados)
     prompt_chefe = f"""Você é o CHEFE DOS AUDITORES.
 
-Recebeu 3 auditorias sobre a seguinte pergunta:
+Recebeu {n_auditorias} auditorias sobre a seguinte pergunta:
 
 **PERGUNTA:** {pergunta}
 
-═══════════════════════════════════════════════════════════════
-AUDITORIA 1 ({auditores_resultados[0].modelo}):
-═══════════════════════════════════════════════════════════════
-
-{auditores_resultados[0].conteudo}
-
-═══════════════════════════════════════════════════════════════
-AUDITORIA 2 ({auditores_resultados[1].modelo}):
-═══════════════════════════════════════════════════════════════
-
-{auditores_resultados[1].conteudo}
-
-═══════════════════════════════════════════════════════════════
-AUDITORIA 3 ({auditores_resultados[2].modelo}):
-═══════════════════════════════════════════════════════════════
-
-{auditores_resultados[2].conteudo}
-
-═══════════════════════════════════════════════════════════════
+{auditor_sections}═══════════════════════════════════════════════════════════════
 SUA MISSÃO COMO CHEFE:
 ═══════════════════════════════════════════════════════════════
 
-Consolide as 3 auditorias numa SÍNTESE ÚNICA:
+Consolide as {n_auditorias} auditorias numa SÍNTESE ÚNICA:
 
 1. **ELEMENTOS RELEVANTES CONSOLIDADOS** - Todos elementos importantes identificados
 2. **LACUNAS CONSOLIDADAS** - Todas lacunas detectadas
@@ -474,9 +466,9 @@ FORMATO:
 
 SÍNTESE CONSOLIDADA:
 """
-    
+
     inicio = time.time()
-    
+
     try:
         resposta_chefe = llm_client.chat_simple(
             model=chefe_model,
@@ -484,16 +476,16 @@ SÍNTESE CONSOLIDADA:
             temperature=0.2,
             max_tokens=3000
         )
-        
+
         latencia_chefe = int((time.time() - inicio) * 1000)
         auditoria_consolidada = resposta_chefe.content
-        
+
         logger.info(f"✓ Chefe concluído ({latencia_chefe}ms)")
-    
+
     except Exception as e:
         logger.error(f"✗ Erro Chefe: {e}")
         auditoria_consolidada = "[ERRO NA CONSOLIDAÇÃO]"
-    
+
     return auditores_resultados, auditoria_consolidada
 
 
@@ -505,11 +497,11 @@ def executar_fase3_juizes(
     fase1_extracao: str,
     auditoria_consolidada: str,
     pergunta: str,
-    juiz_models: List[Dict],
+    juiz_models: list[dict],
     llm_client,
-    historico_perguntas: List[Dict] = None,
-    documentos_anexados: Dict[str, str] = None
-) -> List[ResultadoJuiz]:
+    historico_perguntas: list[dict] = None,
+    documentos_anexados: dict[str, str] = None
+) -> list[ResultadoJuiz]:
     """
     Executa Fase 3: 3 Juízes analisam.
 
@@ -596,9 +588,9 @@ IMPORTANTE: Considere TODO o contexto acumulado (análise original + histórico 
 
 PARECER:
 """
-        
+
         inicio = time.time()
-        
+
         try:
             resposta = llm_client.chat_simple(
                 model=modelo,
@@ -606,9 +598,9 @@ PARECER:
                 temperature=0.2,
                 max_tokens=4000
             )
-            
+
             latencia = int((time.time() - inicio) * 1000)
-            
+
             juizes_resultados.append(ResultadoJuiz(
                 juiz_id=f"J{i}",
                 modelo=modelo,
@@ -616,9 +608,9 @@ PARECER:
                 tokens_usados=resposta.total_tokens,
                 latencia_ms=latencia
             ))
-            
+
             logger.info(f"✓ Juiz {i} concluído ({latencia}ms)")
-        
+
         except Exception as e:
             logger.error(f"✗ Erro Juiz {i}: {e}")
             juizes_resultados.append(ResultadoJuiz(
@@ -628,7 +620,7 @@ PARECER:
                 tokens_usados=0,
                 latencia_ms=0
             ))
-    
+
     return juizes_resultados
 
 
@@ -638,13 +630,13 @@ PARECER:
 
 def executar_fase4_presidente(
     pergunta: str,
-    juizes_resultados: List[ResultadoJuiz],
+    juizes_resultados: list[ResultadoJuiz],
     presidente_model: str,
     llm_client,
-    historico_perguntas: List[Dict] = None,
-    documentos_anexados: Dict[str, str] = None,
+    historico_perguntas: list[dict] = None,
+    documentos_anexados: dict[str, str] = None,
     fase1_extracao: str = ""
-) -> Tuple[str, int, int]:
+) -> tuple[str, int, int]:
     """
     Executa Fase 4: Conselheiro-Mor sintetiza.
 
@@ -722,9 +714,9 @@ IMPORTANTE: NÃO peça informação que já consta dos documentos ou das respost
 
 DECISÃO FINAL:
 """
-    
+
     inicio = time.time()
-    
+
     try:
         resposta = llm_client.chat_simple(
             model=presidente_model,
@@ -732,13 +724,13 @@ DECISÃO FINAL:
             temperature=0.1,
             max_tokens=5000
         )
-        
+
         latencia = int((time.time() - inicio) * 1000)
-        
+
         logger.info(f"✓ Presidente concluído ({latencia}ms)")
-        
+
         return resposta.content, resposta.total_tokens, latencia
-    
+
     except Exception as e:
         logger.error(f"✗ Erro Presidente: {e}")
         return f"[ERRO: {e}]", 0, 0
@@ -752,11 +744,11 @@ def processar_pergunta_adicional(
     run_id: str,
     output_dir: Path,
     pergunta: str,
-    auditor_models: List[Dict],
-    juiz_models: List[Dict],
+    auditor_models: list[dict],
+    juiz_models: list[dict],
     presidente_model: str,
     llm_client,
-    documentos_novos: List[Tuple[str, str]] = None,  # ← NOVO! [(nome, texto), ...]
+    documentos_novos: list[tuple[str, str]] = None,  # ← NOVO! [(nome, texto), ...]
     chefe_model: str = None,  # v4.0 FIX: receber modelo como parâmetro
 ) -> RespostaPergunta:
     """
@@ -778,49 +770,49 @@ def processar_pergunta_adicional(
         RespostaPergunta completa
     """
     tempo_inicio = time.time()
-    
+
     try:
         logger.info("\n" + "="*70)
         logger.info("PROCESSANDO PERGUNTA ADICIONAL - Pipeline Completo")
         logger.info(f"Run ID: {run_id}")
         logger.info(f"Pergunta: {pergunta[:100]}...")
         logger.info("="*70)
-        
+
         # ═══════════════════════════════════════════════════════════
         # 1. Carregar Fase 1 (análise original - SEMPRE presente)
         # ═══════════════════════════════════════════════════════════
-        
+
         fase1_extracao = carregar_fase1_existente(run_id, output_dir)
         logger.info(f"✓ Fase 1 carregada ({len(fase1_extracao):,} chars)")
-        
+
         # ═══════════════════════════════════════════════════════════
         # 2. ← NOVO: Carregar histórico perguntas anteriores
         # ═══════════════════════════════════════════════════════════
-        
+
         historico_perguntas = carregar_historico_perguntas(run_id, output_dir)
-        
+
         # ═══════════════════════════════════════════════════════════
         # 3. ← NOVO: Carregar documentos anexados (existentes)
         # ═══════════════════════════════════════════════════════════
-        
+
         documentos_anexados = carregar_documentos_anexados(run_id, output_dir)
-        
+
         # ═══════════════════════════════════════════════════════════
         # 4. ← NOVO: Adicionar documentos novos (se houver)
         # ═══════════════════════════════════════════════════════════
-        
+
         nomes_docs_novos = []
-        
+
         if documentos_novos:
             for nome_doc, texto_doc in documentos_novos:
                 documentos_anexados[nome_doc] = texto_doc
                 nomes_docs_novos.append(nome_doc)
                 logger.info(f"✓ Documento novo anexado: {nome_doc}")
-        
+
         # ═══════════════════════════════════════════════════════════
         # 5. FASE 2: Auditores (COM CONTEXTO ACUMULATIVO!)
         # ═══════════════════════════════════════════════════════════
-        
+
         auditores_resultados, auditoria_consolidada = executar_fase2_auditores(
             fase1_extracao=fase1_extracao,
             pergunta=pergunta,
@@ -830,13 +822,13 @@ def processar_pergunta_adicional(
             documentos_anexados=documentos_anexados,  # ← NOVO!
             chefe_model=chefe_model,  # v4.0 FIX: passar modelo explicitamente
         )
-        
+
         logger.info(f"✓ Fase 2 concluída ({len(auditoria_consolidada):,} chars)")
-        
+
         # ═══════════════════════════════════════════════════════════
         # 6. FASE 3: Juízes
         # ═══════════════════════════════════════════════════════════
-        
+
         juizes_resultados = executar_fase3_juizes(
             fase1_extracao=fase1_extracao,
             auditoria_consolidada=auditoria_consolidada,
@@ -846,13 +838,13 @@ def processar_pergunta_adicional(
             historico_perguntas=historico_perguntas,
             documentos_anexados=documentos_anexados
         )
-        
-        logger.info(f"✓ Fase 3 concluída (3 pareceres)")
-        
+
+        logger.info("✓ Fase 3 concluída (3 pareceres)")
+
         # ═══════════════════════════════════════════════════════════
         # 7. FASE 4: Presidente
         # ═══════════════════════════════════════════════════════════
-        
+
         resposta_final, tokens_presidente, latencia_presidente = executar_fase4_presidente(
             pergunta=pergunta,
             juizes_resultados=juizes_resultados,
@@ -862,36 +854,36 @@ def processar_pergunta_adicional(
             documentos_anexados=documentos_anexados,
             fase1_extracao=fase1_extracao
         )
-        
+
         logger.info(f"✓ Fase 4 concluída ({len(resposta_final):,} chars)")
-        
+
         # ═══════════════════════════════════════════════════════════
         # 8. Calcular totais
         # ═══════════════════════════════════════════════════════════
-        
+
         tokens_total = (
             sum(a.tokens_usados for a in auditores_resultados) +
             sum(j.tokens_usados for j in juizes_resultados) +
             tokens_presidente
         )
-        
+
         tempo_total_ms = int((time.time() - tempo_inicio) * 1000)
         custo_estimado = estimar_custo(tokens_total, "mixed")
-        
+
         logger.info(f"\n{'='*70}")
-        logger.info(f"✓ PERGUNTA PROCESSADA COM SUCESSO!")
+        logger.info("✓ PERGUNTA PROCESSADA COM SUCESSO!")
         logger.info(f"  Tempo total: {tempo_total_ms/1000:.1f}s")
         logger.info(f"  Tokens total: {tokens_total:,}")
         logger.info(f"  Custo estimado: ${custo_estimado:.4f}")
         logger.info(f"{'='*70}\n")
-        
+
         # ═══════════════════════════════════════════════════════════
         # 9. Retornar resultado completo
         # ═══════════════════════════════════════════════════════════
-        
+
         return RespostaPergunta(
             pergunta=pergunta,
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             auditores=auditores_resultados,
             auditoria_consolidada=auditoria_consolidada,
             juizes=juizes_resultados,
@@ -903,16 +895,16 @@ def processar_pergunta_adicional(
             erro=None,
             documentos_anexados=nomes_docs_novos  # ← NOVO!
         )
-        
+
     except Exception as e:
         logger.error(f"\n{'='*70}")
-        logger.error(f"✗ ERRO AO PROCESSAR PERGUNTA!")
+        logger.error("✗ ERRO AO PROCESSAR PERGUNTA!")
         logger.error(f"  Erro: {e}")
         logger.error(f"{'='*70}\n", exc_info=True)
-        
+
         return RespostaPergunta(
             pergunta=pergunta,
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             auditores=[],
             auditoria_consolidada="",
             juizes=[],

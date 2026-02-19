@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Processador Principal da Câmara de Análise - Pipeline de 3 Fases com LLMs + Q&A.
 
@@ -17,14 +16,16 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import json
+import json as json_module
 import logging
 import os
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-from typing import Optional, Dict, Any, List, Callable
+from datetime import datetime, timezone
+from typing import Optional, Any
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import uuid
 
@@ -46,9 +47,7 @@ from src.config import (
     CHEFE_MODEL,
     OUTPUT_DIR,
     HISTORICO_DIR,
-    LOG_LEVEL,
     SIMBOLOS_VERIFICACAO,
-    AREAS_DIREITO,
     LLM_CONFIGS,
     CHUNK_SIZE_CHARS,
     CHUNK_OVERLAP_CHARS,
@@ -62,20 +61,13 @@ from src.config import (
     META_INTEGRITY_PAGES_TOLERANCE_PERCENT,
     META_INTEGRITY_CITATION_COUNT_TOLERANCE,
     # Confidence Policy config
-    CONFIDENCE_MAX_PENALTY,
-    CONFIDENCE_SEVERE_CEILING,
     APPLY_CONFIDENCE_POLICY,
 )
 from src.pipeline.schema_unified import (
     Chunk,
-    SourceSpan,
-    EvidenceItem,
-    ItemType,
     ExtractionMethod,
     ExtractionRun,
     ExtractionStatus,
-    Coverage,
-    CharRange,
     DocumentMeta,
     UnifiedExtractionResult,
 )
@@ -91,46 +83,25 @@ from src.pipeline.extractor_unified import (
 )
 from src.pipeline.page_mapper import CharToPageMapper
 from src.pipeline.schema_audit import (
-    Citation,
-    AuditFinding,
     AuditReport,
-    CoverageCheck,
-    JudgePoint,
     JudgeOpinion,
-    Disagreement,
     FinalDecision,
-    ConflictResolution,
-    FindingType,
-    Severity,
     DecisionType,
-    parse_json_safe,
     parse_audit_report,
     parse_judge_opinion,
     parse_final_decision,
     # Chefe consolidado
-    ChefeConsolidatedReport,
-    ConsolidatedFinding,
-    Divergence,
     parse_chefe_report,
 )
 from src.pipeline.integrity import (
     IntegrityValidator,
-    IntegrityReport,
-    validate_citation,
-    validate_audit_report,
-    validate_judge_opinion,
-    validate_final_decision,
 )
 from src.pipeline.meta_integrity import (
-    MetaIntegrityValidator,
-    MetaIntegrityReport,
     MetaIntegrityConfig,
     validate_run_meta_integrity,
 )
 from src.pipeline.confidence_policy import (
-    ConfidencePolicyCalculator,
     compute_penalty,
-    apply_penalty_to_confidence,
 )
 from src.llm_client import get_llm_client
 from src.document_loader import DocumentContent
@@ -174,7 +145,7 @@ class FaseResult:
         if self.conteudo is None:
             self.conteudo = ""
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "fase": self.fase,
             "modelo": self.modelo,
@@ -197,23 +168,23 @@ class PipelineResult:
     run_id: str
     documento: Optional[DocumentContent]
     area_direito: str
-    fase1_extracoes: List[FaseResult] = field(default_factory=list)
+    fase1_extracoes: list[FaseResult] = field(default_factory=list)
     fase1_agregado: str = ""  # Backwards compat - alias para consolidado
     fase1_agregado_bruto: str = ""  # Concatenação simples com marcadores
     fase1_agregado_consolidado: str = ""  # Processado pelo Agregador LLM (LOSSLESS)
-    fase2_auditorias: List[FaseResult] = field(default_factory=list)
+    fase2_auditorias: list[FaseResult] = field(default_factory=list)
     fase2_chefe: str = ""  # Backwards compat - alias para consolidado
     fase2_auditorias_brutas: str = ""  # Concatenação simples com marcadores
     fase2_chefe_consolidado: str = ""  # Processado pelo Chefe LLM (LOSSLESS)
-    fase3_pareceres: List[FaseResult] = field(default_factory=list)
+    fase3_pareceres: list[FaseResult] = field(default_factory=list)
     fase3_presidente: str = ""
-    verificacoes_legais: List[VerificacaoLegal] = field(default_factory=list)
+    verificacoes_legais: list[VerificacaoLegal] = field(default_factory=list)
     veredicto_final: str = ""
     simbolo_final: str = ""
     status_final: str = ""
     # Q&A
-    perguntas_utilizador: List[str] = field(default_factory=list)
-    respostas_juizes_qa: List[Dict] = field(default_factory=list)
+    perguntas_utilizador: list[str] = field(default_factory=list)
+    respostas_juizes_qa: list[dict] = field(default_factory=list)
     respostas_finais_qa: str = ""
     # Timestamps e estatísticas
     timestamp_inicio: datetime = field(default_factory=datetime.now)
@@ -223,13 +194,13 @@ class PipelineResult:
     sucesso: bool = True
     erro: Optional[str] = None
     # Custos REAIS
-    custos: Optional[Dict] = None
+    custos: Optional[dict] = None
     # FIX 2026-02-14: Sumário estruturado por IA (para frontend)
-    resumo_por_ia: Optional[Dict] = None
+    resumo_por_ia: Optional[dict] = None
     # v4.0: Fase 0 Triagem
-    fase0_triage: Optional[Dict] = None
+    fase0_triage: Optional[dict] = None
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "run_id": self.run_id,
             "documento": self.documento.to_dict() if self.documento else None,
@@ -803,9 +774,9 @@ REVISTO:"""
 
     def __init__(
         self,
-        extrator_models: List[str] = None,
-        auditor_models: List[str] = None,
-        relator_models: List[str] = None,
+        extrator_models: list[str] = None,
+        auditor_models: list[str] = None,
+        relator_models: list[str] = None,
         presidente_model: str = None,
         agregador_model: str = None,
         chefe_model: str = None,
@@ -857,7 +828,7 @@ REVISTO:"""
 
     def _setup_run(self) -> str:
         """Configura uma nova execução."""
-        self._run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        self._run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         self._output_dir = OUTPUT_DIR / self._run_id
         self._output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Run iniciado: {self._run_id}")
@@ -882,7 +853,7 @@ REVISTO:"""
             "run_id": self._run_id,
             "fase_num": fase_num,
             "fase_nome": fase_nome,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "resumo": data_resumo,
         }
 
@@ -1229,7 +1200,7 @@ REVISTO:"""
             return "CONSOLIDADOR"
         return role_name[:20]
 
-    def _dividir_documento_chunks(self, texto: str, chunk_size: int = None, overlap: int = None) -> List[str]:
+    def _dividir_documento_chunks(self, texto: str, chunk_size: int = None, overlap: int = None) -> list[str]:
         """
         Divide documento grande em chunks com overlap para processamento.
         VERSÃO LEGACY - retorna apenas strings.
@@ -1242,8 +1213,6 @@ REVISTO:"""
         Returns:
             Lista de chunks (strings)
         """
-        from src.config import CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS
-
         # Usar valores do config se não especificados (explicit None check to allow 0)
         chunk_size = chunk_size if chunk_size is not None else CHUNK_SIZE_CHARS
         overlap = overlap if overlap is not None else CHUNK_OVERLAP_CHARS
@@ -1284,7 +1253,7 @@ REVISTO:"""
         method: str = "text",
         chunk_size: int = None,
         overlap: int = None
-    ) -> List['Chunk']:
+    ) -> list['Chunk']:
         """
         Divide documento em chunks estruturados com offsets rastreáveis.
 
@@ -1300,7 +1269,6 @@ REVISTO:"""
         Returns:
             Lista de Chunk objects com offsets precisos
         """
-        from src.config import CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS
         from src.pipeline.schema_unified import Chunk, ExtractionMethod
 
         # Usar valores do config se não especificados (explicit None check to allow 0)
@@ -1363,7 +1331,7 @@ REVISTO:"""
 
     def _enrich_chunks_with_pages(
         self,
-        chunks: List[Chunk],
+        chunks: list[Chunk],
         page_mapper: Optional[CharToPageMapper]
     ) -> None:
         """
@@ -1409,7 +1377,6 @@ REVISTO:"""
         Returns:
             tuple: (resultados, bruto, consolidado, unified_result)
         """
-        import json as json_module
         import hashlib
 
         if not documento.text or not documento.text.strip():
@@ -1419,7 +1386,7 @@ REVISTO:"""
         self._reportar_progresso("fase1", 10, "Iniciando extração unificada com proveniência...")
 
         # 1. Criar metadados do documento
-        doc_id = f"doc_{hashlib.md5(documento.filename.encode()).hexdigest()[:8]}"
+        doc_id = f"doc_{hashlib.md5(documento.filename.encode(), usedforsecurity=False).hexdigest()[:8]}"
         doc_meta = DocumentMeta(
             doc_id=doc_id,
             filename=documento.filename,
@@ -1447,7 +1414,7 @@ REVISTO:"""
         # 2.5 Enriquecer chunks com page_start/page_end
         if page_mapper:
             self._enrich_chunks_with_pages(chunks, page_mapper)
-            logger.info(f"📄 Chunks enriquecidos com informação de páginas")
+            logger.info("📄 Chunks enriquecidos com informação de páginas")
 
         logger.info(f"Documento: {doc_meta.total_chars:,} chars → {num_chunks} chunk(s)")
 
@@ -1733,7 +1700,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
             run.items_extracted = len(extractor_items)
             run.errors = chunk_errors
             run.status = ExtractionStatus.SUCCESS if not chunk_errors else ExtractionStatus.PARTIAL
-            run.finished_at = datetime.now()
+            run.finished_at = datetime.now(timezone.utc)
 
             # Criar FaseResult para compatibilidade (com tokens REAIS)
             full_content = "\n\n".join(extractor_content_parts)
@@ -1937,7 +1904,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
 
         agregado_json = {
             "run_id": self._run_id,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "doc_meta": doc_meta.to_dict(),
             "union_items": [item.to_dict() for item in union_items],
             "union_items_count": len(union_items),
@@ -1975,7 +1942,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
         consolidado = render_agregado_markdown_from_json(agregado_json)
         self._log_to_file("fase1_agregado_consolidado.md", consolidado)
         self._log_to_file("fase1_agregado.md", consolidado)
-        logger.info(f"✓ Markdown derivado do JSON (JSON-FIRST)")
+        logger.info("✓ Markdown derivado do JSON (JSON-FIRST)")
 
         # 12. Chamar Agregador LLM para consolidação semântica (opcional, para compatibilidade)
         self._reportar_progresso("fase1", 35, f"Agregador semântico: {self.agregador_model}")
@@ -2001,8 +1968,8 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
             role_name="agregador",
         )
 
-        consolidado_final = f"# EXTRAÇÃO CONSOLIDADA (AGREGADOR + PROVENIÊNCIA)\n\n"
-        consolidado_final += f"## Metadados de Cobertura\n"
+        consolidado_final = "# EXTRAÇÃO CONSOLIDADA (AGREGADOR + PROVENIÊNCIA)\n\n"
+        consolidado_final += "## Metadados de Cobertura\n"
         consolidado_final += f"- Items: {len(union_items)} | Cobertura: {coverage_data['coverage_percent']:.1f}% | Conflitos: {len(conflicts)}\n\n"
         consolidado_final += agregador_result.conteudo
         self._log_to_file("fase1_agregado_final.md", consolidado_final)
@@ -2040,11 +2007,11 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
         # NOVO: Dividir documento em chunks automático se necessário
         chunks = self._dividir_documento_chunks(documento.text)
         num_chunks = len(chunks)
-        
+
         logger.info(f"=== FASE 1: {num_chunks} chunk(s) × {len(self._llm_configs)} extratores = {num_chunks * len(self._llm_configs)} chamadas LLM ===")
-        
+
         extractor_configs = [cfg for cfg in self._llm_configs if cfg["id"].startswith("E")]
-        
+
         resultados = []
         for i, cfg in enumerate(extractor_configs):
             extractor_id = cfg["id"]
@@ -2052,7 +2019,7 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
             role = cfg["role"]
             instructions = cfg["instructions"]
             temperature = cfg.get("temperature", 0.0)
-            
+
             # NOVO: Processar cada chunk deste extrator
             conteudos_chunks = []
             ext_total_tokens = 0
@@ -2061,15 +2028,15 @@ CRÍTICO: Preservar TODOS os source_spans e proveniência.
 
             for chunk_idx, chunk in enumerate(chunks):
                 chunk_info = f" (chunk {chunk_idx+1}/{num_chunks})" if num_chunks > 1 else ""
-                
+
                 self._reportar_progresso(
                     "fase1",
                     10 + (i * num_chunks + chunk_idx) * (20 // (len(extractor_configs) * num_chunks)),
                     f"Extrator {extractor_id}{chunk_info}: {model}"
                 )
-                
+
                 logger.info(f"=== Extrator {extractor_id}{chunk_info} - {model} ===")
-                
+
                 # Prompt com info do chunk
                 chunk_header = f"[CHUNK {chunk_idx+1}/{num_chunks}] " if num_chunks > 1 else ""
                 prompt_especializado = f"""DOCUMENTO A ANALISAR {chunk_header}:
@@ -2084,7 +2051,7 @@ CONTEÚDO{chunk_header}:
 
 {instructions}
 """
-                
+
                 resultado_chunk = self._call_llm(
                     model=model,
                     prompt=prompt_especializado,
@@ -2092,20 +2059,20 @@ CONTEÚDO{chunk_header}:
                     role_name=f"extrator_{extractor_id}_chunk{chunk_idx}",
                     temperature=temperature,
                 )
-                
+
                 conteudos_chunks.append(resultado_chunk.conteudo)
                 ext_total_tokens += resultado_chunk.tokens_usados
                 ext_prompt_tokens += resultado_chunk.prompt_tokens
                 ext_completion_tokens += resultado_chunk.completion_tokens
                 logger.info(f"✓ Chunk {chunk_idx+1} processado: {len(resultado_chunk.conteudo):,} chars extraídos")
-            
+
             # Consolidar chunks deste extrator
             if num_chunks > 1:
                 conteudo_final = "\n\n═══[CHUNK SEGUINTE]═══\n\n".join(conteudos_chunks)
                 logger.info(f"✓ Extrator {extractor_id}: {num_chunks} chunks consolidados → {len(conteudo_final):,} chars totais")
             else:
                 conteudo_final = conteudos_chunks[0]
-            
+
             # Criar FaseResult consolidado para este extrator (tokens REAIS)
             resultado_consolidado = FaseResult(
                 fase="extrator",
@@ -2119,9 +2086,9 @@ CONTEÚDO{chunk_header}:
                 sucesso=True,
                 erro=None
             )
-            
+
             resultados.append(resultado_consolidado)
-            
+
             # Log do extrator completo (todos os chunks consolidados)
             self._log_to_file(
                 f"fase1_extrator_{extractor_id}.md",
@@ -2184,7 +2151,6 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
                 PageRecord, PageMetrics, verificar_cobertura_sinais,
                 REGEX_DATAS_PT, REGEX_VALORES_EURO, REGEX_ARTIGOS_PT
             )
-            import json as json_module
             logger.info("=== DETETOR: imports OK ===")
 
             # Extrair páginas do texto usando marcadores [Página X]
@@ -2233,7 +2199,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
                     # Verificar cobertura de sinais pelos extratores
                     extractor_outputs = {(r.role.replace("extrator_", "E").upper() if "extrator" in r.role else f"E{i+1}"): (r.conteudo or "") for i, r in enumerate(resultados)}
                     signal_report = verificar_cobertura_sinais(pages, extractor_outputs)
-                    logger.info(f"=== DETETOR: verificar_cobertura_sinais executado ===")
+                    logger.info("=== DETETOR: verificar_cobertura_sinais executado ===")
 
                     # Guardar relatório de sinais
                     signal_report_path = self._output_dir / "signals_coverage_report.json"
@@ -2272,7 +2238,6 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
             build_extractor_input,
             parse_extractor_output,
             extractions_to_markdown,
-            merge_extractor_results,
         )
         from src.config import MAX_SIGNAL_RETRIES, RECALL_MIN_THRESHOLD
 
@@ -2422,7 +2387,6 @@ Devolve o JSON completo no mesmo formato."""
             self._log_to_file(f"fase1_extrator_{extractor_id}.md", f"# Extrator {extractor_id}: {role}\n## Modelo: {model}\n\n{full_content}")
 
             # Guardar JSON para auditoria
-            import json as json_module
             json_path = self._output_dir / f"fase1_extractor_{extractor_id}.json"
             with open(json_path, 'w', encoding='utf-8') as f:
                 json_module.dump(extractor_json_results, f, ensure_ascii=False, indent=2)
@@ -2448,7 +2412,6 @@ Devolve o JSON completo no mesmo formato."""
         signal_report = verificar_cobertura_sinais(pages, extractor_outputs)
 
         # Guardar relatório de sinais
-        import json as json_module
         signal_report_path = self._output_dir / "signals_coverage_report.json"
         with open(signal_report_path, 'w', encoding='utf-8') as f:
             json_module.dump(signal_report, f, ensure_ascii=False, indent=2)
@@ -2644,7 +2607,7 @@ TAREFA: Consolida TODOS os batches numa extração FINAL LOSSLESS.
             if coverage_path.exists():
                 try:
                     import json as _json
-                    with open(coverage_path, 'r', encoding='utf-8') as f:
+                    with open(coverage_path, encoding='utf-8') as f:
                         coverage_data = _json.load(f)
 
                     coverage_info = f"""
@@ -2789,7 +2752,6 @@ Consolida estas {n_auditores} auditorias numa única auditoria LOSSLESS.
         Returns:
             tuple: (audit_reports: List[AuditReport], bruto_md, consolidado_md, chefe_report)
         """
-        import json as json_module
 
         n_auditores = len(self.auditor_models)
         logger.info(f"[FASE2-UNIFIED] INICIANDO Fase 2 UNIFIED com {n_auditores} auditores")
@@ -2803,7 +2765,7 @@ Consolida estas {n_auditores} auditorias numa única auditoria LOSSLESS.
             agregado_json_path = self._output_dir / "fase1_agregado_consolidado.json"
             if agregado_json_path.exists():
                 try:
-                    with open(agregado_json_path, 'r', encoding='utf-8') as f:
+                    with open(agregado_json_path, encoding='utf-8') as f:
                         agregado_json = json_module.load(f)
                     # Extrair union_items para o prompt
                     union_items = agregado_json.get("union_items", [])
@@ -2839,7 +2801,7 @@ Consolida estas {n_auditores} auditorias numa única auditoria LOSSLESS.
             coverage_path = self._output_dir / "fase1_coverage_report.json"
             if coverage_path.exists():
                 try:
-                    with open(coverage_path, 'r', encoding='utf-8') as f:
+                    with open(coverage_path, encoding='utf-8') as f:
                         coverage_data = json_module.load(f)
                     coverage_info = f"""
 ## COBERTURA DA EXTRAÇÃO
@@ -2879,7 +2841,7 @@ INSTRUÇÕES:
 4. Retorna APENAS JSON no formato especificado."""
 
         # Processar cada auditor (PARALELO com retry)
-        audit_reports: List[AuditReport] = []
+        audit_reports: list[AuditReport] = []
         bruto_parts = ["# AUDITORIAS JSON AGREGADAS (BRUTO)\n"]
 
         # v4.0: A4-specific Devil's Advocate JSON prompt
@@ -3066,7 +3028,7 @@ You are the final quality gate before the Judges."""
                         a5_report = self._integrity_validator.validate_and_annotate_audit(a5_report)
 
                     audit_reports.append(a5_report)
-                    bruto_parts.append(f"\n## [AUDITOR A5 (SÉNIOR): anthropic/claude-opus-4.6]\n")
+                    bruto_parts.append("\n## [AUDITOR A5 (SÉNIOR): anthropic/claude-opus-4.6]\n")
                     bruto_parts.append(a5_report.to_markdown())
                     bruto_parts.append("\n---\n")
 
@@ -3236,7 +3198,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         self,
         chefe_fase2: str,
         area: str,
-        perguntas: List[str],
+        perguntas: list[str],
         run_id: str
     ) -> tuple:
         """
@@ -3245,11 +3207,10 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         Returns:
             tuple: (judge_opinions: List[JudgeOpinion], respostas_qa: List[Dict])
         """
-        import json as json_module
 
         n_perguntas = len(perguntas)
         logger.info(f"Fase 3 UNIFIED - 3 Relatores JSON, {n_perguntas} perguntas")
-        self._reportar_progresso("fase3", 60, f"Relatoria JSON com 3 LLMs...")
+        self._reportar_progresso("fase3", 60, "Relatoria JSON com 3 LLMs...")
 
         # Bloco Q&A se houver perguntas
         bloco_qa = ""
@@ -3274,7 +3235,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         # Escolher prompt
         system_prompt = self.SYSTEM_RELATOR_JSON_QA if perguntas else self.SYSTEM_RELATOR_JSON
 
-        judge_opinions: List[JudgeOpinion] = []
+        judge_opinions: list[JudgeOpinion] = []
         respostas_qa = []
 
         def _run_judge(i, model):
@@ -3421,9 +3382,9 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
 
     def _fase4_presidente_unified(
         self,
-        judge_opinions: List[JudgeOpinion],
-        perguntas: List[str],
-        respostas_qa: List[Dict],
+        judge_opinions: list[JudgeOpinion],
+        perguntas: list[str],
+        respostas_qa: list[dict],
         run_id: str
     ) -> FinalDecision:
         """
@@ -3432,7 +3393,6 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         Returns:
             FinalDecision com parecer e Q&A consolidado
         """
-        import json as json_module
 
         n_perguntas = len(perguntas)
         logger.info(f"Fase 4 UNIFIED - Conselheiro-Mor JSON, {n_perguntas} perguntas")
@@ -3552,7 +3512,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
 
         return decision
 
-    def _fase3_relatoria(self, chefe_fase2: str, area: str, perguntas: List[str]) -> tuple:
+    def _fase3_relatoria(self, chefe_fase2: str, area: str, perguntas: list[str]) -> tuple:
         """
         Fase 3: 3 Relatores LLM -> Parecer + Q&A.
         NOTA: Relatores RECEBEM as perguntas do utilizador.
@@ -3636,7 +3596,7 @@ Com base na análise acima, emite o teu parecer jurídico fundamentado.{bloco_qa
 
         return resultados, respostas_qa
 
-    def _fase4_presidente(self, pareceres: List[FaseResult], perguntas: List[str], respostas_qa: List[Dict]) -> str:
+    def _fase4_presidente(self, pareceres: list[FaseResult], perguntas: list[str], respostas_qa: list[dict]) -> str:
         """
         Fase 4: Conselheiro-Mor verifica + consolida Q&A.
         NOTA: Conselheiro-Mor RECEBE as perguntas e respostas dos relatores.
@@ -3720,7 +3680,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
 
         return presidente_result.conteudo
 
-    def _gerar_qa_juizes(self, perguntas: List[str], respostas_qa: List[Dict]) -> str:
+    def _gerar_qa_juizes(self, perguntas: list[str], respostas_qa: list[dict]) -> str:
         """Gera ficheiro markdown com respostas Q&A dos relatores."""
         linhas = [
             "# RESPOSTAS Q&A DOS RELATORES",
@@ -3746,7 +3706,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
 
         return "\n".join(linhas)
 
-    def _gerar_qa_final(self, perguntas: List[str], resposta_presidente: str) -> str:
+    def _gerar_qa_final(self, perguntas: list[str], resposta_presidente: str) -> str:
         """Gera ficheiro markdown com Q&A consolidado pelo Conselheiro-Mor."""
         linhas = [
             "# RESPOSTAS FINAIS (CONSOLIDADO CONSELHEIRO-MOR)",
@@ -3798,13 +3758,13 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
 
         Se nenhuma data: retorna None (verificar só versão actual).
         """
-        current_year = datetime.now().year
+        current_year = datetime.now(timezone.utc).year
 
         def _parse_date_ddmmyyyy(match) -> Optional[datetime]:
             day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
             if 1980 <= year <= current_year:
                 try:
-                    return datetime(year, month, day)
+                    return datetime(year, month, day, tzinfo=timezone.utc)
                 except ValueError:
                     pass
             return None
@@ -3816,13 +3776,13 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             month = self._MESES_PT.get(month_name)
             if month and 1980 <= year <= current_year:
                 try:
-                    return datetime(year, month, day)
+                    return datetime(year, month, day, tzinfo=timezone.utc)
                 except ValueError:
                     pass
             return None
 
         # --- Fase 1: Datas com contexto explícito ---
-        datas_contextuais: List[datetime] = []
+        datas_contextuais: list[datetime] = []
         for ctx_match in self._CONTEXTO_DATA_FACTOS.finditer(texto):
             # Procurar data nos 80 caracteres após a palavra-chave
             pos = ctx_match.end()
@@ -3853,7 +3813,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             return data_factos
 
         # --- Fase 2: Todas as datas, filtradas ---
-        datas_encontradas: List[datetime] = []
+        datas_encontradas: list[datetime] = []
 
         # Padrão 1: DD/MM/YYYY ou DD-MM-YYYY
         for m in re.finditer(r'\b(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})\b', texto):
@@ -3887,7 +3847,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         )
         return data_factos
 
-    def _verificar_legislacao(self, texto: str) -> List[VerificacaoLegal]:
+    def _verificar_legislacao(self, texto: str) -> list[VerificacaoLegal]:
         """Verifica todas as citações legais no texto."""
         self._reportar_progresso("verificacao", 90, "Verificando citacoes legais...")
 
@@ -3912,7 +3872,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         else:
             return "INCONCLUSIVO", SIMBOLOS_VERIFICACAO["atencao"], "atencao"
 
-    def _quality_gate_curador(self, texto: str) -> List[str]:
+    def _quality_gate_curador(self, texto: str) -> list[str]:
         """Verifica quality gate do Curador Sénior. Retorna lista de falhas."""
         falhas = []
 
@@ -3942,7 +3902,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             texto, re.DOTALL | re.IGNORECASE
         )
         if match_sumario:
-            linhas_sumario = [l for l in match_sumario.group(1).strip().split('\n') if l.strip()]
+            linhas_sumario = [line for line in match_sumario.group(1).strip().split('\n') if line.strip()]
             if len(linhas_sumario) > 8:
                 falhas.append(f"Q10: Sumário tem {len(linhas_sumario)} linhas (máximo 8)")
 
@@ -4105,7 +4065,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             PipelineResult com todos os resultados
         """
         run_id = self._setup_run()
-        timestamp_inicio = datetime.now()
+        timestamp_inicio = datetime.now(timezone.utc)
 
         # Defense-in-depth: sanitize filename to prevent prompt injection
         import re as _re
@@ -4121,11 +4081,11 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             logger.info(f"Processando {len(perguntas)} pergunta(s) do utilizador")
         else:
             logger.info("Sem perguntas do utilizador")
-        
+
         # ← NOVO: Gerar título automático se não fornecido
         if not titulo:
             titulo = gerar_titulo_automatico(documento.filename, area_direito)
-        
+
         self._titulo = titulo  # ← NOVO: Guardar para usar em _guardar_resultado
 
         # NOVO: Guardar texto do documento para calculos de failover e max_tokens
@@ -4266,7 +4226,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                     coverage_path = self._output_dir / "fase1_coverage_report.json"
                     if coverage_path.exists():
                         import json as _json
-                        with open(coverage_path, 'r', encoding='utf-8') as f:
+                        with open(coverage_path, encoding='utf-8') as f:
                             coverage_data = _json.load(f)
                         if coverage_data.get('coverage_percent', 0) < COVERAGE_MIN_THRESHOLD:
                             logger.warning(
@@ -4396,7 +4356,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                             partes.append(md)
                         if partes:
                             consolidado_f2 = (
-                                f"# AUDITORIAS INDIVIDUAIS (fallback - Consolidador com 0 findings)\n\n"
+                                "# AUDITORIAS INDIVIDUAIS (fallback - Consolidador com 0 findings)\n\n"
                                 + "\n\n---\n\n".join(partes)
                             )
                             logger.info(
@@ -4611,7 +4571,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                 result.total_tokens = sum(r.tokens_usados for r in todos_resultados)
 
             # Latência real = tempo decorrido desde o início do pipeline
-            result.total_latencia_ms = (datetime.now() - result.timestamp_inicio).total_seconds() * 1000
+            result.total_latencia_ms = (datetime.now(timezone.utc) - result.timestamp_inicio).total_seconds() * 1000
 
             result.sucesso = True
             self._reportar_progresso("concluido", 100, "Pipeline concluido!")
@@ -4628,7 +4588,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.sucesso = False
             result.erro = str(e)
 
-        result.timestamp_fim = datetime.now()
+        result.timestamp_fim = datetime.now(timezone.utc)
 
         # Guardar IntegrityReport se validator ativo
         if USE_UNIFIED_PROVENANCE and hasattr(self, '_integrity_validator') and self._integrity_validator:
@@ -4685,11 +4645,11 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                     coverage_data = None
 
                     if integrity_report_path.exists():
-                        with open(integrity_report_path, 'r', encoding='utf-8') as f:
+                        with open(integrity_report_path, encoding='utf-8') as f:
                             integrity_data = json.load(f)
 
                     if coverage_report_path.exists():
-                        with open(coverage_report_path, 'r', encoding='utf-8') as f:
+                        with open(coverage_report_path, encoding='utf-8') as f:
                             coverage_data = json.load(f)
 
                     # Coletar erros das fases
@@ -4750,7 +4710,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                     json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
             except OSError as e:
                 logger.error(f"Erro ao guardar resultado em disco: {e}")
-            
+
             # ← NOVO: Guardar metadata (título, descrição, etc.)
             guardar_metadata(
                 run_id=result.run_id,
@@ -4766,58 +4726,58 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
     def _gerar_resumo_md(self, result: PipelineResult) -> str:
         """Gera um resumo em Markdown."""
         linhas = [
-            f"# TRIBUNAL SAAS - RESULTADO",
-            f"",
+            "# TRIBUNAL SAAS - RESULTADO",
+            "",
             f"**Run ID:** {result.run_id}",
             f"**Data:** {result.timestamp_inicio.strftime('%d/%m/%Y %H:%M')}",
             f"**Documento:** {result.documento.filename if result.documento else 'N/A'}",
             f"**Area:** {result.area_direito}",
             f"**Perguntas Q&A:** {len(result.perguntas_utilizador)}",
-            f"",
-            f"---",
-            f"",
+            "",
+            "---",
+            "",
             f"## {result.simbolo_final} PARECER FINAL: {result.veredicto_final}",
-            f"",
-            f"---",
-            f"",
-            f"## Estatisticas",
+            "",
+            "---",
+            "",
+            "## Estatisticas",
             f"- Total de tokens: {result.total_tokens:,}",
             f"- Latencia total: {result.total_latencia_ms:.0f}ms",
             f"- Custo total: ${result.custos['custo_total_usd']:.4f}" if result.custos else "- Custo total: N/A",
             f"- Custo cliente: ${result.custos['custo_cliente_usd']:.4f}" if result.custos else "",
             f"- Citacoes legais verificadas: {len(result.verificacoes_legais)}",
-            f"",
-            f"---",
-            f"",
-            f"## Ficheiros de Output",
-            f"",
-            f"### Fase 1: Extracao",
-            f"- `fase1_extrator_1.md` - Extrator 1",
-            f"- `fase1_extrator_2.md` - Extrator 2",
-            f"- `fase1_extrator_3.md` - Extrator 3",
-            f"- `fase1_agregado_bruto.md` - 3 extracoes concatenadas",
-            f"- `fase1_agregado_consolidado.md` - **Extracao LOSSLESS (Agregador)**",
-            f"",
-            f"### Fase 2: Auditoria",
-            f"- `fase2_auditor_1.md` - Auditor 1 (GPT-5.2)",
-            f"- `fase2_auditor_2.md` - Auditor 2 (Claude Opus 4.5)",
-            f"- `fase2_auditor_3.md` - Auditor 3 (Gemini 3 Pro)",
-            f"- `fase2_auditor_4.md` - Auditor 4 (Grok 4.1 Fast)",
-            f"- `fase2_auditorias_brutas.md` - 4 auditorias concatenadas",
-            f"- `fase2_consolidador.md` - **Auditoria LOSSLESS (Consolidador)**",
-            f"",
-            f"### Fase 3: Relatoria",
-            f"- `fase3_relator_1.md` - Relator 1",
-            f"- `fase3_relator_2.md` - Relator 2",
-            f"- `fase3_relator_3.md` - Relator 3",
-            f"",
-            f"### Fase 4: Conselheiro-Mor",
-            f"- `fase4_conselheiro.md` - Decisao final",
-            f"- `verificacao_legal.md` - Relatorio de verificacao DRE",
-            f"",
-            f"---",
-            f"",
-            f"## Verificacoes Legais",
+            "",
+            "---",
+            "",
+            "## Ficheiros de Output",
+            "",
+            "### Fase 1: Extracao",
+            "- `fase1_extrator_1.md` - Extrator 1",
+            "- `fase1_extrator_2.md` - Extrator 2",
+            "- `fase1_extrator_3.md` - Extrator 3",
+            "- `fase1_agregado_bruto.md` - 3 extracoes concatenadas",
+            "- `fase1_agregado_consolidado.md` - **Extracao LOSSLESS (Agregador)**",
+            "",
+            "### Fase 2: Auditoria",
+            "- `fase2_auditor_1.md` - Auditor 1 (GPT-5.2)",
+            "- `fase2_auditor_2.md` - Auditor 2 (Claude Opus 4.5)",
+            "- `fase2_auditor_3.md` - Auditor 3 (Gemini 3 Pro)",
+            "- `fase2_auditor_4.md` - Auditor 4 (Grok 4.1 Fast)",
+            "- `fase2_auditorias_brutas.md` - 4 auditorias concatenadas",
+            "- `fase2_consolidador.md` - **Auditoria LOSSLESS (Consolidador)**",
+            "",
+            "### Fase 3: Relatoria",
+            "- `fase3_relator_1.md` - Relator 1",
+            "- `fase3_relator_2.md` - Relator 2",
+            "- `fase3_relator_3.md` - Relator 3",
+            "",
+            "### Fase 4: Conselheiro-Mor",
+            "- `fase4_conselheiro.md` - Decisao final",
+            "- `verificacao_legal.md` - Relatorio de verificacao DRE",
+            "",
+            "---",
+            "",
+            "## Verificacoes Legais",
         ]
 
         for v in result.verificacoes_legais:
@@ -4826,21 +4786,21 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         # Adicionar perguntas Q&A se houver
         if result.perguntas_utilizador:
             linhas.extend([
-                f"",
-                f"---",
-                f"",
-                f"## Perguntas do Utilizador",
-                f"",
+                "",
+                "---",
+                "",
+                "## Perguntas do Utilizador",
+                "",
             ])
             for i, p in enumerate(result.perguntas_utilizador, 1):
                 linhas.append(f"{i}. {p}")
 
         linhas.extend([
-            f"",
-            f"---",
-            f"",
-            f"## Decisao do Conselheiro-Mor",
-            f"",
+            "",
+            "---",
+            "",
+            "## Decisao do Conselheiro-Mor",
+            "",
             result.fase3_presidente,
         ])
 
@@ -4858,12 +4818,12 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         )
         return self.processar(documento, area_direito, perguntas_raw)
 
-    def listar_runs(self) -> List[Dict]:
+    def listar_runs(self) -> list[dict]:
         """Lista todas as execuções no histórico."""
         runs = []
         for filepath in HISTORICO_DIR.glob("*.json"):
             try:
-                with open(filepath, "r", encoding="utf-8") as f:
+                with open(filepath, encoding="utf-8") as f:
                     data = json.load(f)
                     runs.append({
                         "run_id": data.get("run_id"),
@@ -4878,11 +4838,11 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
 
         return sorted(runs, key=lambda x: x.get("timestamp", ""), reverse=True)
 
-    def carregar_run(self, run_id: str) -> Optional[Dict]:
+    def carregar_run(self, run_id: str) -> Optional[dict]:
         """Carrega os detalhes de uma execução."""
         filepath = HISTORICO_DIR / f"{run_id}.json"
         if filepath.exists():
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 return json.load(f)
         return None
 

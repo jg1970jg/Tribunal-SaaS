@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 ENGINE - Motor de Analise do LexForum
 ============================================================
@@ -35,9 +34,11 @@ if str(_PROJECT_ROOT) not in sys.path:
 import io
 import hashlib
 import logging
+import threading
 import unicodedata
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, Any
+from collections.abc import Callable
 
 # --- Wallet imports (APENAS de wallet_manager.py) ---
 from src.wallet_manager import (
@@ -51,7 +52,6 @@ from src.tier_config import (
     TierLevel,
     calculate_tier_cost,
     get_tier_models,
-    TIER_CONFIG,
 )
 
 from src.config import (
@@ -101,13 +101,16 @@ class MissingApiKeyError(EngineError):
 # ============================================================
 
 _wallet_manager: Optional[NewWalletManager] = None
+_wallet_manager_lock = threading.Lock()
 
 def get_wallet_manager() -> NewWalletManager:
-    """Retorna WalletManager singleton (usa service_role key)."""
+    """Retorna WalletManager singleton (usa service_role key). Thread-safe."""
     global _wallet_manager
     if _wallet_manager is None:
-        sb = get_supabase_admin()
-        _wallet_manager = NewWalletManager(sb)
+        with _wallet_manager_lock:
+            if _wallet_manager is None:
+                sb = get_supabase_admin()
+                _wallet_manager = NewWalletManager(sb)
     return _wallet_manager
 
 
@@ -118,13 +121,13 @@ def _is_wallet_skip() -> bool:
     return os.environ.get("SKIP_WALLET_CHECK", "").lower() == "true"
 
 
-def verificar_saldo_wallet(user_id: str, num_chars: int = 0) -> Dict[str, Any]:
+def verificar_saldo_wallet(user_id: str, num_chars: int = 0) -> dict[str, Any]:
     """
     Verifica saldo do utilizador usando WalletManager.
     Se SKIP_WALLET_CHECK=true, ignora a verificação.
     """
     if _is_wallet_skip():
-        logger.info(f"[WALLET] SKIP_WALLET_CHECK ativo - ignorando verificação de saldo")
+        logger.info("[WALLET] SKIP_WALLET_CHECK ativo - ignorando verificação de saldo")
         return {"saldo_atual": 999.99, "custo_estimado": 0.0, "suficiente": True}
 
     wm = get_wallet_manager()
@@ -148,7 +151,7 @@ def bloquear_creditos(
     analysis_id: str,
     tier: TierLevel,
     document_tokens: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Bloqueia creditos ANTES do processamento.
 
@@ -197,7 +200,7 @@ def bloquear_creditos(
         )
 
 
-def liquidar_creditos(analysis_id: str, custo_real_usd: float) -> Dict[str, Any]:
+def liquidar_creditos(analysis_id: str, custo_real_usd: float) -> dict[str, Any]:
     """
     Liquida creditos APOS processamento com sucesso.
     Debita custo real x2 (margem 100%), devolve diferenca.
@@ -249,7 +252,7 @@ def cancelar_bloqueio(analysis_id: str) -> None:
                 "detail": f"Falha ao cancelar bloqueio analysis={analysis_id}: {e}",
             }).execute()
         except Exception:
-            logger.error(f"[WALLET] Também falhou ao criar alerta de segurança")
+            logger.error("[WALLET] Também falhou ao criar alerta de segurança")
 
 
 # ============================================================
@@ -281,7 +284,7 @@ def carregar_documento_de_bytes(
     ext = Path(filename).suffix.lower()
 
     if ext == ".pdf" and use_pdf_safe:
-        file_hash = hashlib.md5(file_bytes).hexdigest()[:8]
+        file_hash = hashlib.md5(file_bytes, usedforsecurity=False).hexdigest()[:8]
         stem = Path(filename).stem
         stem_safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in stem)
         out_dir_doc = out_dir / f"{stem_safe}_{file_hash}" if out_dir else None
@@ -313,10 +316,10 @@ def carregar_documento_de_bytes(
 
 
 def carregar_multiplos_documentos(
-    ficheiros: List[Dict[str, bytes]],
+    ficheiros: list[dict[str, bytes]],
     use_pdf_safe: bool = True,
     out_dir: Optional[Path] = None,
-) -> List[DocumentContent]:
+) -> list[DocumentContent]:
     """
     Carrega multiplos documentos a partir de bytes.
 
@@ -347,7 +350,7 @@ def carregar_multiplos_documentos(
 # COMBINACAO DE DOCUMENTOS
 # ============================================================
 
-def combinar_documentos(documentos: List[DocumentContent]) -> DocumentContent:
+def combinar_documentos(documentos: list[DocumentContent]) -> DocumentContent:
     """
     Combina multiplos DocumentContent num unico documento.
 
@@ -442,7 +445,6 @@ def executar_analise(
 
     # Extrair modelos do tier
     consolidador_model_key = tier_models.get("audit_chief", "gpt-5.2")
-    conselheiro_model_key = tier_models.get("president", "gpt-5.2")
 
     # ── 2. Verificar saldo basico ──
     logger.info(f"[ENGINE] Verificando saldo wallet para user {user_id[:8]}...")
@@ -520,7 +522,7 @@ def executar_analise(
     # ── 6. Carregar documento ou criar a partir de texto ──
     if file_bytes is not None:
         logger.info(f"[ENGINE] Carregando documento: {filename}")
-        temp_out_dir = OUTPUT_DIR / f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        temp_out_dir = OUTPUT_DIR / f"temp_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         documento = carregar_documento_de_bytes(
             file_bytes=file_bytes,
             filename=filename,
@@ -573,7 +575,7 @@ def executar_analise(
     callback = callback_progresso or _callback_default
 
     # ── 10. Executar pipeline ──
-    logger.info(f"[ENGINE] Iniciando pipeline de 4 fases...")
+    logger.info("[ENGINE] Iniciando pipeline de 4 fases...")
     logger.info(f"[ENGINE] Area: {area_direito}")
     logger.info(f"[ENGINE] Documento: {documento.filename} ({documento.num_chars:,} chars)")
 
@@ -590,7 +592,7 @@ def executar_analise(
         # v4.0: A5 Opus (APENAS ELITE)
         use_a5_opus = tier_models.get("audit_a5_opus", False)
         if use_a5_opus:
-            logger.info(f"[ENGINE] ELITE: A5 Opus auditor sénior ACTIVADO")
+            logger.info("[ENGINE] ELITE: A5 Opus auditor sénior ACTIVADO")
 
         # Modelos base
         extrator_models_for_run = list(config_module.EXTRATOR_MODELS)
@@ -716,7 +718,7 @@ def executar_analise_documento(
 
 def executar_analise_multiplos_documentos(
     user_id: str,
-    ficheiros: List[Dict[str, bytes]],
+    ficheiros: list[dict[str, bytes]],
     area_direito: str = "Civil",
     perguntas_raw: str = "",
     titulo: str = "",
@@ -745,7 +747,7 @@ def executar_analise_multiplos_documentos(
     verificar_saldo_wallet(user_id, num_chars=0)
 
     # Carregar todos os documentos
-    temp_out_dir = OUTPUT_DIR / f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    temp_out_dir = OUTPUT_DIR / f"temp_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     documentos = carregar_multiplos_documentos(
         ficheiros=ficheiros,
         use_pdf_safe=use_pdf_safe,

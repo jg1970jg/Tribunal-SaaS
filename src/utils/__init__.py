@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Módulo de utilidades."""
 
 from .perguntas import parse_perguntas, validar_perguntas

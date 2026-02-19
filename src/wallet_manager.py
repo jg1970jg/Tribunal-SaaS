@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 WALLET MANAGER - Sistema de Bloqueio de Créditos
 ===================================================
@@ -11,8 +10,10 @@ Implementa o sistema completo de:
 NOTA: Usa tabela `profiles` (NÃO `users`) para credits_balance/credits_blocked.
 """
 
+import json
 import logging
-from typing import Any, Dict, Optional
+import math
+from typing import Any, Optional
 from datetime import datetime, timedelta, timezone
 from supabase import Client
 
@@ -57,7 +58,7 @@ class WalletManager:
         """
         self.sb = supabase_client
 
-    def get_balance(self, user_id: str, user_email: str = "") -> Dict[str, float]:
+    def get_balance(self, user_id: str, user_email: str = "") -> dict[str, float]:
         """
         Retorna saldo do utilizador.
 
@@ -121,7 +122,7 @@ class WalletManager:
         """Retorna o multiplicador de markup (margem de lucro)."""
         return 2.0  # 100% de margem
 
-    def check_sufficient_balance(self, user_id: str, num_chars: int = 0) -> Dict[str, Any]:
+    def check_sufficient_balance(self, user_id: str, num_chars: int = 0) -> dict[str, Any]:
         """
         Verifica se o utilizador tem saldo suficiente.
         Compatibilidade com engine.py antigo.
@@ -141,7 +142,7 @@ class WalletManager:
         analysis_id: str,
         estimated_cost_usd: float,
         reason: str = "Bloqueio para análise",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Bloqueia créditos ANTES de processar análise.
         Tenta usar RPC atómico; fallback para operação multi-step.
@@ -162,6 +163,9 @@ class WalletManager:
         Raises:
             InsufficientCreditsError: Se saldo insuficiente
         """
+        if estimated_cost_usd <= 0:
+            raise ValueError(f"estimated_cost_usd deve ser positivo, recebido: {estimated_cost_usd}")
+
         blocked_usd = estimated_cost_usd * SAFETY_MARGIN
 
         # --- Tentar RPC atómico (sem race condition) ---
@@ -175,7 +179,6 @@ class WalletManager:
             if rpc_result.data:
                 data = rpc_result.data
                 if isinstance(data, str):
-                    import json
                     data = json.loads(data)
                 if data.get("success"):
                     logger.info(
@@ -247,7 +250,7 @@ class WalletManager:
         self,
         analysis_id: str,
         real_cost_usd: float,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Liquida créditos APÓS processamento.
         Tenta usar RPC atómico; fallback para operação multi-step.
@@ -256,6 +259,9 @@ class WalletManager:
         2. Devolve a diferença (se houver)
         3. Marca bloqueio como liquidado
         """
+        if real_cost_usd <= 0:
+            raise ValueError(f"real_cost_usd deve ser positivo, recebido: {real_cost_usd}")
+
         markup = self.get_markup_multiplier()
 
         # --- Tentar RPC atómico ---
@@ -270,7 +276,6 @@ class WalletManager:
             if rpc_result.data:
                 data = rpc_result.data
                 if isinstance(data, str):
-                    import json
                     data = json.loads(data)
                 if data.get("success"):
                     logger.info(
@@ -380,7 +385,6 @@ class WalletManager:
             if rpc_result.data:
                 data = rpc_result.data
                 if isinstance(data, str):
-                    import json
                     data = json.loads(data)
                 if data.get("success"):
                     logger.info(f"[WALLET-RPC] Bloqueio cancelado: analysis={analysis_id}")
@@ -417,7 +421,7 @@ class WalletManager:
         user_id: str,
         cost_real_usd: float,
         run_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Débito direto (compatibilidade com engine.py antigo).
         Usa markup de 100% (custo × 2).
@@ -430,6 +434,9 @@ class WalletManager:
         Returns:
             Dict com custo_real, custo_cliente, saldo_antes, saldo_depois, etc.
         """
+        if cost_real_usd <= 0:
+            raise ValueError(f"cost_real_usd deve ser positivo, recebido: {cost_real_usd}")
+
         markup = self.get_markup_multiplier()
         custo_cliente = cost_real_usd * markup
 
@@ -489,7 +496,7 @@ class WalletManager:
         limit: int = 50,
         offset: int = 0,
         type_filter: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Retorna histórico de transações.
         """
@@ -520,7 +527,7 @@ class WalletManager:
         amount_usd: float,
         description: str = "Crédito admin",
         admin_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Credita saldo (apenas admin).
         """
@@ -564,10 +571,10 @@ class WalletManager:
             logger.error(f"Erro ao creditar saldo: {e}")
             raise WalletError(f"Erro ao creditar saldo: {e}")
 
-    def get_profit_report(self, days: int = 30) -> Dict[str, Any]:
+    def get_profit_report(self, days: int = 30) -> dict[str, Any]:
         """Gera relatório de lucro (apenas admin)."""
         try:
-            from_date = (datetime.now() - timedelta(days=days)).isoformat()
+            from_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
             result = self.sb.table("wallet_transactions").select(
                 "*"
@@ -614,7 +621,6 @@ class WalletManager:
 
 def usd_to_credits(usd: float) -> int:
     """Converte USD para créditos (arredondado para cima)."""
-    import math
     return math.ceil(usd / USD_PER_CREDIT)
 
 
