@@ -12,14 +12,16 @@ Servidor principal com:
 """
 
 import asyncio
+import collections
 import io
 import os
 import logging
 import re
 import secrets
 import sys
+import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -42,6 +44,51 @@ from src.engine import (
     get_wallet_manager,
 )
 from src.cost_controller import BudgetExceededError
+
+# =============================================================================
+# IN-MEMORY LOG BUFFER — para endpoint /admin/logs (monitorização remota)
+# =============================================================================
+
+class InMemoryLogHandler(logging.Handler):
+    """Circular buffer que guarda os últimos N log records em memória."""
+
+    def __init__(self, capacity: int = 2000):
+        super().__init__()
+        self._buffer: collections.deque = collections.deque(maxlen=capacity)
+        self._counter: int = 0
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            self._counter += 1
+            self._buffer.append({
+                "id": self._counter,
+                "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": self.format(record),
+            })
+        except Exception:
+            pass  # Never break the app for logging
+
+    def get_logs(self, limit: int = 200, level: str = None, search: str = None, since_id: int = 0):
+        """Return filtered logs from buffer."""
+        result = []
+        for entry in self._buffer:
+            if entry["id"] <= since_id:
+                continue
+            if level and entry["level"] != level.upper():
+                continue
+            if search and search.lower() not in entry["msg"].lower():
+                continue
+            result.append(entry)
+        return result[-limit:]
+
+
+# Install handler on root logger to capture ALL logs
+_log_buffer = InMemoryLogHandler(capacity=5000)
+_log_buffer.setFormatter(logging.Formatter("%(name)s | %(message)s"))
+logging.root.addHandler(_log_buffer)
+logging.root.setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -1551,3 +1598,30 @@ async def admin_verify(request: Request, req: AdminVerifyRequest):
         for k in expired:
             del _admin_sessions[k]
     return {"status": "ok", "message": "Acesso autorizado.", "admin_token": admin_token}
+
+
+# ============================================================
+# ADMIN - LOGS EM TEMPO REAL (monitorização remota)
+# ============================================================
+
+@app.get("/admin/logs")
+async def admin_logs(
+    limit: int = 1000,
+    level: Optional[str] = None,
+    search: Optional[str] = None,
+    since_id: int = 0,
+):
+    """
+    Retorna logs em memória para monitorização remota.
+
+    Params:
+        limit: máx entries (default 1000)
+        level: filtrar por nível (INFO, WARNING, ERROR)
+        search: filtrar por texto (case-insensitive)
+        since_id: só logs com id > since_id (para polling incremental)
+    """
+    logs = _log_buffer.get_logs(limit=limit, level=level, search=search, since_id=since_id)
+    return {
+        "count": len(logs),
+        "logs": logs,
+    }
