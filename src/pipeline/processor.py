@@ -645,7 +645,13 @@ REGRAS:
 5. is_determinant: true se o ponto é CRUCIAL para a decisão (ex: prova de facto essencial)
    - IMPORTANTE: pontos determinantes SEM citations serão marcados como SEM_PROVA
 6. CRÍTICO - EXCERPT: O campo "excerpt" nas citations DEVE ser uma cópia LITERAL e EXACTA do texto do documento. NÃO parafrasear, NÃO resumir, NÃO reformular. Copiar carácter por carácter.
-7. Se não conseguires determinar o texto exacto, coloca uma string vazia ("") no excerpt."""
+7. Se não conseguires determinar o texto exacto, coloca uma string vazia ("") no excerpt.
+
+OBRIGATÓRIO - CITATIONS:
+- CADA decision_point DEVE ter pelo menos 1 entrada no array "citations". Respostas com citations vazias serão REJEITADAS automaticamente.
+- Se não tiveres offsets exactos (start_char/end_char), preenche APENAS page_num e excerpt.
+- Formato mínimo aceitável: {"page_num": 5, "excerpt": "texto do documento"}
+- NUNCA deixes o array citations vazio: "citations": [] é PROIBIDO."""
 
     SYSTEM_RELATOR_JSON_QA = """IMPORTANT: You MUST respond with ONLY valid JSON. No text before or after the JSON. No markdown code blocks. Just the raw JSON object starting with { and ending with }.
 
@@ -939,11 +945,11 @@ REVISTO:"""
         # === QUALITY GATE + RETRIES (por modelo) ===
         # v4.0: Retries controlados por modelo (Opus=0, o1-pro=1, default=2)
         MODEL_MAX_RETRIES = {
-            "anthropic/claude-opus-4.6": 1,  # A5 Elite auditor needs 1 retry
+            "anthropic/claude-opus-4.6": 2,  # v5.2: J3 precisa de 2 retries para citations
             "openai/o1-pro": 1,
             "openai/gpt-5.2-pro": 1,
             "deepseek/deepseek-reasoner": 1,
-            "deepseek/deepseek-r1": 1,
+            "deepseek/deepseek-r1": 2,       # v5.2: J2 precisa de 2 retries para citations
         }
         MAX_RETRIES = MODEL_MAX_RETRIES.get(modelo_final, 2)
         for retry_num in range(1, MAX_RETRIES + 1):
@@ -4152,6 +4158,24 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                         f"modo fila recomendado"
                     )
                 self._reportar_progresso("fase0", 8, f"Triagem concluída: {fase0_triage.domain}")
+
+                # v5.2: Override modelos Google/Gemini em casos Penais
+                # Gemini devolve PROHIBITED_CONTENT em casos criminais — skip directo
+                _triage_domain = fase0_triage.domain if fase0_triage else ""
+                _effective_domain = _triage_domain or area_direito
+                if _effective_domain and _effective_domain.lower() in ("penal", "criminal"):
+                    _overridden = []
+                    for cfg in self._llm_configs:
+                        if cfg["model"].startswith("google/") and cfg["id"].startswith("E"):
+                            old_model = cfg["model"]
+                            cfg["model"] = "openai/gpt-5-mini"
+                            cfg["visual"] = False  # gpt-5-mini não precisa de flag visual
+                            _overridden.append(f"{cfg['id']}: {old_model} → openai/gpt-5-mini")
+                    if _overridden:
+                        logger.info(
+                            f"[PENAL-OVERRIDE] Caso Penal detectado — "
+                            f"Google/Gemini substituídos: {', '.join(_overridden)}"
+                        )
             except Exception as e:
                 logger.warning(f"[FASE0] Triagem falhou (non-blocking): {e}")
 

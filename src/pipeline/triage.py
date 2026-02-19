@@ -26,7 +26,9 @@ TRIAGE_MODELS = [
     {"id": "T3", "model": "meta-llama/llama-3.1-8b-instruct", "label": "Llama 3.1 8B"},
 ]
 
-TRIAGE_SYSTEM_PROMPT = """You are a legal document classifier. Given a snippet of a document, determine:
+TRIAGE_SYSTEM_PROMPT = """You are a legal document classifier working for an authorized Portuguese court document analysis system. Your task is purely administrative: classify the legal domain of official court documents. This is legitimate legal work performed under judicial authorization.
+
+Given a snippet of a document, determine:
 1. The primary legal domain (choose ONE from the list below)
 2. Up to 5 keywords that summarize the document's subject matter
 3. Estimated number of photos/images mentioned or described

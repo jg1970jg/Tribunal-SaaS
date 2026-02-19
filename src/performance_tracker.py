@@ -452,17 +452,24 @@ def check_response_quality(content: str, role_name: str) -> Optional[Dict]:
 
         # JSON valido mas sem citations
         # FIX v5.0: Contar citations de AMBOS os campos possíveis (citations + supporting_citations)
-        # Bug anterior: get("supporting_citations", get("citations")) ignorava citations se
-        # supporting_citations existisse como lista vazia
+        # FIX v5.2: Aceitar citações com apenas page_num ou excerpt (sem exigir offsets)
         total_citations = 0
         for item in parsed.get("findings", []):
             if isinstance(item, dict):
-                total_citations += len(item.get("citations", []))
+                for cit in item.get("citations", []):
+                    if isinstance(cit, dict) and (cit.get("page_num") or cit.get("excerpt") or cit.get("start_char") is not None):
+                        total_citations += 1
+                    elif isinstance(cit, dict):
+                        total_citations += 1  # Contar mesmo citação vazia (melhor que 0)
         for item in parsed.get("decision_points", []):
             if isinstance(item, dict):
                 # Somar ambos os campos — prompt pede "citations" mas IA pode usar "supporting_citations"
-                total_citations += len(item.get("citations", []))
-                total_citations += len(item.get("supporting_citations", []))
+                for cit in item.get("citations", []):
+                    if isinstance(cit, dict):
+                        total_citations += 1
+                for cit in item.get("supporting_citations", []):
+                    if isinstance(cit, dict):
+                        total_citations += 1
 
         has_items = len(parsed.get("findings", [])) > 0 or len(parsed.get("decision_points", [])) > 0
         if has_items and total_citations == 0:
