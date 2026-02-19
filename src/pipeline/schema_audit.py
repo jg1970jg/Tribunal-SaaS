@@ -150,7 +150,7 @@ class Citation:
             extractor_id=data.get("extractor_id"),
             method=data.get("method", "text"),
             excerpt=data.get("excerpt", ""),
-            confidence=float(data.get("confidence", 1.0)),
+            confidence=_safe_confidence(data.get("confidence", 1.0)),
         )
 
 

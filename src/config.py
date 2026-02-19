@@ -475,7 +475,7 @@ FALLBACK_MODEL_NIVEL3 = "google/gemini-3-pro-preview"  # v4.0: Grok BANIDO → G
 # Limites em caracteres (tokens x 4) com margem de 30% para prompt overhead
 LIMITE_NIVEL1_CHARS = 1_120_000     # ~400K tokens x 4 x 0.70 = docs até ~280 páginas
 LIMITE_NIVEL2_CHARS = 2_930_000     # ~1.048K tokens x 4 x 0.70 = docs até ~730 páginas
-LIMITE_NIVEL3_CHARS = 5_600_000     # ~2.000K tokens x 4 x 0.70 = docs até ~2.500 páginas
+LIMITE_NIVEL3_CHARS = 2_900_000     # ~1.049K tokens x 4 x 0.70 (Gemini 3 Pro contexto real)
 
 # =============================================================================
 # MODELOS PARA ENDPOINT /ASK (Perguntas pós-análise)

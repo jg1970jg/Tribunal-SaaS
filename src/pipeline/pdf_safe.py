@@ -880,7 +880,7 @@ def update_page_coverage(
         # Verificar sinais detetados vs extraídos
         # (Esta verificação seria feita após receber extrações dos LLMs)
 
-        page.flags = flags
+        page.flags = list(set(getattr(page, 'flags', []) + flags))
 
         # Atualizar status final
         if page.override_type:

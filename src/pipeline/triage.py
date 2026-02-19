@@ -319,10 +319,11 @@ def inject_page_markers(text: str, page_breaks: Optional[List[int]] = None) -> s
     if page_breaks:
         result_parts = []
         prev_pos = 0
+        result_parts.append(f"\n[Pág_1]\n")
         for i, pos in enumerate(page_breaks):
             if pos > prev_pos:
                 result_parts.append(text[prev_pos:pos])
-            result_parts.append(f"\n[Pág_{i + 1}]\n")
+            result_parts.append(f"\n[Pág_{i + 2}]\n")
             prev_pos = pos
         if prev_pos < len(text):
             result_parts.append(text[prev_pos:])
@@ -334,7 +335,9 @@ def inject_page_markers(text: str, page_breaks: Optional[List[int]] = None) -> s
     if len(parts) > 1:
         result_parts = []
         for i, part in enumerate(parts):
-            if i > 0:
+            if i == 0:
+                result_parts.append(f"\n[Pág_1]\n")
+            else:
                 result_parts.append(f"\n[Pág_{i + 1}]\n")
             result_parts.append(part)
         return "".join(result_parts)

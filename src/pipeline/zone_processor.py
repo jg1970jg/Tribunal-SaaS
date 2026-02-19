@@ -238,7 +238,7 @@ def _split_by_chars(
         start = new_start
 
         # Evitar loop infinito
-        if start >= total - zone_overlap:
+        if start >= total:
             break
     
     return zones

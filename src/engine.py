@@ -242,10 +242,10 @@ def cancelar_bloqueio(analysis_id: str) -> None:
         try:
             sb = get_supabase_admin()
             sb.table("security_alerts").insert({
-                "type": "wallet_cancel_failed",
-                "severity": "high",
-                "description": f"Falha ao cancelar bloqueio analysis={analysis_id}: {e}",
-                "resolved": False,
+                "alert_type": "wallet_cancel_failed",
+                "endpoint": "engine/cancelar_bloqueio",
+                "offender": analysis_id,
+                "detail": f"Falha ao cancelar bloqueio analysis={analysis_id}: {e}",
             }).execute()
         except Exception:
             logger.error(f"[WALLET] Também falhou ao criar alerta de segurança")
@@ -492,13 +492,11 @@ def executar_analise(
     # ── 5. Configurar modelos conforme tier ──
     from src.config import (
         get_chefe_model,
-        get_presidente_model,
     )
     import src.config as config_module
 
     # v4.0 FIX: NÃO mutar config global — calcular localmente e passar como parâmetro
     chefe_model_for_run = get_chefe_model(consolidador_model_key)
-    presidente_model_for_run = get_presidente_model(conselheiro_model_key)
 
     # v4.0: Modelos dos auditores A1-A4 já estão definidos em config.py
     # Não sobrescrever — garante diversidade de modelos na auditoria

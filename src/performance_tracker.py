@@ -185,9 +185,9 @@ class PerformanceTracker:
             if analysis_id:
                 row["analysis_id"] = analysis_id
             # v5.2: Campos extra (graceful — ignora se colunas não existem no Supabase)
-            if cached_tokens:
+            if cached_tokens is not None:
                 row["cached_tokens"] = cached_tokens
-            if reasoning_tokens:
+            if reasoning_tokens is not None:
                 row["reasoning_tokens"] = reasoning_tokens
             if finish_reason:
                 row["finish_reason"] = finish_reason
@@ -372,27 +372,27 @@ class PerformanceTracker:
 
             with self._cache_lock:
                 self._hints_cache = new_cache
-            self._summary_cache = [
-                {
-                    "model": model,
-                    "role": role,
-                    "total_calls": stats["total_calls"],
-                    "successful": stats["successful"],
-                    "success_rate": round(stats["successful"] / max(stats["total_calls"], 1) * 100, 1),
-                    "avg_latency_ms": round(stats["total_latency"] / max(stats["total_calls"], 1), 1),
-                    "avg_tokens": round(stats["total_tokens"] / max(stats["total_calls"], 1)),
-                    "avg_cost_usd": round(stats["total_cost"] / max(stats["total_calls"], 1), 6),
-                    "total_cost_usd": round(stats["total_cost"], 4),
-                    "excerpt_mismatches": stats["excerpt_mismatches"],
-                    "range_invalids": stats["range_invalids"],
-                    "page_mismatches": stats["page_mismatches"],
-                    "missing_citations": stats["missing_citations"],
-                    "error_recovered": stats["error_recovered"],
-                    "hints_active": len(h.hints) if (h := new_cache.get((model, role))) else 0,
-                }
-                for (model, role), stats in agg.items()
-            ]
-            self._cache_loaded_at = time.time()
+                self._summary_cache = [
+                    {
+                        "model": model,
+                        "role": role,
+                        "total_calls": stats["total_calls"],
+                        "successful": stats["successful"],
+                        "success_rate": round(stats["successful"] / max(stats["total_calls"], 1) * 100, 1),
+                        "avg_latency_ms": round(stats["total_latency"] / max(stats["total_calls"], 1), 1),
+                        "avg_tokens": round(stats["total_tokens"] / max(stats["total_calls"], 1)),
+                        "avg_cost_usd": round(stats["total_cost"] / max(stats["total_calls"], 1), 6),
+                        "total_cost_usd": round(stats["total_cost"], 4),
+                        "excerpt_mismatches": stats["excerpt_mismatches"],
+                        "range_invalids": stats["range_invalids"],
+                        "page_mismatches": stats["page_mismatches"],
+                        "missing_citations": stats["missing_citations"],
+                        "error_recovered": stats["error_recovered"],
+                        "hints_active": len(h.hints) if (h := new_cache.get((model, role))) else 0,
+                    }
+                    for (model, role), stats in agg.items()
+                ]
+                self._cache_loaded_at = time.time()
             logger.info(f"[PERF] Cache refreshed: {len(new_cache)} model+role pairs")
 
         except Exception as e:

@@ -1043,7 +1043,7 @@ Consolida estas respostas numa única resposta final coerente."""
                 "question": question,
                 "answer": answer,
                 "individual_responses": individual_responses,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             current_result["qa_history"] = qa_history
             sb.table("documents").update(
@@ -1133,7 +1133,7 @@ async def add_document_to_project(
         "filename": filename,
         "text": novo_texto,
         "chars": len(novo_texto),
-        "added_at": datetime.now().isoformat(),
+        "added_at": datetime.now(timezone.utc).isoformat(),
     })
     current_result["documentos_adicionais"] = docs_adicionais
 

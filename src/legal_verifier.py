@@ -307,7 +307,7 @@ class LegalVerifier:
         r"c[óo]digo\s*(?:da\s*)?publicidade": "Código da Publicidade",
         r"c[óo]digo\s*(?:das\s*)?expropria[çc][õo]es": "Código das Expropriações",
         r"c[óo]digo\s*cooperativo": "Código Cooperativo",
-        r"\bcirs?\b": "Código do IRS",
+        r"\bcirs\b": "Código do IRS",
         r"c[óo]digo\s*(?:do\s*)?irs": "Código do IRS",
         r"\bcirc\b": "Código do IRC",
         r"c[óo]digo\s*(?:do\s*)?irc": "Código do IRC",

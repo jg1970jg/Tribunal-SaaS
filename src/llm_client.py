@@ -297,6 +297,7 @@ class LLMResponse:
             "role": self.role,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
             "total_tokens": self.total_tokens,
             "cached_tokens": self.cached_tokens,
             "cache_hit_rate": self.cache_hit_rate,
@@ -594,7 +595,14 @@ class OpenAIClient:
 
             # NOVO: Extrair cached_tokens
             cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-            
+
+            # FIX 2026-02-19: Extrair reasoning tokens (gpt-5.2-pro, o3, etc.)
+            reasoning_tokens = 0
+            if hasattr(usage, 'completion_tokens_details') and usage.completion_tokens_details:
+                reasoning_tokens = getattr(usage.completion_tokens_details, 'reasoning_tokens', 0) or 0
+            elif isinstance(usage, dict) and usage.get("completion_tokens_details"):
+                reasoning_tokens = usage["completion_tokens_details"].get("reasoning_tokens", 0) or 0
+
             if cached_tokens > 0:
                 cache_pct = 100 * cached_tokens / usage.get("prompt_tokens", 1)
                 logger.info(f"💚 CACHE HIT: {cached_tokens:,} tokens ({cache_pct:.1f}% do input)")
@@ -620,6 +628,7 @@ class OpenAIClient:
                     role="assistant",
                     prompt_tokens=usage.get("prompt_tokens", 0),
                     completion_tokens=usage.get("completion_tokens", 0),
+                    reasoning_tokens=reasoning_tokens,
                     total_tokens=usage.get("total_tokens", 0),
                     cached_tokens=cached_tokens,
                     latency_ms=latency_ms,
@@ -636,6 +645,7 @@ class OpenAIClient:
                 role=message.get("role", "assistant"),
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
+                reasoning_tokens=reasoning_tokens,
                 total_tokens=usage.get("total_tokens", 0),
                 cached_tokens=cached_tokens,
                 latency_ms=latency_ms,

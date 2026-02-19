@@ -838,6 +838,8 @@ REVISTO:"""
         self._document_text: str = ""
         self._page_mapper: Optional[CharToPageMapper] = None
         self._unified_result: Optional[UnifiedExtractionResult] = None
+        self._cost_controller = None
+        self._perf_tracker = None
 
     def _reportar_progresso(self, fase: str, progresso: int, mensagem: str):
         """Reporta progresso ao callback."""
@@ -886,7 +888,7 @@ REVISTO:"""
                 with open(cp_path, "w", encoding="utf-8") as f:
                     _json.dump(checkpoint, f, ensure_ascii=False, indent=2)
             except Exception as e:
-                logger.debug(f"[CHECKPOINT] Erro ao salvar ficheiro: {e}")
+                logger.warning(f"[CHECKPOINT] Erro ao salvar ficheiro: {e}")
 
         # 2. Tentar actualizar Supabase (blocked_credits.fase_atual)
         if self._analysis_id:
@@ -1236,9 +1238,9 @@ REVISTO:"""
         """
         from src.config import CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS
 
-        # Usar valores do config
-        chunk_size = CHUNK_SIZE_CHARS
-        overlap = CHUNK_OVERLAP_CHARS
+        # Usar valores do config (preservar parâmetros se fornecidos)
+        chunk_size = chunk_size or CHUNK_SIZE_CHARS
+        overlap = overlap or CHUNK_OVERLAP_CHARS
 
         # Se documento é pequeno, não dividir
         if len(texto) <= chunk_size:
@@ -1402,6 +1404,9 @@ REVISTO:"""
         """
         import json as json_module
         import hashlib
+
+        if not documento.text or not documento.text.strip():
+            raise ValueError("Documento sem texto — impossível extrair.")
 
         logger.info("=== FASE 1 UNIFICADA: Extração com proveniência ===")
         self._reportar_progresso("fase1", 10, "Iniciando extração unificada com proveniência...")
@@ -3430,7 +3435,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         pareceres_concat = "\n\n".join([
             f"## RELATOR {i+1} ({o.model_name})\n"
             f"Recomendação: {o.recommendation.value}\n"
-            f"Confiança média: {sum(float(p.confidence) for p in o.decision_points) / len(o.decision_points) if o.decision_points else 0:.0%}\n"
+            f"Confiança média: {sum(float(p.confidence or 0) for p in o.decision_points) / len(o.decision_points) if o.decision_points else 0:.0%}\n"
             f"{o.to_markdown()}\n---"
             for i, o in enumerate(judge_opinions)
         ])
