@@ -426,7 +426,8 @@ def executar_analise(
         EngineError: Outros erros
     """
     timestamp_inicio = datetime.now()
-    analysis_id = str(uuid.uuid4())
+    # v5.2: Aceitar analysis_id do caller (main.py) para SIGTERM cleanup
+    analysis_id = kwargs.pop("analysis_id", None) or str(uuid.uuid4())
 
     # ── 1. Determinar tier e modelos ──
     try:
@@ -618,6 +619,7 @@ def executar_analise(
             chefe_model=chefe_model_for_run,
             presidente_model=presidente_model_for_run,
             callback_progresso=callback,
+            analysis_id=analysis_id,
         )
         processor._tier = tier  # Passar tier para o performance tracker
         processor._use_a5_opus = use_a5_opus  # v4.0: Flag para A5 Opus

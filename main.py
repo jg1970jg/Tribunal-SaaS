@@ -18,10 +18,11 @@ import os
 import logging
 import re
 import secrets
+import signal
 import sys
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -276,6 +277,56 @@ def _check_blacklist(request: Request, user: dict = None):
 # LIFESPAN - startup / shutdown
 # ============================================================
 
+def _cleanup_orphan_blocks():
+    """Limpa créditos bloqueados há mais de 2 horas (órfãos de crashes/deploys)."""
+    try:
+        sb = get_supabase_admin()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        resp = sb.table("blocked_credits").select(
+            "id, user_id, analysis_id, amount"
+        ).eq("status", "blocked").lt("created_at", cutoff).execute()
+        orphans = resp.data or []
+        if not orphans:
+            logger.info("[CLEANUP] Sem créditos órfãos bloqueados.")
+            return
+        logger.warning(f"[CLEANUP] {len(orphans)} bloqueio(s) órfão(s) encontrado(s) — a desbloquear...")
+        from src.engine import cancelar_bloqueio
+        for block in orphans:
+            try:
+                cancelar_bloqueio(block["analysis_id"])
+                logger.info(f"[CLEANUP] Desbloqueado: analysis={block['analysis_id']}, ${block['amount']:.4f}")
+            except Exception as e:
+                logger.error(f"[CLEANUP] Falha ao desbloquear {block['analysis_id']}: {e}")
+    except Exception as e:
+        logger.warning(f"[CLEANUP] Erro ao verificar bloqueios órfãos: {e}")
+
+
+def _sigterm_handler(signum, frame):
+    """Handler SIGTERM/SIGINT: desbloquear créditos de análises activas antes de morrer."""
+    sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    logger.warning(f"[SHUTDOWN] {sig_name} recebido — a limpar créditos bloqueados...")
+    with _active_lock:
+        active_ids = list(_active_user_analyses.items())
+    if not active_ids:
+        logger.info("[SHUTDOWN] Sem análises activas — shutdown limpo.")
+        sys.exit(0)
+    logger.warning(f"[SHUTDOWN] {len(active_ids)} análise(s) activa(s) — a cancelar bloqueios...")
+    try:
+        from src.engine import cancelar_bloqueio
+        for user_id, analysis_id in active_ids:
+            if analysis_id and analysis_id != "starting":
+                try:
+                    cancelar_bloqueio(analysis_id)
+                    logger.info(f"[SHUTDOWN] Bloqueio cancelado: user={user_id[:8]}, analysis={analysis_id}")
+                except Exception as e:
+                    logger.error(f"[SHUTDOWN] Falha ao cancelar bloqueio {analysis_id}: {e}")
+            else:
+                logger.warning(f"[SHUTDOWN] User {user_id[:8]} em fase 'starting' — sem analysis_id para cancelar")
+    except Exception as e:
+        logger.error(f"[SHUTDOWN] Erro geral no cleanup: {e}")
+    sys.exit(0)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Inicializa recursos no arranque e limpa no shutdown."""
@@ -295,6 +346,14 @@ async def lifespan(app: FastAPI):
     else:
         get_supabase_admin()
         logger.info("[OK] Supabase (service_role) conectado.")
+
+    # v5.2: Registar signal handlers para cleanup de créditos
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+    signal.signal(signal.SIGINT, _sigterm_handler)
+    logger.info("[OK] Signal handlers (SIGTERM/SIGINT) registados.")
+
+    # v5.2: Cleanup de créditos órfãos no startup
+    _cleanup_orphan_blocks()
 
     logger.info("[OK] LexForum - Servidor iniciado.")
     yield
@@ -484,6 +543,12 @@ async def analyze(
         if area_direito and area_direito not in VALID_AREAS:
             logger.warning(f"Área de direito não standard: {area_direito[:50]}")
 
+        # v5.2: Gerar analysis_id no main para o SIGTERM handler poder cancelar bloqueios
+        import uuid as _uuid
+        _analysis_id = str(_uuid.uuid4())
+        with _active_lock:
+            _active_user_analyses[user_id] = _analysis_id
+
         # FIX 2026-02-14: Executar em thread separada para não bloquear event loop
         resultado = await asyncio.to_thread(
             executar_analise_documento,
@@ -494,6 +559,7 @@ async def analyze(
             perguntas_raw=perguntas_raw,
             titulo=titulo,
             tier=tier,
+            analysis_id=_analysis_id,
         )
 
         result_dict = resultado.to_dict()

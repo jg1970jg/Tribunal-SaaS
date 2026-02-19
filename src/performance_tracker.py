@@ -153,6 +153,11 @@ class PerformanceTracker:
         retry_of_id: Optional[str] = None,
         adaptive_hints_used: Optional[List[str]] = None,
         analysis_id: Optional[str] = None,
+        # v5.2: Campos extra
+        cached_tokens: int = 0,
+        reasoning_tokens: int = 0,
+        finish_reason: str = "",
+        api_used: str = "",
     ) -> Optional[str]:
         """Insere uma linha em model_performance. Fire-and-forget."""
         try:
@@ -179,6 +184,15 @@ class PerformanceTracker:
                 row["retry_of_id"] = retry_of_id
             if analysis_id:
                 row["analysis_id"] = analysis_id
+            # v5.2: Campos extra (graceful — ignora se colunas não existem no Supabase)
+            if cached_tokens:
+                row["cached_tokens"] = cached_tokens
+            if reasoning_tokens:
+                row["reasoning_tokens"] = reasoning_tokens
+            if finish_reason:
+                row["finish_reason"] = finish_reason
+            if api_used:
+                row["api_used"] = api_used
 
             result = self.sb.table("model_performance").insert(row).execute()
             record_id = result.data[0]["id"] if result.data else None

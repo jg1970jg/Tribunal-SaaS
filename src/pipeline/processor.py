@@ -803,6 +803,7 @@ REVISTO:"""
         agregador_model: str = None,
         chefe_model: str = None,
         callback_progresso: Optional[Callable] = None,
+        analysis_id: Optional[str] = None,
     ):
         # v4.0 FIX: deepcopy de TODAS as listas de modelos para thread-safety
         import copy
@@ -827,6 +828,7 @@ REVISTO:"""
         self.llm_client = get_llm_client()
         self.legal_verifier = get_legal_verifier()
 
+        self._analysis_id: Optional[str] = analysis_id
         self._run_id: Optional[str] = None
         self._output_dir: Optional[Path] = None
         self._titulo: str = ""
@@ -858,6 +860,51 @@ REVISTO:"""
             filepath = self._output_dir / filename
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
+
+    def _save_checkpoint(self, fase_num: int, fase_nome: str, data_resumo: dict):
+        """
+        v5.2: Guarda checkpoint após cada fase do pipeline.
+        - Salva JSON local no output_dir
+        - Tenta actualizar blocked_credits com fase_atual (graceful failure)
+        """
+        import json as _json
+        checkpoint = {
+            "analysis_id": self._analysis_id,
+            "run_id": self._run_id,
+            "fase_num": fase_num,
+            "fase_nome": fase_nome,
+            "timestamp": datetime.now().isoformat(),
+            "resumo": data_resumo,
+        }
+
+        # 1. Salvar ficheiro local
+        if self._output_dir:
+            try:
+                cp_path = self._output_dir / f"checkpoint_fase{fase_num}.json"
+                with open(cp_path, "w", encoding="utf-8") as f:
+                    _json.dump(checkpoint, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.debug(f"[CHECKPOINT] Erro ao salvar ficheiro: {e}")
+
+        # 2. Tentar actualizar Supabase (blocked_credits.fase_atual)
+        if self._analysis_id:
+            try:
+                from auth_service import get_supabase_admin
+                sb = get_supabase_admin()
+                sb.table("blocked_credits").update({
+                    "fase_atual": fase_num,
+                }).eq("analysis_id", self._analysis_id).eq("status", "blocked").execute()
+                logger.info(
+                    f"[CHECKPOINT] Fase {fase_num} ({fase_nome}) salva — "
+                    f"analysis={self._analysis_id[:8]}..."
+                )
+            except Exception as e:
+                # Graceful: coluna pode não existir ainda na tabela
+                logger.debug(f"[CHECKPOINT] Supabase update falhou (non-blocking): {e}")
+                logger.info(
+                    f"[CHECKPOINT] Fase {fase_num} ({fase_nome}) salva localmente — "
+                    f"run={self._run_id}"
+                )
 
     def _call_llm(
         self,
@@ -1001,6 +1048,11 @@ REVISTO:"""
                     was_retry=retry_num > 1,
                     retry_number=retry_num - 1,
                     adaptive_hints_used=adaptive_hints_used,
+                    # v5.2: Campos extra
+                    cached_tokens=getattr(response, 'cached_tokens', 0) or 0,
+                    reasoning_tokens=getattr(response, 'reasoning_tokens', 0) or 0,
+                    finish_reason=getattr(response, 'finish_reason', '') or '',
+                    api_used=getattr(response, 'api_used', '') or '',
                 )
 
             # Registar custo do retry falhado no CostController
@@ -1105,6 +1157,11 @@ REVISTO:"""
                 was_retry=False,
                 retry_number=0,
                 adaptive_hints_used=adaptive_hints_used,
+                # v5.2: Campos extra
+                cached_tokens=getattr(response, 'cached_tokens', 0) or 0,
+                reasoning_tokens=getattr(response, 'reasoning_tokens', 0) or 0,
+                finish_reason=getattr(response, 'finish_reason', '') or '',
+                api_used=getattr(response, 'api_used', '') or '',
             )
 
         return FaseResult(
@@ -4204,6 +4261,12 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.fase1_agregado_consolidado = consolidado_f1
             result.fase1_agregado = consolidado_f1  # Backwards compat
 
+            # v5.2: Checkpoint após Fase 1
+            self._save_checkpoint(1, "extracao", {
+                "extractores": len(extracoes),
+                "agregado_chars": len(consolidado_f1) if consolidado_f1 else 0,
+            })
+
             # Guardar referência ao documento para consensus engine
             self._documento = documento
 
@@ -4278,6 +4341,12 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.fase2_chefe_consolidado = consolidado_f2
             result.fase2_chefe = consolidado_f2  # Backwards compat
 
+            # v5.2: Checkpoint após Fase 2
+            self._save_checkpoint(2, "auditoria", {
+                "auditores": len(auditorias),
+                "consolidado_chars": len(consolidado_f2) if consolidado_f2 else 0,
+            })
+
             # FALLBACK: Se Consolidador produziu 0 findings, usar auditorias individuais
             if chefe_report and hasattr(chefe_report, 'consolidated_findings'):
                 if not chefe_report.consolidated_findings or len(chefe_report.consolidated_findings) == 0:
@@ -4345,6 +4414,12 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.fase3_pareceres = pareceres
             result.respostas_juizes_qa = respostas_qa
 
+            # v5.2: Checkpoint após Fase 3
+            self._save_checkpoint(3, "relatoria", {
+                "juizes": len(pareceres),
+                "qa_respostas": len(respostas_qa) if respostas_qa else 0,
+            })
+
             # Fase 4: Conselheiro-Mor (COM perguntas)
             final_decision = None
             if USE_UNIFIED_PROVENANCE and judge_opinions:
@@ -4370,6 +4445,13 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             finally:
                 # Limpar SEMPRE (mesmo em excepção) para não contaminar próximas runs
                 self.legal_verifier.set_data_factos(None)
+
+            # v5.2: Checkpoint após Fase 4 (presidente + verificação legal)
+            self._save_checkpoint(4, "presidente", {
+                "veredicto": "pending",
+                "verificacoes_legais": len(verificacoes) if verificacoes else 0,
+                "presidente_chars": len(presidente) if presidente else 0,
+            })
 
             # Determinar parecer — preferir decision_type do JSON (mais fiável)
             if final_decision and hasattr(final_decision, 'decision_type'):
