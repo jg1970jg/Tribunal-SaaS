@@ -447,7 +447,7 @@ class PDFSafeLoader:
 
         # Guardar texto limpo
         for page in pages:
-            pages_dir = Path(page.image_path).parent if page.image_path else None
+            pages_dir = Path(page.image_path).parent if page.image_path and Path(page.image_path).name else None
             if pages_dir:
                 text_clean_path = pages_dir / f"page_{page.page_num:03d}_text_clean.txt"
                 with open(text_clean_path, 'w', encoding='utf-8') as f:
@@ -477,17 +477,12 @@ class PDFSafeLoader:
 
     def _update_page_status(self, page: PageRecord):
         """Atualiza status da página após análise completa."""
-        # Re-avaliar com base em chars_clean (após limpeza de headers/footers)
+        # H17 FIX: Only set status_final — status_inicial must be preserved from extraction
         if page.metrics.chars_clean < 20:
-            page.status_inicial = "SEM_TEXTO"
             page.status_final = "SEM_TEXTO"
         elif page.metrics.chars_clean < 200 or page.metrics.noise_ratio > 0.25:
-            page.status_inicial = "SUSPEITA"
             page.status_final = "SUSPEITA"
         else:
-            # CORREÇÃO: Resetar para OK se passou nos thresholds
-            # (mesmo que tenha sido marcada SUSPEITA inicialmente por ter imagens)
-            page.status_inicial = "OK"
             page.status_final = "OK"
 
     def _save_manifest(self, result: PDFSafeResult, out_dir: Path):

@@ -325,7 +325,7 @@ def _decode_and_validate_token(token: str) -> dict | None:
         f"Utilizador autenticado: {email} ({user_id[:8]}...) "
         f"[assinatura {'verificada' if signature_verified else 'NÃO verificada'}]"
     )
-    return {"id": user_id, "email": email}
+    return {"id": user_id, "email": email, "exp": payload.get("exp", 0)}
 
 
 async def get_current_user(

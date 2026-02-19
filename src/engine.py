@@ -513,7 +513,7 @@ def executar_analise(
     logger.info(
         f"[ENGINE] Modelos ({tier_level.value}): "
         f"{extrator_summary}, "
-        f"Consolidador={chefe_model_for_run}, Conselheiro={presidente_model_for_run}, "
+        f"Consolidador={chefe_model_for_run}, "
         f"{auditor_summary}, {juiz_summary}"
     )
 

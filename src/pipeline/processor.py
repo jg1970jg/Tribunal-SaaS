@@ -292,6 +292,8 @@ def _call_with_retry(func, func_name="LLM", max_retries=3, backoff_times=None, d
             return None
         try:
             return func()
+        except (BudgetExceededError, InsufficientCreditsError):
+            raise  # NEVER retry or swallow budget errors
         except Exception as e:
             elapsed = time.monotonic() - _start
             if deadline and elapsed >= deadline:
@@ -974,10 +976,14 @@ REVISTO:"""
 
         # NOTE: Keep in sync with reasoning model list. These models don't support system_prompt or temperature.
         REASONING_MODELS = {"openai/o1-pro", "openai/o1", "openai/o3-pro", "openai/o3-mini", "deepseek/deepseek-reasoner", "deepseek/deepseek-r1"}
+
+        # FIX C2 v2: Guardar prompt original para não acumular system_instructions em retries
+        _original_prompt = prompt
+
         if modelo_final in REASONING_MODELS:
             # Embed system prompt into user prompt for reasoning models
             if effective_system:
-                prompt = f"<system_instructions>\n{effective_system}\n</system_instructions>\n\n{prompt}"
+                prompt = f"<system_instructions>\n{effective_system}\n</system_instructions>\n\n{_original_prompt}"
                 effective_system = None
             effective_temp = None  # Reasoning models don't accept temperature
 
@@ -1086,7 +1092,7 @@ REVISTO:"""
             # v5.2 fix C2: Reasoning models não aceitam system_prompt nem temperature
             if modelo_final in REASONING_MODELS:
                 if retry_system:
-                    prompt = f"<system_instructions>\n{retry_system}\n</system_instructions>\n\n{prompt}"
+                    prompt = f"<system_instructions>\n{retry_system}\n</system_instructions>\n\n{_original_prompt}"
                     retry_system = None
                 retry_temp = None
 
@@ -1181,9 +1187,9 @@ REVISTO:"""
             modelo=modelo_final,  # NOVO: modelo real usado (pode ser suplente)
             role=role_name,
             conteudo=response.content or "",
-            tokens_usados=total_tokens,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
+            tokens_usados=_accumulated_prompt_tokens + _accumulated_completion_tokens,
+            prompt_tokens=_accumulated_prompt_tokens,
+            completion_tokens=_accumulated_completion_tokens,
             latencia_ms=response.latency_ms,
             sucesso=response.success,
             erro=response.error,
@@ -1661,7 +1667,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                             f"(titular={cfg['model']}, suplentes={EXTRACTOR_SUBSTITUTES}) — extrator descartado"
                         )
                         run.status = ExtractionStatus.FAILED
-                        run.error_message = "Titular + todos os suplentes falharam"
+                        run.errors.append("Titular + todos os suplentes falharam")
                         extraction_runs.append(run)
                         return  # Descartar este extrator inteiro
 
@@ -2908,7 +2914,7 @@ OUTPUT: Same JSON format as other auditors, plus include a "devils_advocate_conc
                         role_name=f"auditor_{i+1}_json",
                     )
 
-                resultado = _call_with_retry(_do_audit, func_name=f"Auditor-{auditor_id}")
+                resultado = _call_with_retry(_do_audit, func_name=f"Auditor-{auditor_id}", max_retries=1)
 
                 if resultado is not None and resultado.conteudo:
                     used_model = try_model
@@ -3294,7 +3300,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                         role_name=f"relator_{i+1}_json",
                     )
 
-                resultado = _call_with_retry(_do_judge, func_name=f"Relator-{judge_id}")
+                resultado = _call_with_retry(_do_judge, func_name=f"Relator-{judge_id}", max_retries=1)
 
                 if resultado is not None and resultado.conteudo:
                     used_model = try_model

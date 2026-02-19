@@ -240,12 +240,11 @@ class PerformanceTracker:
             if penalty_total is not None:
                 update_data["penalty_total"] = float(penalty_total)
 
-            # FIX 2026-02-14: Limitar a 1 row para evitar update múltiplo
-            self.sb.table("model_performance").update(
-                update_data
-            ).eq("run_id", run_id).eq("role", role).eq(
-                "was_retry", False
-            ).limit(1).execute()
+            # H15 FIX: .limit(1) on UPDATE is ignored by PostgREST — fetch-then-update
+            row = self.sb.table("model_performance").select("id").eq(
+                "run_id", run_id).eq("role", role).eq("was_retry", False).limit(1).execute()
+            if row.data:
+                self.sb.table("model_performance").update(update_data).eq("id", row.data[0]["id"]).execute()
             logger.debug(f"[PERF] Integrity attributed: {role}")
         except Exception as e:
             logger.warning(f"[PERF] Failed to update integrity for {role}: {e}")

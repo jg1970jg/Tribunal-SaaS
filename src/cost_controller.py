@@ -467,10 +467,8 @@ class CostController:
         # Thread safety
         self._lock = Lock()
 
-        # FIX 2026-02-14: Limpar _models_used entre runs (evita leak/contaminação)
-        # v5.2 fix H14: thread-safe reset
-        with DynamicPricing._cache_lock:
-            DynamicPricing._models_used = {}
+        # H10 FIX: Instance-level models_used (was class-level, shared between concurrent runs)
+        self._models_used: Dict[str, Dict] = {}
 
         # Pre-fetch preços (usa cache se válido, fetch se expirado)
         DynamicPricing.prefetch()
@@ -512,6 +510,14 @@ class CostController:
             # Obter pricing com fonte
             pricing = DynamicPricing.get_pricing(model)
             fonte = pricing["fonte"]
+
+            # H10 FIX: Track model pricing at instance level (not class-level)
+            model_clean = model.lower().strip()
+            self._models_used[model_clean] = {
+                "input": pricing["input"],
+                "output": pricing["output"],
+                "fonte": fonte,
+            }
 
             # Calcular custo
             input_cost = (prompt_tokens / 1_000_000) * pricing["input"]
@@ -657,7 +663,7 @@ class CostController:
             "fonte": DynamicPricing.get_pricing_source(),
             "timestamp": DynamicPricing._cache_timestamp.isoformat() if DynamicPricing._cache_timestamp else None,
             "cache_info": DynamicPricing.get_cache_info(),
-            "precos_por_modelo": DynamicPricing.get_models_used(),
+            "precos_por_modelo": dict(self._models_used),
         }
 
 

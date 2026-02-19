@@ -321,18 +321,20 @@ def is_openai_model(model_name: str) -> bool:
         True se for modelo OpenAI
     """
     # Remove prefixo se existir
-    clean_name = model_name.replace("openai/", "").lower()
-    
-    # Lista de padrões OpenAI
-    openai_patterns = [
-        "gpt-5",
-        "gpt-4",
-        "gpt-3",
-        "o1",
-        "o3",
-    ]
-    
-    return any(pattern in clean_name for pattern in openai_patterns)
+    clean_name = model_name.lower().strip().replace("openai/", "")
+
+    # FIX H7: Use substring match only for gpt-* patterns
+    openai_patterns = ["gpt-5", "gpt-4", "gpt-3"]
+    if any(pattern in clean_name for pattern in openai_patterns):
+        return True
+
+    # FIX H7: Use strict prefix match for o1/o3 to avoid false positives
+    openai_prefixes = ["o1", "o3"]
+    for prefix in openai_prefixes:
+        if clean_name == prefix or clean_name.startswith(prefix + "-"):
+            return True
+
+    return False
 
 
 def uses_responses_api(model_name: str) -> bool:
@@ -450,6 +452,8 @@ class OpenAIClient:
             "cache_hits": 0,
             "cache_misses": 0,
         }
+        # FIX H8: Thread-safe stats mutations
+        self._stats_lock = threading.Lock()
 
     def _get_headers(self) -> Dict[str, str]:
         """Retorna headers para a API."""
@@ -567,7 +571,8 @@ class OpenAIClient:
 
         NOVO: Suporte para prompt caching (automático em OpenAI).
         """
-        self._stats["total_calls"] += 1
+        with self._stats_lock:
+            self._stats["total_calls"] += 1
         start_time = datetime.now()
 
         # Adicionar system prompt se fornecido
@@ -593,22 +598,24 @@ class OpenAIClient:
             content = message.get("content", "")
             usage = raw_response.get("usage", {})
 
-            # NOVO: Extrair cached_tokens
-            cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            # FIX H5: Extrair cached_tokens (null-safe)
+            ptd = usage.get("prompt_tokens_details") or {}
+            cached_tokens = ptd.get("cached_tokens", 0)
 
-            # FIX 2026-02-19: Extrair reasoning tokens (gpt-5.2-pro, o3, etc.)
+            # FIX H6: Extrair reasoning tokens (gpt-5.2-pro, o3, etc.)
             reasoning_tokens = 0
-            if hasattr(usage, 'completion_tokens_details') and usage.completion_tokens_details:
-                reasoning_tokens = getattr(usage.completion_tokens_details, 'reasoning_tokens', 0) or 0
-            elif isinstance(usage, dict) and usage.get("completion_tokens_details"):
-                reasoning_tokens = usage["completion_tokens_details"].get("reasoning_tokens", 0) or 0
+            ctd = usage.get("completion_tokens_details") or {}
+            if isinstance(ctd, dict):
+                reasoning_tokens = ctd.get("reasoning_tokens", 0) or 0
 
             if cached_tokens > 0:
                 cache_pct = 100 * cached_tokens / usage.get("prompt_tokens", 1)
                 logger.info(f"💚 CACHE HIT: {cached_tokens:,} tokens ({cache_pct:.1f}% do input)")
-                self._stats["cache_hits"] += 1
+                with self._stats_lock:
+                    self._stats["cache_hits"] += 1
             else:
-                self._stats["cache_misses"] += 1
+                with self._stats_lock:
+                    self._stats["cache_misses"] += 1
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
@@ -621,7 +628,8 @@ class OpenAIClient:
                     f"[OpenAI] Resposta com content VAZIO para {model}. "
                     f"Finish reason: {openai_finish_reason or 'N/A'}"
                 )
-                self._stats["failed_calls"] += 1
+                with self._stats_lock:
+                    self._stats["failed_calls"] += 1
                 return LLMResponse(
                     content="",
                     model=raw_response.get("model", model),
@@ -655,9 +663,10 @@ class OpenAIClient:
                 finish_reason=openai_finish_reason,
             )
 
-            self._stats["successful_calls"] += 1
-            self._stats["total_tokens"] += response.total_tokens
-            self._stats["total_latency_ms"] += latency_ms
+            with self._stats_lock:
+                self._stats["successful_calls"] += 1
+                self._stats["total_tokens"] += response.total_tokens
+                self._stats["total_latency_ms"] += latency_ms
 
             logger.info(
                 f"✅ OpenAI resposta: {response.total_tokens} tokens "
@@ -668,8 +677,9 @@ class OpenAIClient:
 
         except Exception as e:
             logger.error(f"❌ Erro OpenAI API: {e}")
-            self._stats["failed_calls"] += 1
-            
+            with self._stats_lock:
+                self._stats["failed_calls"] += 1
+
             # Retornar erro para fallback
             return LLMResponse(
                 content="",
@@ -718,7 +728,8 @@ class OpenAIClient:
         Esta API é usada por modelos como GPT-5.2 e GPT-5.2-pro.
         Usa 'instructions' para system prompt e 'input' para conteúdo do user.
         """
-        self._stats["total_calls"] += 1
+        with self._stats_lock:
+            self._stats["total_calls"] += 1
         start_time = datetime.now()
 
         # Extrair instructions (system prompt) separadamente
@@ -800,14 +811,16 @@ class OpenAIClient:
             if not output_text or not output_text.strip():
                 logger.error(f"[RESPONSES-API] FALHA: output_text VAZIO após todas as tentativas!")
                 logger.error(f"[RESPONSES-API] Raw response (first 2000 chars): {str(raw_response)[:2000]}")
-                self._stats["failed_calls"] += 1
+                with self._stats_lock:
+                    self._stats["failed_calls"] += 1
 
                 usage = raw_response.get("usage", {})
                 latency_ms = (datetime.now() - start_time).total_seconds() * 1000
                 
-                # NOVO: Extrair cached_tokens
-                cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-                
+                # FIX H5: Extrair cached_tokens (null-safe)
+                ptd = usage.get("prompt_tokens_details") or {}
+                cached_tokens = ptd.get("cached_tokens", 0)
+
                 return LLMResponse(
                     content="",
                     model=raw_response.get("model", model),
@@ -830,13 +843,16 @@ class OpenAIClient:
             # Log raw usage for debugging
             logger.info(f"[USAGE-RAW] {model}: {usage}")
 
-            # NOVO: Extrair cached_tokens
-            cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            # FIX H5: Extrair cached_tokens (null-safe)
+            ptd = usage.get("prompt_tokens_details") or {}
+            cached_tokens = ptd.get("cached_tokens", 0)
 
-            # FIX 2026-02-14: Extrair reasoning tokens (gpt-5.2-pro, o3, etc.)
+            # FIX H5+H6: Extrair reasoning tokens (gpt-5.2-pro, o3, etc.) — null-safe
+            otd = usage.get("output_tokens_details") or {}
+            ctd = usage.get("completion_tokens_details") or {}
             reasoning_tokens = (
-                usage.get("output_tokens_details", {}).get("reasoning_tokens", 0)
-                or usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+                (otd.get("reasoning_tokens", 0) if isinstance(otd, dict) else 0)
+                or (ctd.get("reasoning_tokens", 0) if isinstance(ctd, dict) else 0)
                 or 0
             )
 
@@ -844,9 +860,11 @@ class OpenAIClient:
                 prompt_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                 cache_pct = 100 * cached_tokens / prompt_tokens if prompt_tokens > 0 else 0
                 logger.info(f"💚 CACHE HIT: {cached_tokens:,} tokens ({cache_pct:.1f}% do input)")
-                self._stats["cache_hits"] += 1
+                with self._stats_lock:
+                    self._stats["cache_hits"] += 1
             else:
-                self._stats["cache_misses"] += 1
+                with self._stats_lock:
+                    self._stats["cache_misses"] += 1
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
@@ -854,18 +872,12 @@ class OpenAIClient:
             prompt_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
             reported_completion = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
 
-            # FIX 2026-02-14: Corrigir completion_tokens para incluir reasoning
+            # FIX H9: output_tokens already includes reasoning_tokens — no double-counting
             actual_completion = reported_completion
-            if reasoning_tokens > 0 and reasoning_tokens > reported_completion:
-                actual_completion = reasoning_tokens + reported_completion
-                logger.warning(
-                    f"[REASONING] {model}: reasoning_tokens={reasoning_tokens:,} > "
-                    f"output_tokens={reported_completion:,} → ajustado para {actual_completion:,}"
-                )
-            elif reasoning_tokens > 0:
+            if reasoning_tokens > 0:
                 logger.info(
                     f"[REASONING] {model}: reasoning={reasoning_tokens:,} "
-                    f"(incluído em output={reported_completion:,})"
+                    f"(included in output={reported_completion:,})"
                 )
 
             total_tokens = usage.get("total_tokens", 0) or (prompt_tokens + actual_completion)
@@ -889,9 +901,10 @@ class OpenAIClient:
                 finish_reason=responses_status,
             )
 
-            self._stats["successful_calls"] += 1
-            self._stats["total_tokens"] += response.total_tokens
-            self._stats["total_latency_ms"] += latency_ms
+            with self._stats_lock:
+                self._stats["successful_calls"] += 1
+                self._stats["total_tokens"] += response.total_tokens
+                self._stats["total_latency_ms"] += latency_ms
 
             logger.info(
                 f"✅ OpenAI Responses resposta: {response.total_tokens} tokens "
@@ -903,8 +916,9 @@ class OpenAIClient:
 
         except Exception as e:
             logger.error(f"❌ Erro OpenAI Responses API: {e}")
-            self._stats["failed_calls"] += 1
-            
+            with self._stats_lock:
+                self._stats["failed_calls"] += 1
+
             # Retornar erro para fallback
             return LLMResponse(
                 content="",
@@ -974,6 +988,8 @@ class OpenRouterClient:
             "cache_hits": 0,
             "cache_misses": 0,
         }
+        # FIX H8: Thread-safe stats mutations
+        self._stats_lock = threading.Lock()
 
     def _get_headers(self) -> Dict[str, str]:
         """Retorna headers para a API."""
@@ -1047,7 +1063,8 @@ class OpenRouterClient:
 
         NOVO: Suporte para prompt caching (Anthropic manual, outros automático).
         """
-        self._stats["total_calls"] += 1
+        with self._stats_lock:
+            self._stats["total_calls"] += 1
         start_time = datetime.now()
 
         # Adicionar system prompt se fornecido
@@ -1077,37 +1094,35 @@ class OpenRouterClient:
             content = message.get("content", "")
             usage = raw_response.get("usage", {})
 
-            # NOVO: Extrair cached_tokens (Anthropic + outros)
-            cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            # FIX H5: Extrair cached_tokens (null-safe)
+            ptd = usage.get("prompt_tokens_details") or {}
+            cached_tokens = ptd.get("cached_tokens", 0)
 
-            # FIX 2026-02-14: Extrair reasoning tokens (gpt-5.2-pro, o3, etc.)
+            # FIX H5+H6: Extrair reasoning tokens (null-safe)
+            ctd = usage.get("completion_tokens_details") or {}
             reasoning_tokens = (
-                usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+                (ctd.get("reasoning_tokens", 0) if isinstance(ctd, dict) else 0)
                 or usage.get("reasoning_tokens", 0)
+                or 0
             )
 
-            # FIX 2026-02-14: Corrigir completion_tokens para incluir reasoning
-            # Modelos reasoning cobram por reasoning tokens MAS podem não incluir no completion_tokens
+            # FIX H9: completion_tokens already includes reasoning_tokens — no double-counting
             reported_completion = usage.get("completion_tokens", 0)
             actual_completion = reported_completion
-            if reasoning_tokens > 0 and reasoning_tokens > reported_completion:
-                actual_completion = reasoning_tokens + reported_completion
-                logger.warning(
-                    f"[REASONING] {model}: reasoning_tokens={reasoning_tokens:,} > "
-                    f"completion_tokens={reported_completion:,} → ajustado para {actual_completion:,}"
-                )
-            elif reasoning_tokens > 0:
+            if reasoning_tokens > 0:
                 logger.info(
                     f"[REASONING] {model}: reasoning={reasoning_tokens:,} "
-                    f"(incluído em completion={reported_completion:,})"
+                    f"(included in completion={reported_completion:,})"
                 )
 
             if cached_tokens > 0:
                 cache_pct = 100 * cached_tokens / usage.get("prompt_tokens", 1)
                 logger.info(f"💚 CACHE HIT: {cached_tokens:,} tokens ({cache_pct:.1f}% do input)")
-                self._stats["cache_hits"] += 1
+                with self._stats_lock:
+                    self._stats["cache_hits"] += 1
             else:
-                self._stats["cache_misses"] += 1
+                with self._stats_lock:
+                    self._stats["cache_misses"] += 1
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
@@ -1124,7 +1139,8 @@ class OpenRouterClient:
                     f"[OpenRouter] Output TRUNCADO para {model} — finish_reason: length. "
                     f"Content len: {len(content)} chars. Aumentar max_tokens ou rever chunking."
                 )
-                self._stats["failed_calls"] += 1
+                with self._stats_lock:
+                    self._stats["failed_calls"] += 1
                 return LLMResponse(
                     content=content,
                     model=raw_response.get("model", model),
@@ -1148,7 +1164,8 @@ class OpenRouterClient:
                     f"[OpenRouter] Content filter ativado para {model}. "
                     f"Verificar prompt. Raw choices: {raw_response.get('choices', [])}"
                 )
-                self._stats["failed_calls"] += 1
+                with self._stats_lock:
+                    self._stats["failed_calls"] += 1
                 return LLMResponse(
                     content="",
                     model=raw_response.get("model", model),
@@ -1173,7 +1190,8 @@ class OpenRouterClient:
                     f"Finish reason: {finish_reason or 'N/A'}. "
                     f"Raw choices: {raw_response.get('choices', [])}"
                 )
-                self._stats["failed_calls"] += 1
+                with self._stats_lock:
+                    self._stats["failed_calls"] += 1
                 return LLMResponse(
                     content="",
                     model=raw_response.get("model", model),
@@ -1207,9 +1225,10 @@ class OpenRouterClient:
                 finish_reason=finish_reason,
             )
 
-            self._stats["successful_calls"] += 1
-            self._stats["total_tokens"] += response.total_tokens
-            self._stats["total_latency_ms"] += latency_ms
+            with self._stats_lock:
+                self._stats["successful_calls"] += 1
+                self._stats["total_tokens"] += response.total_tokens
+                self._stats["total_latency_ms"] += latency_ms
 
             logger.info(
                 f"✅ OpenRouter resposta: {response.total_tokens} tokens "
@@ -1221,7 +1240,8 @@ class OpenRouterClient:
 
         except Exception as e:
             logger.error(f"❌ Erro OpenRouter API: {e}")
-            self._stats["failed_calls"] += 1
+            with self._stats_lock:
+                self._stats["failed_calls"] += 1
             return LLMResponse(
                 content="",
                 model=model,

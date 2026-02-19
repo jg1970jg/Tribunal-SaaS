@@ -321,7 +321,10 @@ class WalletManager:
                 refunded = 0.0
 
             balance = self.get_balance(user_id)
-            new_balance = max(0, balance["total"] - custo_cliente)
+            raw_balance = balance["total"] - custo_cliente
+            if raw_balance < 0:
+                logger.warning(f"settle_credits: saldo negativo {raw_balance:.4f} para user {user_id}, clamped to 0")
+            new_balance = max(0, raw_balance)
             new_blocked = max(0, balance["blocked"] - blocked_amount)
 
             self.sb.table("profiles").update({
@@ -474,6 +477,8 @@ class WalletManager:
                 "run_id": run_id,
             }
 
+        except InsufficientCreditsError:
+            raise  # Never swallow insufficient credits
         except Exception as e:
             logger.error(f"Erro ao debitar wallet: {e}")
             raise WalletError(f"Erro ao debitar wallet: {e}")

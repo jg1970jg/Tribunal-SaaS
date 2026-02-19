@@ -963,7 +963,7 @@ class LegalVerifier:
     def extrair_citacoes(self, texto: str) -> List[CitacaoLegal]:
         citacoes = []
         padroes = [
-            r"art(?:igo)?[.º°]?\s*\d+\.?[º°]?(?:-[A-Z])?(?:[,\s]+(?:n\.?[º°]?\s*\d+|al[ií]nea\s*[a-z]\)?))*[,\s]*(?:(?:do|da|dos|das)\s+)?(?:[\s\S]{0,80}?)(?=\.|;|\n|$)",
+            r"art(?:igo)?[.º°]?\s*\d+\.?[º°]?(?:-[A-Z])?(?:[,\s]+(?:n\.?[º°]?\s*\d+|al[ií]nea\s*[a-z]\)?))*[,\s]*(?:(?:do|da|dos|das)\s+)?(?:[^\n.;]{0,80})(?=\.|;|\n|$)",
             r"art(?:igo)?[.º°]?\s*\d+\.?[º°]?(?:-[A-Z])?\s*(?:,\s*n\.?[º°]?\s*\d+)?\s+(?:CC|CPC|CPP|CP|CT|CRP|NRAU|CIRS|CIRC|CIVA|RJUE|CSC|CPA|CPTA|CPPT|CCP|CVM|CIRE|CE|LGT|RCP)\b",
             r"(?:código|lei|decreto|regulamento)[^,.\n]{0,100}art(?:igo)?[.º°]?\s*\d+",
         ]

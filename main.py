@@ -817,7 +817,7 @@ def _build_docx(data: Dict[str, Any]) -> bytes:
     simbolo = data.get("simbolo_final", "")
     veredicto = data.get("veredicto_final", "Sem conclusão")
     p = doc.add_paragraph(f"{simbolo} {veredicto}")
-    p.runs[0].bold = True
+    if p.runs: p.runs[0].bold = True
 
     # Relatório Profissional (Curador Sénior — substitui fases técnicas)
     f4 = _sanitize_content(data.get("fase3_presidente", ""))
@@ -1037,7 +1037,7 @@ Consolida estas respostas numa única resposta final coerente."""
         try:
             sb = get_supabase_admin()
             doc_resp = sb.table("documents").select("analysis_result").eq("id", req.document_id).eq("user_id", user["id"]).single().execute()
-            current_result = doc_resp.data.get("analysis_result") or {}
+            current_result = (doc_resp.data or {}).get("analysis_result") or {}
             qa_history = current_result.get("qa_history", [])
             qa_history.append({
                 "question": question,
@@ -1114,6 +1114,9 @@ async def add_document_to_project(
         sb = get_supabase_admin()
         doc_resp = sb.table("documents").select("analysis_result, user_id").eq("id", document_id).eq("user_id", user["id"]).single().execute()
     except Exception as e:
+        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+
+    if not doc_resp.data:
         raise HTTPException(status_code=404, detail="Documento não encontrado.")
 
     doc_user_id = doc_resp.data.get("user_id", "")
@@ -1527,7 +1530,8 @@ async def admin_blacklist_add(
         }).execute()
 
         # Forçar recarga do cache
-        _blacklist_cache["loaded_at"] = 0
+        with _blacklist_lock:
+            _blacklist_cache["loaded_at"] = 0
 
         logger.info(f"[BLACKLIST] Adicionado: {req.type}={value} por {admin_email}")
         return {"status": "ok", "blocked": result.data[0] if result.data else {}}
@@ -1553,7 +1557,8 @@ async def admin_blacklist_remove(
         sb.table("blacklist").delete().eq("id", entry_id).execute()
 
         # Forçar recarga do cache
-        _blacklist_cache["loaded_at"] = 0
+        with _blacklist_lock:
+            _blacklist_cache["loaded_at"] = 0
 
         logger.info(f"[BLACKLIST] Removido: {entry_id} por {admin_email}")
         return {"status": "ok", "removed": entry_id}
@@ -1672,7 +1677,9 @@ async def admin_verify(request: Request, req: AdminVerifyRequest):
 # ============================================================
 
 @app.get("/admin/logs")
+@limiter.limit("60/minute")
 async def admin_logs(
+    request: Request,
     limit: int = 1000,
     level: Optional[str] = None,
     search: Optional[str] = None,
