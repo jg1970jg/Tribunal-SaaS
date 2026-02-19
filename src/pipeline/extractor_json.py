@@ -78,9 +78,7 @@ def extract_json_from_text(text: str) -> dict | list | None:
 
     text = text.strip()
 
-    logger.debug(f"[JSON-EXTRACT] Input length: {len(text)} chars")
-    logger.debug(f"[JSON-EXTRACT] First 500 chars: {text[:500]!r}")
-    logger.debug(f"[JSON-EXTRACT] Last 200 chars: {text[-200:]!r}")
+    logger.debug(f"Input length: {len(text)} chars, preview: {text[:200]}...")
 
     # 1. Tentar parse directo
     try:
@@ -239,9 +237,13 @@ def build_extractor_input(pages_batch: list[dict]) -> str:
     }
 
     for page in pages_batch:
+        page_text = page["text"]
+        if len(page_text) > 8000:
+            logger.warning(f"Page {page['page_num']} text truncated from {len(page_text)} to 8000 chars")
+            page_text = page_text[:8000]
         page_entry = {
             "page_num": page["page_num"],
-            "text": page["text"][:8000],  # Truncar se muito longo
+            "text": page_text,
             "status": page.get("status", "OK"),
         }
 

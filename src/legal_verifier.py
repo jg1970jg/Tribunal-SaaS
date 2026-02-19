@@ -6,10 +6,12 @@ Auto-descobre códigos e NIDs dinamicamente.
 Só legislação portuguesa (Portugal).
 """
 
+import atexit
 import re
 import sqlite3
 import hashlib
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Any
 from dataclasses import dataclass, field
@@ -653,6 +655,8 @@ class LegalVerifier:
         if lei_year_match:
             year_from_lei = int(lei_year_match.group(1))
 
+        year = None  # Prevent stale values across regex blocks
+
         # Padrão: "DD/MM/YYYY" ou "DD-MM-YYYY" (sem prefixo "de")
         m = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})", date_text)
         if m:
@@ -667,6 +671,7 @@ class LegalVerifier:
                 pass
 
         # Padrão: "de DD/MM" ou "de DD/MM/YYYY"
+        year = None  # Reset to avoid stale value from prior block
         m = re.search(r"de\s+(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?", date_text)
         if m:
             day = int(m.group(1))
@@ -685,6 +690,7 @@ class LegalVerifier:
                 pass
 
         # Padrão: "de DD de Mês de YYYY" ou "DD de Mês de YYYY"
+        year = None  # Reset to avoid stale value from prior block
         m = re.search(
             r"(?:de\s+)?(\d{1,2})\s+de\s+(\w+)(?:\s+de\s+(\d{4}))?",
             date_text, re.IGNORECASE,
@@ -1007,7 +1013,7 @@ class LegalVerifier:
             with sqlite3.connect(str(self.db_path)) as conn:
                 c = conn.cursor()
                 c.execute(
-                    "SELECT texto, fonte, timestamp, hash FROM legislacao_cache WHERE diploma = ? AND artigo = ?",
+                    "SELECT texto, fonte, timestamp, hash FROM legislacao_cache WHERE diploma = ? AND artigo = ? AND timestamp > datetime('now', '-30 days')",
                     (citacao.diploma, citacao.artigo),
                 )
                 row = c.fetchone()
@@ -1387,6 +1393,13 @@ class LegalVerifier:
     def get_stats(self) -> dict:
         return {**self._stats, "nids_conhecidos": len(self._nid_map)}
 
+    def __del__(self):
+        if hasattr(self, '_http_client') and self._http_client:
+            try:
+                self._http_client.close()
+            except Exception:
+                pass
+
     def close(self):
         self._http_client.close()
 
@@ -1396,12 +1409,28 @@ class LegalVerifier:
 # ---------------------------------------------------------------------------
 
 _global_verifier: Optional[LegalVerifier] = None
+_verifier_lock = threading.Lock()
+
+
+def _cleanup_verifier():
+    """atexit handler: close the singleton HTTP client on process exit."""
+    global _global_verifier
+    if _global_verifier is not None:
+        try:
+            _global_verifier.close()
+        except Exception:
+            pass
+
+
+atexit.register(_cleanup_verifier)
 
 
 def get_legal_verifier() -> LegalVerifier:
     global _global_verifier
     if _global_verifier is None:
-        _global_verifier = LegalVerifier()
+        with _verifier_lock:
+            if _global_verifier is None:
+                _global_verifier = LegalVerifier()
     return _global_verifier
 
 

@@ -25,7 +25,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Form, Request, UploadFile, File, HTTPException, status
+from fastapi import Depends, FastAPI, Form, Query, Request, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
@@ -56,24 +56,28 @@ class InMemoryLogHandler(logging.Handler):
         super().__init__()
         self._buffer: collections.deque = collections.deque(maxlen=capacity)
         self._counter = itertools.count(1)
+        self._lock = threading.Lock()
 
     def emit(self, record: logging.LogRecord):
         try:
             seq = next(self._counter)
-            self._buffer.append({
-                "id": seq,
-                "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
-                "level": record.levelname,
-                "logger": record.name,
-                "msg": self.format(record),
-            })
+            with self._lock:
+                self._buffer.append({
+                    "id": seq,
+                    "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "msg": self.format(record),
+                })
         except Exception:
             pass  # Never break the app for logging
 
     def get_logs(self, limit: int = 200, level: str = None, search: str = None, since_id: int = 0):
         """Return filtered logs from buffer."""
+        with self._lock:
+            snapshot = list(self._buffer)
         result = []
-        for entry in self._buffer:
+        for entry in snapshot:
             if entry["id"] <= since_id:
                 continue
             if level and entry["level"] != level.upper():
@@ -210,7 +214,8 @@ def _load_blacklist():
         return  # Cache ainda válido
 
     with _blacklist_lock:
-        # Double-check after acquiring lock
+        # Re-read timestamp inside the lock to avoid TOCTOU race
+        now = _time.time()
         if now - _blacklist_cache["loaded_at"] < BLACKLIST_CACHE_TTL:
             return
 
@@ -459,7 +464,7 @@ _active_lock = threading.Lock()
 async def analyze(
     request: Request,
     file: UploadFile = File(...),
-    area_direito: str = Form("Civil"),
+    area_direito: str = Form("Civil"),  # Default to Civil law if not specified
     perguntas_raw: str = Form(""),
     titulo: str = Form(""),
     tier: str = Form("bronze"),
@@ -498,7 +503,7 @@ async def analyze(
         content_length = request.headers.get("content-length")
         if content_length:
             try:
-                if int(content_length) > MAX_FILE_SIZE * 2:
+                if int(content_length) > MAX_FILE_SIZE:
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                         detail="Ficheiro demasiado grande. Máximo: 50MB.",
@@ -577,7 +582,7 @@ async def analyze(
                 "analysis_result": result_dict,
                 "status": "completed" if resultado.sucesso else "error",
                 "tier": tier,
-                "area_direito": area_direito,
+                "area_direito": area_direito.strip().title(),
                 "run_id": result_dict.get("run_id", ""),
                 "filename": safe_filename,
                 "file_size_bytes": len(file_bytes),
@@ -587,6 +592,8 @@ async def analyze(
                 "duracao_segundos": result_dict.get("duracao_total_s", 0),
             }
             insert_resp = sb_admin.table("documents").insert(doc_record).execute()
+            if not insert_resp.data:
+                logger.warning("[DOCS] Insert returned empty data - document record may not have been saved")
             doc_id = insert_resp.data[0]["id"] if insert_resp.data else None
             if doc_id:
                 result_dict["document_id"] = doc_id
@@ -823,8 +830,9 @@ def _build_docx(data: dict[str, Any]) -> bytes:
         "Gerado automaticamente por LexForum — "
         "Este documento não substitui aconselhamento jurídico."
     )
-    footer.runs[0].font.size = Pt(7)
-    footer.runs[0].font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+    if footer.runs:
+        footer.runs[0].font.size = Pt(7)
+        footer.runs[0].font.color.rgb = RGBColor(0x99, 0x99, 0x99)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -975,7 +983,8 @@ Responde de forma clara, citando legislação quando aplicável."""
 
     for model in ASK_MODELS:
         try:
-            resp = llm.chat_simple(
+            resp = await asyncio.to_thread(
+                llm.chat_simple,
                 model=model,
                 prompt=prompt,
                 system_prompt=ASK_SYSTEM_PROMPT,
@@ -1013,7 +1022,8 @@ RESPOSTAS DOS 3 JURISTAS:
 Consolida estas respostas numa única resposta final coerente."""
 
     try:
-        consolidated = llm.chat_simple(
+        consolidated = await asyncio.to_thread(
+            llm.chat_simple,
             model=ASK_MODELS[0],
             prompt=consolidation_prompt,
             system_prompt=CONSOLIDATION_SYSTEM_PROMPT,
@@ -1043,10 +1053,16 @@ Consolida estas respostas numa única resposta final coerente."""
             current_result["qa_history"] = qa_history
             sb.table("documents").update(
                 {"analysis_result": current_result}
-            ).eq("id", req.document_id).execute()
+            ).eq("id", req.document_id).eq("user_id", user["id"]).execute()
             logger.info(f"Q&A guardada no Supabase: doc={req.document_id}, total_qa={len(qa_history)}")
         except Exception as e:
             logger.warning(f"Erro ao guardar Q&A no Supabase: {e}")
+            return {
+                "question": question,
+                "answer": answer,
+                "individual_responses": individual_responses,
+                "persisted": False,
+            }
 
     return {
         "question": question,
@@ -1175,7 +1191,7 @@ async def get_tiers(request: Request):
 async def calculate_tier_cost_endpoint(
     request: Request,
     tier: str,
-    document_tokens: int = 0,
+    document_tokens: int = Query(default=0, ge=0, le=10_000_000),
 ):
     """
     Calcula custo estimado para um tier.

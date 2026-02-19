@@ -15,8 +15,9 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+import concurrent.futures
+import copy
 import json
-import json as json_module
 import logging
 import os
 import re
@@ -33,7 +34,6 @@ import base64
 
 from src.cost_controller import CostController, BudgetExceededError
 from src.wallet_manager import InsufficientCreditsError
-from src.pipeline.zone_processor import should_use_zones, create_zone_plan, log_zone_plan  # NOVO: C5 zonas
 from src.config import (
     EXTRATOR_MODELS,
     AUDITOR_MODELS,
@@ -137,7 +137,7 @@ class FaseResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     latencia_ms: float = 0.0
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     sucesso: bool = True
     erro: Optional[str] = None
 
@@ -187,7 +187,7 @@ class PipelineResult:
     respostas_juizes_qa: list[dict] = field(default_factory=list)
     respostas_finais_qa: str = ""
     # Timestamps e estatísticas
-    timestamp_inicio: datetime = field(default_factory=datetime.now)
+    timestamp_inicio: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     timestamp_fim: Optional[datetime] = None
     total_tokens: int = 0
     total_latencia_ms: float = 0.0
@@ -733,6 +733,7 @@ REVISTO:"""
     def _aplicar_rlm(self, texto: str, tipo_fase: str) -> str:
         if tipo_fase not in ["auditoria", "relatoria"]:
             return texto
+        # Rough token estimate (actual ratio for Portuguese is ~3-5 chars/token)
         tokens = len(texto) // 4
         if tokens < 25000:
             logger.info(f"[RLM] {tipo_fase}: {tokens:,} < 25k → SKIP")
@@ -784,10 +785,9 @@ REVISTO:"""
         analysis_id: Optional[str] = None,
     ):
         # v4.0 FIX: deepcopy de TODAS as listas de modelos para thread-safety
-        import copy
-        self.extrator_models = list(extrator_models) if extrator_models else list(EXTRATOR_MODELS)
-        self.auditor_models = list(auditor_models) if auditor_models else list(AUDITOR_MODELS)
-        self.relator_models = list(relator_models) if relator_models else list(JUIZ_MODELS)
+        self.extrator_models = copy.deepcopy(extrator_models) if extrator_models else copy.deepcopy(EXTRATOR_MODELS)
+        self.auditor_models = copy.deepcopy(auditor_models) if auditor_models else copy.deepcopy(AUDITOR_MODELS)
+        self.relator_models = copy.deepcopy(relator_models) if relator_models else copy.deepcopy(JUIZ_MODELS)
         self.presidente_model = presidente_model or PRESIDENTE_MODEL
         self.agregador_model = agregador_model or AGREGADOR_MODEL
         self.chefe_model = chefe_model or CHEFE_MODEL
@@ -1422,6 +1422,7 @@ REVISTO:"""
         scanned_pages = documento.metadata.get("scanned_pages", {}) if documento.metadata else {}
         # Pré-carregar imagens em base64 para não reler ficheiros a cada extrator
         scanned_images_b64 = {}
+        _MAX_SCANNED_IMAGES = 50
         if scanned_pages:
             for page_num_str, img_path in scanned_pages.items():
                 page_num = int(page_num_str) if isinstance(page_num_str, str) else page_num_str
@@ -1430,6 +1431,11 @@ REVISTO:"""
                     img_bytes = img_file.read_bytes()
                     scanned_images_b64[page_num] = base64.b64encode(img_bytes).decode("utf-8")
                     logger.info(f"📸 Imagem página {page_num} carregada ({len(img_bytes):,} bytes)")
+            if len(scanned_images_b64) > _MAX_SCANNED_IMAGES:
+                logger.warning(f"Limiting scanned images from {len(scanned_images_b64)} to {_MAX_SCANNED_IMAGES} to manage memory")
+                # Keep only the first N pages (sorted by page number)
+                sorted_pages = sorted(scanned_images_b64.keys())[:_MAX_SCANNED_IMAGES]
+                scanned_images_b64 = {p: scanned_images_b64[p] for p in sorted_pages}
             logger.info(
                 f"📸 {len(scanned_images_b64)} imagem(ns) de páginas escaneadas prontas "
                 f"para envio a TODOS os extratores vision-capable"
@@ -1725,7 +1731,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
             items_json = [item.to_dict() for item in extractor_items]
             json_path = self._output_dir / f"fase1_extractor_{extractor_id}_items.json"
             with open(json_path, 'w', encoding='utf-8') as f:
-                json_module.dump(items_json, f, ensure_ascii=False, indent=2)
+                json.dump(items_json, f, ensure_ascii=False, indent=2)
 
             logger.info(f"✓ Extrator {extractor_id} completo: {len(extractor_items)} items totais")
 
@@ -1767,7 +1773,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                         if "Budget" in type(exc).__name__ or "Limit" in type(exc).__name__:
                             raise  # Re-raise budget/limit errors immediately
                         logger.error(f"[PARALELO] {eid} excepção: {exc}")
-            except TimeoutError:
+            except (TimeoutError, concurrent.futures.TimeoutError):
                 # v4.1: Continuar se ≥5 extractores terminaram (71%+)
                 timed_out = [eid for f, eid in futures.items() if not f.done()]
                 for f in futures:
@@ -1844,7 +1850,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
             document_meta=doc_meta,
             chunks=chunks,
             extraction_runs=extraction_runs,
-            evidence_items=[item for items in items_by_extractor.values() for item in items],
+            evidence_items=[item for items in items_filtered.values() for item in items],
             union_items=union_items,
             conflicts=[],  # Converter para Conflict objects se necessário
             coverage=None,  # Preencher se necessário
@@ -1859,12 +1865,12 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
         # 10. Guardar resultado unificado
         unified_json_path = self._output_dir / "fase1_unified_result.json"
         with open(unified_json_path, 'w', encoding='utf-8') as f:
-            json_module.dump(unified_result.to_dict(), f, ensure_ascii=False, indent=2)
+            json.dump(unified_result.to_dict(), f, ensure_ascii=False, indent=2)
 
         # Guardar relatório de cobertura
         coverage_path = self._output_dir / "fase1_coverage_report.json"
         with open(coverage_path, 'w', encoding='utf-8') as f:
-            json_module.dump(coverage_data, f, ensure_ascii=False, indent=2)
+            json.dump(coverage_data, f, ensure_ascii=False, indent=2)
 
         # 11. Criar bruto para compatibilidade
         # v5.2 fix H4: Usar role/modelo do próprio FaseResult (não index posicional)
@@ -1933,7 +1939,7 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
         logger.info(f"[JSON-WRITE] Escrevendo fase1_agregado_consolidado.json em: {agregado_json_path.absolute()}")
         try:
             with open(agregado_json_path, 'w', encoding='utf-8') as f:
-                json_module.dump(agregado_json, f, ensure_ascii=False, indent=2)
+                json.dump(agregado_json, f, ensure_ascii=False, indent=2)
             logger.info(f"✓ Agregado JSON guardado: {agregado_json_path.absolute()} ({len(union_items)} items, {len(unreadable_parts)} ilegíveis)")
         except Exception as e:
             logger.error(f"[JSON-WRITE-ERROR] Falha ao escrever fase1_agregado_consolidado.json: {e}")
@@ -2155,7 +2161,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
 
             # Extrair páginas do texto usando marcadores [Página X]
             import re
-            page_pattern = re.compile(r'\[Página\s*(\d+)\]\s*\n(.*?)(?=\[Página\s*\d+\]|\Z)', re.DOTALL | re.IGNORECASE)
+            page_pattern = re.compile(r'\[(?:Página|Pág[_\s]*)(\d+)\]\s*\n(.*?)(?=\[(?:Página|Pág[_\s]*)\d+\]|\Z)', re.DOTALL | re.IGNORECASE)
             matches = page_pattern.findall(documento.text)
             logger.info(f"=== DETETOR: {len(matches)} páginas extraídas do texto ===")
 
@@ -2197,7 +2203,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
 
                 if pages:
                     # Verificar cobertura de sinais pelos extratores
-                    extractor_outputs = {(r.role.replace("extrator_", "E").upper() if "extrator" in r.role else f"E{i+1}"): (r.conteudo or "") for i, r in enumerate(resultados)}
+                    extractor_outputs = {(r.role.replace("extrator_", "").upper() if "extrator" in r.role else f"E{i+1}"): (r.conteudo or "") for i, r in enumerate(resultados)}
                     signal_report = verificar_cobertura_sinais(pages, extractor_outputs)
                     logger.info("=== DETETOR: verificar_cobertura_sinais executado ===")
 
@@ -2205,7 +2211,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
                     signal_report_path = self._output_dir / "signals_coverage_report.json"
                     logger.info(f"=== DETETOR: A guardar em {signal_report_path} ===")
                     with open(signal_report_path, 'w', encoding='utf-8') as f:
-                        json_module.dump(signal_report, f, ensure_ascii=False, indent=2)
+                        json.dump(signal_report, f, ensure_ascii=False, indent=2)
                     logger.info(f"=== DETETOR: Relatório GUARDADO com sucesso em {signal_report_path} ===")
 
                     # Log de sinais não cobertos
@@ -2376,6 +2382,7 @@ Devolve o JSON completo no mesmo formato."""
                 modelo=model,
                 role=f"extrator_{extractor_id}",
                 conteudo=full_content,
+                # NOTE: tokens not tracked in batch extractor results (recorded by CostController instead)
                 tokens_usados=sum(r.get("tokens", 0) for r in extractor_json_results),
                 latencia_ms=0,
                 sucesso=True,
@@ -2389,7 +2396,7 @@ Devolve o JSON completo no mesmo formato."""
             # Guardar JSON para auditoria
             json_path = self._output_dir / f"fase1_extractor_{extractor_id}.json"
             with open(json_path, 'w', encoding='utf-8') as f:
-                json_module.dump(extractor_json_results, f, ensure_ascii=False, indent=2)
+                json.dump(extractor_json_results, f, ensure_ascii=False, indent=2)
 
         # Criar matriz de cobertura
         coverage = CoverageMatrix()
@@ -2414,7 +2421,7 @@ Devolve o JSON completo no mesmo formato."""
         # Guardar relatório de sinais
         signal_report_path = self._output_dir / "signals_coverage_report.json"
         with open(signal_report_path, 'w', encoding='utf-8') as f:
-            json_module.dump(signal_report, f, ensure_ascii=False, indent=2)
+            json.dump(signal_report, f, ensure_ascii=False, indent=2)
 
         # Log de sinais não cobertos
         if signal_report["uncovered_signals"]:
@@ -2766,7 +2773,7 @@ Consolida estas {n_auditores} auditorias numa única auditoria LOSSLESS.
             if agregado_json_path.exists():
                 try:
                     with open(agregado_json_path, encoding='utf-8') as f:
-                        agregado_json = json_module.load(f)
+                        agregado_json = json.load(f)
                     # Extrair union_items para o prompt
                     union_items = agregado_json.get("union_items", [])
                     # Criar versão compacta para o prompt (apenas campos essenciais)
@@ -2780,7 +2787,7 @@ Consolida estas {n_auditores} auditorias numa única auditoria LOSSLESS.
                             "start_char": item.get("source_spans", [{}])[0].get("start_char") if item.get("source_spans") else None,
                             "end_char": item.get("source_spans", [{}])[0].get("end_char") if item.get("source_spans") else None,
                         })
-                    union_items_json = json_module.dumps(items_compact, ensure_ascii=False, indent=2)
+                    union_items_json = json.dumps(items_compact, ensure_ascii=False, indent=2)
                     logger.info(f"[FASE2-UNIFIED] Carregados {len(union_items)} items estruturados da Fase 1")
                 except Exception as e:
                     logger.warning(f"Erro ao carregar agregado JSON: {e}")
@@ -2802,7 +2809,7 @@ Consolida estas {n_auditores} auditorias numa única auditoria LOSSLESS.
             if coverage_path.exists():
                 try:
                     with open(coverage_path, encoding='utf-8') as f:
-                        coverage_data = json_module.load(f)
+                        coverage_data = json.load(f)
                     coverage_info = f"""
 ## COBERTURA DA EXTRAÇÃO
 - Total chars: {coverage_data.get('total_chars', 0):,}
@@ -2915,7 +2922,7 @@ OUTPUT: Same JSON format as other auditors, plus include a "devils_advocate_conc
             json_path = self._output_dir / f"fase2_auditor_{i+1}.json"
             try:
                 with open(json_path, 'w', encoding='utf-8') as f:
-                    json_module.dump(report.to_dict(), f, ensure_ascii=False, indent=2)
+                    json.dump(report.to_dict(), f, ensure_ascii=False, indent=2)
                 logger.info(f"[JSON-WRITE] Auditor {auditor_id} JSON guardado: {json_path.absolute()}")
             except Exception as e:
                 logger.error(f"[JSON-WRITE-ERROR] Falha ao escrever auditor {auditor_id} JSON: {e}")
@@ -3035,7 +3042,7 @@ You are the final quality gate before the Judges."""
                     # Guardar JSON A5
                     a5_json_path = self._output_dir / "fase2_auditor_5_senior.json"
                     with open(a5_json_path, 'w', encoding='utf-8') as f:
-                        json_module.dump(a5_report.to_dict(), f, ensure_ascii=False, indent=2)
+                        json.dump(a5_report.to_dict(), f, ensure_ascii=False, indent=2)
 
                     logger.info(f"[ELITE] A5 Opus: {len(a5_report.findings)} findings")
                 else:
@@ -3052,7 +3059,7 @@ You are the final quality gate before the Judges."""
         self._reportar_progresso("fase2", 55, f"Consolidador consolidando (JSON): {self.chefe_model}")
 
         # Preparar JSON dos auditores para o Consolidador
-        auditors_json_str = json_module.dumps(
+        auditors_json_str = json.dumps(
             [r.to_dict() for r in audit_reports],
             ensure_ascii=False,
             indent=2
@@ -3118,7 +3125,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         logger.info(f"[JSON-WRITE] Escrevendo fase2_consolidador_consolidado.json em: {chefe_json_path.absolute()}")
         try:
             with open(chefe_json_path, 'w', encoding='utf-8') as f:
-                json_module.dump(chefe_report.to_dict(), f, ensure_ascii=False, indent=2)
+                json.dump(chefe_report.to_dict(), f, ensure_ascii=False, indent=2)
             logger.info(f"✓ Consolidador JSON guardado: {chefe_json_path.absolute()}")
         except Exception as e:
             logger.error(f"[JSON-WRITE-ERROR] Falha ao escrever fase2_consolidador_consolidado.json: {e}")
@@ -3140,7 +3147,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         # Guardar todos os reports JSON num ficheiro
         all_reports_path = self._output_dir / "fase2_all_audit_reports.json"
         with open(all_reports_path, 'w', encoding='utf-8') as f:
-            json_module.dump(
+            json.dump(
                 [r.to_dict() for r in audit_reports],
                 f, ensure_ascii=False, indent=2
             )
@@ -3299,7 +3306,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
             # Guardar JSON
             json_path = self._output_dir / f"fase3_relator_{i+1}.json"
             with open(json_path, 'w', encoding='utf-8') as f:
-                json_module.dump(opinion.to_dict(), f, ensure_ascii=False, indent=2)
+                json.dump(opinion.to_dict(), f, ensure_ascii=False, indent=2)
 
             # Guardar Markdown
             md_content = opinion.to_markdown()
@@ -3373,7 +3380,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         # Guardar todos os opinions JSON
         all_opinions_path = self._output_dir / "fase3_all_judge_opinions.json"
         with open(all_opinions_path, 'w', encoding='utf-8') as f:
-            json_module.dump(
+            json.dump(
                 [o.to_dict() for o in judge_opinions],
                 f, ensure_ascii=False, indent=2
             )
@@ -3493,7 +3500,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         # Guardar JSON (fonte de verdade da Fase 4)
         json_path = self._output_dir / "fase4_decisao_final.json"
         with open(json_path, 'w', encoding='utf-8') as f:
-            json_module.dump(decision.to_dict(), f, ensure_ascii=False, indent=2)
+            json.dump(decision.to_dict(), f, ensure_ascii=False, indent=2)
         logger.info(f"[JSON-WRITE] fase4_decisao_final.json guardado: {json_path.absolute()}")
 
         # Gerar e guardar Markdown
@@ -4068,9 +4075,9 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         timestamp_inicio = datetime.now(timezone.utc)
 
         # Defense-in-depth: sanitize filename to prevent prompt injection
-        import re as _re
+        # re.UNICODE ensures \w matches accented Portuguese characters (ã, ç, é, etc.)
         if hasattr(documento, 'filename') and documento.filename:
-            documento.filename = _re.sub(r'[^\w._\-\s]', '_', documento.filename)[:255]
+            documento.filename = re.sub(r'[^\w._\-\s\(\)]', '_', documento.filename, flags=re.UNICODE)[:255]
 
         # Parse e validação de perguntas
         perguntas = parse_perguntas(perguntas_raw)
@@ -4091,13 +4098,6 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         # NOVO: Guardar texto do documento para calculos de failover e max_tokens
         self._document_text = documento.text or ""
         logger.info(f"[DOCUMENTO] Tamanho: {len(self._document_text):,} chars")
-        # NOVO C5: Verificar se documento precisa processamento por zonas
-        if should_use_zones(self._document_text):
-            zone_plan = create_zone_plan(self._document_text, getattr(self, '_page_mapper', None))
-            log_zone_plan(zone_plan, self._output_dir)
-            logger.info(f"[ZONAS] Documento GRANDE detectado: {len(zone_plan.zones)} zonas planeadas")
-        else:
-            logger.info("[ZONAS] Documento dentro do limite — processamento normal")
         result = PipelineResult(
             run_id=run_id,
             documento=documento,
@@ -4580,8 +4580,10 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             logger.error(f"Erro de créditos no pipeline: {e}")
             result.sucesso = False
             result.erro = str(e)
+            self._documento = None  # Cleanup on error
             raise  # Re-raise budget/credit errors - must not be swallowed
         except KeyboardInterrupt:
+            self._documento = None  # Cleanup on interrupt
             raise
         except Exception as e:
             logger.error(f"Erro no pipeline: {e}")
@@ -4686,6 +4688,9 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
 
         # Guardar resultado completo
         self._guardar_resultado(result)
+
+        # Cleanup: release large document reference to avoid memory leak
+        self._documento = None
 
         return result
 

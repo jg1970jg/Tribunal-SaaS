@@ -21,10 +21,14 @@ from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 
-# Importar prompts maximizados
-from prompts_maximos import PROMPT_EXTRATOR_UNIVERSAL
-
 logger = logging.getLogger(__name__)
+
+# Importar prompts maximizados
+try:
+    from prompts_maximos import PROMPT_EXTRATOR_UNIVERSAL
+except ImportError:
+    PROMPT_EXTRATOR_UNIVERSAL = ""
+    logger.warning("prompts_maximos.py not found - using empty extractor prompt")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 

@@ -284,7 +284,7 @@ def carregar_documento_de_bytes(
     ext = Path(filename).suffix.lower()
 
     if ext == ".pdf" and use_pdf_safe:
-        file_hash = hashlib.md5(file_bytes, usedforsecurity=False).hexdigest()[:8]
+        file_hash = hashlib.sha256(file_bytes, usedforsecurity=False).hexdigest()[:16]
         stem = Path(filename).stem
         stem_safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in stem)
         out_dir_doc = out_dir / f"{stem_safe}_{file_hash}" if out_dir else None
@@ -649,6 +649,9 @@ def executar_analise(
         wallet_settlement = liquidar_creditos(analysis_id, custo_real_usd)
         if wallet_settlement and wallet_settlement.get("status") == "error":
             logger.error(f"[ENGINE] Falha na liquidação de créditos: {wallet_settlement}")
+            if resultado.metadata is None:
+                resultado.metadata = {}
+            resultado.metadata["settlement_warning"] = "Settlement failed - credits remain blocked"
     elif not resultado.sucesso:
         # Pipeline falhou — cancelar bloqueio, NÃO cobrar
         logger.warning(f"[ENGINE] Pipeline falhou — cancelando bloqueio (custo parcial: ${custo_real_usd:.4f})")

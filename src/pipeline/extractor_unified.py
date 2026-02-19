@@ -225,21 +225,24 @@ def _create_evidence_item(
     if not value and not raw_text:
         return None
 
-    # Offsets relativos ao chunk
-    rel_start = raw_item.get("offset_start", 0)
-    rel_end = raw_item.get("offset_end", rel_start + len(raw_text))
+    # Offsets relativos ao chunk (-1 sentinel = LLM omitted offsets)
+    rel_start = raw_item.get("offset_start", -1)
+    rel_end = raw_item.get("offset_end", -1)
 
-    # Validar offsets
-    if rel_start < 0:
-        rel_start = 0
-    if rel_end > len(chunk.text):
-        rel_end = len(chunk.text)
-    if rel_end < rel_start:
-        rel_end = rel_start + len(raw_text)
+    if rel_start >= 0 and rel_end >= 0:
+        # Validar offsets
+        if rel_end > len(chunk.text):
+            rel_end = len(chunk.text)
+        if rel_end < rel_start:
+            rel_end = rel_start + len(raw_text)
 
-    # Converter para offsets absolutos
-    abs_start = chunk.start_char + rel_start
-    abs_end = chunk.start_char + rel_end
+        # Converter para offsets absolutos
+        abs_start = chunk.start_char + rel_start
+        abs_end = chunk.start_char + rel_end
+    else:
+        # LLM omitted offsets: use full chunk range (unknown position within chunk)
+        abs_start = chunk.start_char
+        abs_end = chunk.end_char
 
     # Determinar page_num se mapper disponível
     page_num = None
@@ -448,9 +451,13 @@ def validate_and_filter_extractors(
                 sources = all_hashes.get(h, set())
                 if len(sources) <= 1:
                     # Facto exclusivo — manter com flag
+                    # Note: context reassignment is intentional; strings are immutable so
+                    # this creates a new string object. The item itself is only in this
+                    # single-source group, so the mutation is safe.
                     item.context = (item.context or "") + " [FONTE_UNICA — VERIFICACAO_OBRIGATORIA]"
                     exclusive_items.append(item)
 
+            exclusive_count = len(exclusive_items)
             if exclusive_items:
                 filtered[eid] = exclusive_items
                 logger.warning(
@@ -458,6 +465,9 @@ def validate_and_filter_extractors(
                     f"MANTIDO PARCIAL: {len(exclusive_items)} factos exclusivos preservados"
                 )
             else:
+                logger.info(
+                    f"Extractor {eid} discarded: {len(items)} items, {exclusive_count} exclusive (below threshold)"
+                )
                 logger.warning(
                     f"[SMART-DISCARD] {eid}: {counts[eid]} items (< threshold {threshold:.0f}) — "
                     f"DESCARTADO: 0 factos exclusivos"

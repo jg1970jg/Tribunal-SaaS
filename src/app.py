@@ -11,6 +11,7 @@ import sys
 import json
 from datetime import datetime, timezone
 import io
+import html as html_mod  # For escaping user content in HTML
 import shutil  # ← NOVO: Para apagar pastas
 
 # Adicionar diretório raiz ao path
@@ -60,7 +61,7 @@ from src.utils.sanitize import sanitize_run_id
 logger = logging.getLogger(__name__)
 
 
-def carregar_resultado(run_id: str) -> PipelineResult:
+def carregar_resultado(run_id: str) -> PipelineResult | None:
     """Carrega resultado de análise antiga do histórico."""
     from src.pipeline.processor import PipelineResult, FaseResult
 
@@ -609,9 +610,10 @@ def pagina_analisar_documento():
                         else:
                             extra_info = " | <span style='color:green;'>✅ Todas as páginas OK</span>"
 
+                    safe_filename = html_mod.escape(doc.filename)
                     st.markdown(f"""
                     <div class="doc-card">
-                        ✅ <strong>{doc.filename}</strong><br>
+                        ✅ <strong>{safe_filename}</strong><br>
                         <small>{doc.num_chars:,} caracteres | {doc.num_words:,} palavras | {doc.num_pages} página(s){extra_info}</small>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1356,12 +1358,16 @@ def renderizar_resultado(resultado: PipelineResult):
                 mensagem = getattr(v, 'mensagem', '') or ''
                 aplicabilidade = getattr(v, 'aplicabilidade', '⚠') or '⚠'
 
+                safe_texto = html_mod.escape(texto_norm)
+                safe_fonte = html_mod.escape(fonte)
+                safe_aplicabilidade = html_mod.escape(aplicabilidade)
+                safe_mensagem = html_mod.escape(mensagem)
                 st.markdown(
                     f"""
                     <div style="padding: 12px; margin: 8px 0; border-radius: 5px; background-color: {cor_fundo}; border-left: 4px solid {cor_borda};">
-                        <strong style="color: #333;">{simbolo} {texto_norm}</strong><br>
-                        <small style="color: #555;">Fonte: {fonte} | Aplicabilidade: {aplicabilidade}</small><br>
-                        <small style="color: #666;">{mensagem}</small>
+                        <strong style="color: #333;">{simbolo} {safe_texto}</strong><br>
+                        <small style="color: #555;">Fonte: {safe_fonte} | Aplicabilidade: {safe_aplicabilidade}</small><br>
+                        <small style="color: #666;">{safe_mensagem}</small>
                     </div>
                     """,
                     unsafe_allow_html=True

@@ -138,7 +138,7 @@ def selecao_modelos_premium():
     custo_total_premium = custo_chefe + custo_pres
 
     # Custo base (outros modelos: auditores, juízes, extratores)
-    custo_base = 0.30  # estimativa conservadora
+    custo_base = 5.00  # approximate base cost for standard tier (extractors + auditors + reporters)
 
     custo_total = custo_base + custo_total_premium
 

@@ -64,7 +64,7 @@ class DocumentMeta:
     file_type: str  # ".pdf", ".txt", ".docx"
     total_chars: int
     total_pages: Optional[int] = None
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     checksum: Optional[str] = None  # SHA256 do conteúdo
 
     def __post_init__(self):
@@ -150,9 +150,9 @@ class SourceSpan:
 
     def __post_init__(self):
         if self.start_char < 0:
-            raise ValueError(f"start_char não pode ser negativo: {self.start_char}")
+            raise ValueError(f"Invalid span: start_char={self.start_char}, end_char={self.end_char}")
         if self.end_char < self.start_char:
-            raise ValueError(f"end_char ({self.end_char}) < start_char ({self.start_char})")
+            raise ValueError(f"Invalid span: start_char={self.start_char}, end_char={self.end_char}")
 
     @property
     def span_key(self) -> str:
@@ -246,7 +246,7 @@ class ExtractionRun:
     chunks_failed: int = 0
     items_extracted: int = 0
     errors: list[str] = field(default_factory=list)
-    started_at: datetime = field(default_factory=datetime.now)
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: Optional[datetime] = None
     duration_ms: float = 0.0
 
@@ -444,7 +444,7 @@ class UnifiedExtractionResult:
     # Status geral
     status: ExtractionStatus = ExtractionStatus.PENDING
     errors: list[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
         if not self.result_id:

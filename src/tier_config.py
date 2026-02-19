@@ -240,7 +240,9 @@ def calculate_tier_cost(tier: TierLevel, document_tokens: int = 0) -> dict[str, 
     # Margem de lucro: 100% (custo × 2)
     custo_cliente = total_real_cost * 2
 
-    # Margem de segurança: +50% para bloqueio (alinhado com wallet_manager.SAFETY_MARGIN=1.50)
+    # NOTE: This 'bloqueio' already includes the 50% safety margin.
+    # Do NOT pass this to wallet_manager.block_credits() which applies its own SAFETY_MARGIN.
+    # Pass 'custo_cliente' instead.
     bloqueio = custo_cliente * 1.50
 
     return {
@@ -318,7 +320,7 @@ def validate_tier_selection(selection: dict[str, str]) -> bool:
     """
     Valida que a seleção de tiers por fase é válida.
     """
-    required_phases = ["extraction", "audit", "judgment", "decision"]
+    required_phases = ["extraction", "audit", "judgment", "president"]
     for phase in required_phases:
         if phase not in selection:
             return False
@@ -406,6 +408,6 @@ if __name__ == "__main__":
         print(f"{config['icon']} {config['label'].upper()}")
         print(f"  Custo Real: ${costs['custo_real']:.2f}")
         print(f"  Custo Cliente: ${costs['custo_cliente']:.2f}")
-        print(f"  Bloqueio (25%): ${costs['bloqueio']:.2f}")
+        print(f"  Bloqueio (50%): ${costs['bloqueio']:.2f}")
         print(f"  Size Multiplier: {costs['size_multiplier']}")
         print()

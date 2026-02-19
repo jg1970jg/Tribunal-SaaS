@@ -359,8 +359,8 @@ async def get_current_user(
             else:
                 del _token_cache[token_hash]
 
-        # Limpar cache expirado periodicamente ou se excede tamanho máximo
-        if len(_token_cache) > TOKEN_CACHE_MAX_SIZE or len(_token_cache) > TOKEN_CACHE_MAX_SIZE // 2:
+        # Limpar cache expirado quando excede tamanho máximo
+        if len(_token_cache) > TOKEN_CACHE_MAX_SIZE:
             expired_keys = [k for k, v in _token_cache.items() if now >= v["expires"]]
             for k in expired_keys:
                 del _token_cache[k]

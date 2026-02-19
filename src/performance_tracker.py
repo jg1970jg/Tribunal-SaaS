@@ -123,8 +123,11 @@ class PerformanceTracker:
     def get_instance(cls, supabase_client=None):
         """Retorna instancia singleton."""
         with cls._lock:
-            if cls._instance is None and supabase_client is not None:
-                cls._instance = cls(supabase_client)
+            if cls._instance is None:
+                if supabase_client is not None:
+                    cls._instance = cls(supabase_client)
+                else:
+                    logger.warning("PerformanceTracker.get_instance() called without supabase_client before initialization — returning None")
             return cls._instance
 
     # ============================================================

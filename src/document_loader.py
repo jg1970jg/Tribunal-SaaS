@@ -4,6 +4,7 @@ Extrai texto real dos ficheiros para análise.
 """
 
 import logging
+import threading
 from pathlib import Path
 from typing import Optional, Any, Union
 from dataclasses import dataclass, field
@@ -101,10 +102,22 @@ class DocumentLoader:
             path = Path(file_path)
             name = path.name
             ext = path.suffix.lower()
+            # Check file size BEFORE reading entire file into memory
+            file_size = path.stat().st_size
+            if file_size > MAX_FILE_SIZE_BYTES:
+                logger.error(f"Ficheiro demasiado grande: {name} ({file_size} bytes, max={MAX_FILE_SIZE_BYTES})")
+                self._stats["failed"] += 1
+                return DocumentContent(
+                    filename=name,
+                    extension=ext,
+                    text="",
+                    success=False,
+                    error=f"Ficheiro demasiado grande ({file_size / 1024 / 1024:.1f}MB). Máximo: {MAX_FILE_SIZE_BYTES / 1024 / 1024:.0f}MB",
+                )
             file_bytes = path.read_bytes()
             file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-        # Verificar tamanho do ficheiro
+        # Verificar tamanho do ficheiro (for BytesIO paths)
         if len(file_bytes) > MAX_FILE_SIZE_BYTES:
             logger.error(f"Ficheiro demasiado grande: {name} ({len(file_bytes)} bytes, max={MAX_FILE_SIZE_BYTES})")
             self._stats["failed"] += 1
@@ -382,6 +395,8 @@ class DocumentLoader:
             try:
                 text = file_bytes.decode(encoding)
                 used_encoding = encoding
+                if encoding != "utf-8":
+                    logger.warning(f"File decoded with {encoding} fallback (not UTF-8). Content may be garbled if actual encoding differs.")
                 break
             except UnicodeDecodeError:
                 continue
@@ -538,13 +553,16 @@ class DocumentLoader:
 
 # Instância global
 _global_loader: Optional[DocumentLoader] = None
+_loader_lock = threading.Lock()
 
 
 def get_document_loader() -> DocumentLoader:
     """Retorna o carregador de documentos global."""
     global _global_loader
     if _global_loader is None:
-        _global_loader = DocumentLoader()
+        with _loader_lock:
+            if _global_loader is None:
+                _global_loader = DocumentLoader()
     return _global_loader
 
 

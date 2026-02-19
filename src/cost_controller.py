@@ -188,8 +188,12 @@ class DynamicPricing:
         """
         model_clean = model.lower().strip()
 
+        # FIX: Read cache validity under lock to avoid TOCTOU race
+        with cls._cache_lock:
+            cache_valid = cls._is_cache_valid()
+
         # 1. Cache válido
-        if cls._is_cache_valid():
+        if cache_valid:
             price = cls._lookup_in_cache(model_clean)
             if price:
                 result = {**price, "fonte": "openrouter_live"}
@@ -197,7 +201,7 @@ class DynamicPricing:
                 return result
 
         # 2. Cache expirado — tentar refresh
-        if not cls._is_cache_valid():
+        if not cache_valid:
             fetched = cls.fetch_openrouter_prices()
             if fetched:
                 price = cls._lookup_in_cache(model_clean)
@@ -247,7 +251,8 @@ class DynamicPricing:
 
             # Partial match — pick the best match, preferring:
             # 1. key that is a prefix of model_clean (or vice versa)
-            # 2. Shortest length difference
+            # 2. Shortest length difference (max 4 chars apart to avoid
+            #    "gpt-5" matching "gpt-5-nano")
             best_key = None
             best_len_diff = float("inf")
             for key in cls._cache:
@@ -256,7 +261,7 @@ class DynamicPricing:
                 model_name = model_clean.split("/")[-1] if "/" in model_clean else model_clean
                 if key_name.startswith(model_name) or model_name.startswith(key_name):
                     diff = abs(len(key) - len(model_clean))
-                    if diff < best_len_diff:
+                    if diff < 5 and diff < best_len_diff:
                         best_len_diff = diff
                         best_key = key
             if best_key is not None:
@@ -272,6 +277,7 @@ class DynamicPricing:
 
         # Partial match — pick closest-length key to avoid e.g.
         # "gpt-4o" incorrectly matching "gpt-4o-mini" first.
+        # Only accept matches where length difference < 5 chars.
         best_key = None
         best_len_diff = float("inf")
         for key in HARDCODED_PRICING:
@@ -279,7 +285,7 @@ class DynamicPricing:
                 continue
             if key in model_clean or model_clean in key:
                 diff = abs(len(key) - len(model_clean))
-                if diff < best_len_diff:
+                if diff < 5 and diff < best_len_diff:
                     best_len_diff = diff
                     best_key = key
         if best_key is not None:

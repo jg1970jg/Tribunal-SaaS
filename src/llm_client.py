@@ -362,11 +362,14 @@ def supports_temperature(model_name: str) -> bool:
     """
     clean_name = model_name.replace("openai/", "").lower()
     for no_temp_model in OPENAI_MODELS_NO_TEMPERATURE:
-        if no_temp_model.lower() in clean_name:
+        ntm = no_temp_model.lower()
+        if clean_name == ntm or clean_name.startswith(ntm + "-"):
             return False
     # v4.0: Check reasoning models from other providers
+    model_lower = model_name.lower()
     for reasoning_model in REASONING_MODELS_NO_TEMPERATURE:
-        if reasoning_model.lower() in model_name.lower():
+        rm = reasoning_model.lower()
+        if model_lower == rm or model_lower.startswith(rm + "-"):
             return False
     return True
 
@@ -930,7 +933,8 @@ class OpenAIClient:
 
     def get_stats(self) -> dict[str, Any]:
         """Retorna estatísticas de uso."""
-        stats = self._stats.copy()
+        with self._stats_lock:
+            stats = self._stats.copy()
         if stats["successful_calls"] > 0:
             stats["avg_latency_ms"] = stats["total_latency_ms"] / stats["successful_calls"]
             stats["avg_tokens"] = stats["total_tokens"] / stats["successful_calls"]
@@ -1274,7 +1278,8 @@ class OpenRouterClient:
 
     def get_stats(self) -> dict[str, Any]:
         """Retorna estatísticas de uso."""
-        stats = self._stats.copy()
+        with self._stats_lock:
+            stats = self._stats.copy()
         if stats["successful_calls"] > 0:
             stats["avg_latency_ms"] = stats["total_latency_ms"] / stats["successful_calls"]
             stats["avg_tokens"] = stats["total_tokens"] / stats["successful_calls"]
@@ -1326,6 +1331,7 @@ class UnifiedLLMClient:
         self._openai_circuit_open = False
         self._openai_circuit_reason = ""
         self._openai_circuit_opened_at = None
+        self._circuit_lock = threading.Lock()  # FIX: protect circuit breaker state
 
         # Clientes
         self.openai_client = OpenAIClient(
@@ -1454,17 +1460,21 @@ class UnifiedLLMClient:
 
         if use_openai_direct:
             # FIX 2026-02-19: Circuit breaker auto-reset após 5 minutos
-            if self._openai_circuit_open and self._openai_circuit_opened_at:
-                if (datetime.now(timezone.utc) - self._openai_circuit_opened_at).total_seconds() > 300:
-                    self._openai_circuit_open = False
-                    self._openai_circuit_reason = ""
-                    logger.info("[CIRCUIT-BREAKER] Auto-reset após 5 minutos")
+            with self._circuit_lock:
+                if self._openai_circuit_open and self._openai_circuit_opened_at:
+                    if (datetime.now(timezone.utc) - self._openai_circuit_opened_at).total_seconds() > 300:
+                        self._openai_circuit_open = False
+                        self._openai_circuit_reason = ""
+                        logger.info("[CIRCUIT-BREAKER] Auto-reset após 5 minutos")
 
-            # FIX 2026-02-14: Circuit breaker — skip OpenAI se saldo esgotado
-            if self._openai_circuit_open:
+                # FIX 2026-02-14: Circuit breaker — skip OpenAI se saldo esgotado
+                circuit_open = self._openai_circuit_open
+                circuit_reason = self._openai_circuit_reason
+
+            if circuit_open:
                 logger.info(
                     f"⚡ CIRCUIT BREAKER: Skip OpenAI → directo OpenRouter "
-                    f"({self._openai_circuit_reason}) | modelo={model}"
+                    f"({circuit_reason}) | modelo={model}"
                 )
                 response_fallback = self.openrouter_client.chat(
                     model=model,
@@ -1516,9 +1526,10 @@ class UnifiedLLMClient:
             # FIX 2026-02-14: Detectar insufficient_quota → activar circuit breaker
             error_str = str(response.error or "").lower()
             if "insufficient_quota" in error_str or "exceeded your current quota" in error_str:
-                self._openai_circuit_open = True
-                self._openai_circuit_reason = "insufficient_quota"
-                self._openai_circuit_opened_at = datetime.now(timezone.utc)
+                with self._circuit_lock:
+                    self._openai_circuit_open = True
+                    self._openai_circuit_reason = "insufficient_quota"
+                    self._openai_circuit_opened_at = datetime.now(timezone.utc)
                 logger.warning(
                     "🔴 CIRCUIT BREAKER ACTIVADO: OpenAI saldo esgotado! "
                     "Todas as chamadas seguintes vão directo para OpenRouter."

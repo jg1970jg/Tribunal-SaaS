@@ -5,7 +5,7 @@ Implementa o sistema completo de:
   - Bloqueio de créditos ANTES do processamento
   - Settlement (ajuste) APÓS processamento
   - Devolução de diferença ao cliente
-  - Margem de segurança de 25%
+  - Margem de segurança de 50%
 
 NOTA: Usa tabela `profiles` (NÃO `users`) para credits_balance/credits_blocked.
 """
@@ -441,6 +441,9 @@ class WalletManager:
         custo_cliente = cost_real_usd * markup
 
         try:
+            # INVARIANT: debit reduces 'total' (credits_balance). 'blocked' (credits_blocked)
+            # is handled separately by cancel_block(). The available = total - blocked
+            # relationship is maintained.
             balance = self.get_balance(user_id)
             saldo_antes = balance["total"]
 
@@ -639,7 +642,7 @@ if __name__ == "__main__":
     print(f"  $4.02 = {usd_to_credits(4.02)} créditos")
     print()
 
-    print("Bloqueio com margem 25%:")
+    print("Bloqueio com margem 50%:")
     estimated = 3.52
     blocked = estimated * SAFETY_MARGIN
     print(f"  Estimado: ${estimated:.2f}")

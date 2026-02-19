@@ -72,7 +72,7 @@ class RespostaPergunta:
     erro: Optional[str] = None
 
     # ← NOVO: Documentos anexados
-    documentos_anexados: list[str] = None
+    documentos_anexados: list[str] | None = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -245,13 +245,13 @@ def carregar_documentos_anexados(run_id: str, output_dir: Path) -> dict[str, str
 
 def estimar_custo(tokens: int, modelo_mix: str = "mixed") -> float:
     """Estima custo baseado em tokens."""
-    # Custo médio por 1K tokens
+    # Approximate blended rate (input+output) for cost estimation
     if modelo_mix == "premium":
-        return tokens * 0.00001  # $0.01 por 1K
+        return tokens * 0.00005  # ~$50/M tokens avg for premium models
     elif modelo_mix == "economico":
-        return tokens * 0.000001  # $0.001 por 1K
+        return tokens * 0.000005  # ~$5/M tokens
     else:
-        return tokens * 0.00001  # Mixed
+        return tokens * 0.00002  # ~$20/M tokens blended
 
 
 # ═══════════════════════════════════════════════════════════════════════════

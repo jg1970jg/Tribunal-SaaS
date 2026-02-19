@@ -19,7 +19,7 @@ CHANGELOG:
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from enum import Enum
 
@@ -207,7 +207,7 @@ class AuditFinding:
             claim=data.get("claim", ""),
             finding_type=FindingType(data.get("finding_type", "facto")),
             severity=Severity(data.get("severity", "medio")),
-            citations=[Citation.from_dict(c) for c in data.get("citations", [])],
+            citations=[Citation.from_dict(c) for c in data.get("citations", []) if isinstance(c, (dict, str))],
             evidence_item_ids=data.get("evidence_item_ids", []),
             conflicts=data.get("conflicts", []),
             notes=data.get("notes", ""),
@@ -258,7 +258,7 @@ class AuditReport:
     open_questions: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
         if isinstance(self.coverage_check, dict):
@@ -490,7 +490,7 @@ class JudgeOpinion:
     qa_responses: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict:
         return {
@@ -644,7 +644,7 @@ class FinalDecision:
     auditors_consulted: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     output_markdown: str = ""
 
     def __post_init__(self):
@@ -897,7 +897,7 @@ class ConsolidatedFinding:
             finding_type=FindingType(data.get("finding_type", "facto")),
             severity=Severity(data.get("severity", "medio")),
             sources=data.get("sources", []),
-            citations=[Citation.from_dict(c) for c in data.get("citations", [])],
+            citations=[Citation.from_dict(c) for c in data.get("citations", []) if isinstance(c, (dict, str))],
             consensus_level=data.get("consensus_level", "unico"), notes=data.get("notes", ""),
         )
 
@@ -932,7 +932,7 @@ class ChefeConsolidatedReport:
     open_questions: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
         if isinstance(self.coverage_check, dict):

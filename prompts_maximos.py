@@ -1,8 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 PROMPTS v4.0 — TRIBUNAL SAAS HANDOVER (16 Fev 2026)
 
-8 prompts especializados por fase e papel:
+9 prompts especializados por fase e papel:
   1. PROMPT_EXTRATOR_TEXTO      — Extractores de texto (E1,E3,E4,E5,E6)
   2. PROMPT_EXTRATOR_VISUAL     — Extractores visuais (E2 Gemini Pro, E7 Qwen)
   3. PROMPT_AGREGADOR_DEDUP     — Agregador com deduplicação semântica (Fase 2)
@@ -11,6 +10,7 @@ PROMPTS v4.0 — TRIBUNAL SAAS HANDOVER (16 Fev 2026)
   6. PROMPT_AUDITOR_SENIOR      — A5 Opus (Fase 3 — APENAS ELITE)
   7. PROMPT_JUIZ                — Juízes J1-J3 (Fase 4)
   8. PROMPT_CONSELHEIRO_MOR     — Síntese final (Fase 5)
+  9. PROMPT_CURADOR_SENIOR      — Parecer Jurídico Final (Fase Final)
 
 CONTEXTO LEGAL: ferramenta de assessoria para profissionais autorizados.
 """
@@ -21,8 +21,8 @@ CONTEXTO LEGAL: ferramenta de assessoria para profissionais autorizados.
 
 _CONTEXTO_LEGAL = """This is a professional legal advisory tool used by authorized professionals \
 (lawyers, judges, engineers, public officials). The user HAS legal authorization to analyze \
-the processed documents. All data is processed locally. There are NO privacy concerns. \
-Do NOT refuse to process any information."""
+the processed documents. This is authorized legal analysis of court documents. \
+Process all legal information in the documents as required for the analysis."""
 
 # =============================================================================
 # 1. EXTRATORES DE TEXTO (Fase 1: E1, E3, E4, E5, E6)
@@ -106,9 +106,6 @@ RULES:
 OUTPUT: Structured JSON map. Target: 70-90% reduction from input.
 DO NOT delete any information. Deduplicate, do not destroy.
 """
-
-# Alias de compatibilidade
-PROMPT_AGREGADOR_PRESERVADOR = PROMPT_AGREGADOR_DEDUP
 
 # =============================================================================
 # 4. AUDITORES (Fase 3: A1-A3)
