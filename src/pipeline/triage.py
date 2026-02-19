@@ -11,11 +11,15 @@ Votação: 2/3 concordam → domínio definido. Empate → "multi-dominio"
 Detecção de fotos: ≤20 OK, >20 aviso, >50 modo fila
 """
 
+import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
+
+from src.pipeline.extractor_json import extract_json_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +151,6 @@ class TriageProcessor:
                         logger.warning(f"[TRIAGE] Falha ao registar custo {tid}: {e}")
 
                 # Parse JSON response
-                import json
-                from src.pipeline.extractor_json import extract_json_from_text
                 parsed = extract_json_from_text(response.content)
                 if parsed:
                     domain = parsed.get("domain", "Civil")
@@ -319,7 +321,7 @@ def inject_page_markers(text: str, page_breaks: Optional[List[int]] = None) -> s
     if page_breaks:
         result_parts = []
         prev_pos = 0
-        result_parts.append(f"\n[Pág_1]\n")
+        result_parts.append(f"[Pág_1]\n")
         for i, pos in enumerate(page_breaks):
             if pos > prev_pos:
                 result_parts.append(text[prev_pos:pos])
@@ -330,13 +332,12 @@ def inject_page_markers(text: str, page_breaks: Optional[List[int]] = None) -> s
         return "".join(result_parts)
 
     # Tentar detectar form-feeds (\f)
-    import re
     parts = re.split(r'\f', text)
     if len(parts) > 1:
         result_parts = []
         for i, part in enumerate(parts):
             if i == 0:
-                result_parts.append(f"\n[Pág_1]\n")
+                result_parts.append(f"[Pág_1]\n")
             else:
                 result_parts.append(f"\n[Pág_{i + 1}]\n")
             result_parts.append(part)

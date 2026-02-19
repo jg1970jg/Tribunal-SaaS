@@ -308,12 +308,6 @@ class PDFSafeLoader:
             )
 
         # Criar resultado com estatísticas finais
-        # Contar status FINAL (após OCR)
-        pages_ok_final = sum(1 for p in pages if p.status_final == "OK")
-        pages_reparada = sum(1 for p in pages if p.status_final == "REPARADA")
-        pages_suspeita_final = sum(1 for p in pages if p.status_final == "SUSPEITA")
-        pages_sem_texto_final = sum(1 for p in pages if p.status_final == "SEM_TEXTO")
-
         result = PDFSafeResult(
             filename=filename,
             total_pages=total_pages,

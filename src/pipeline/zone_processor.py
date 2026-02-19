@@ -186,7 +186,7 @@ def create_zone_plan(
                 zone.end_page = page_mapper.get_page(zone.end_char - 1)
             except Exception:
                 pass
-        plan.total_pages = zone.end_page if zones else None
+        plan.total_pages = zones[-1].end_page if zones else None
     
     logger.info(
         f"[ZONAS] Plano: {len(zones)} zonas para {total_chars:,} chars "

@@ -149,6 +149,9 @@ from prompts_maximos import (
 from src.utils.perguntas import parse_perguntas, validar_perguntas
 from src.utils.metadata_manager import guardar_metadata, gerar_titulo_automatico
 
+# Reasoning models that don't support system_prompt or temperature
+REASONING_MODELS = {"openai/o1-pro", "openai/o1", "openai/o3-pro", "openai/o3-mini", "deepseek/deepseek-reasoner", "deepseek/deepseek-r1"}
+
 logger = logging.getLogger(__name__)
 
 
@@ -933,7 +936,7 @@ REVISTO:"""
         )
 
         # Failover automatico: se documento grande, trocar modelo
-        doc_chars = len(self._document_text) if hasattr(self, '_document_text') and self._document_text else 0
+        doc_chars = len(self._document_text) if self._document_text else 0
         modelo_final = selecionar_modelo_com_failover(model, doc_chars, role_name)
 
         # max_tokens dinamico se nao especificado
@@ -973,9 +976,6 @@ REVISTO:"""
 
         # === CHAMADA LLM ===
         effective_temp = temperature
-
-        # NOTE: Keep in sync with reasoning model list. These models don't support system_prompt or temperature.
-        REASONING_MODELS = {"openai/o1-pro", "openai/o1", "openai/o3-pro", "openai/o3-mini", "deepseek/deepseek-reasoner", "deepseek/deepseek-r1"}
 
         # FIX C2 v2: Guardar prompt original para não acumular system_instructions em retries
         _original_prompt = prompt
@@ -1229,24 +1229,24 @@ REVISTO:"""
             return "CONSOLIDADOR"
         return role_name[:20]
 
-    def _dividir_documento_chunks(self, texto: str, chunk_size: int = 50000, overlap: int = 2500) -> List[str]:
+    def _dividir_documento_chunks(self, texto: str, chunk_size: int = None, overlap: int = None) -> List[str]:
         """
         Divide documento grande em chunks com overlap para processamento.
         VERSÃO LEGACY - retorna apenas strings.
 
         Args:
             texto: Texto completo do documento
-            chunk_size: Tamanho máximo de cada chunk em caracteres (default 50k)
-            overlap: Número de caracteres para sobrepor entre chunks (default 2.5k)
+            chunk_size: Tamanho máximo de cada chunk em caracteres (default: config)
+            overlap: Número de caracteres para sobrepor entre chunks (default: config)
 
         Returns:
             Lista de chunks (strings)
         """
         from src.config import CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS
 
-        # Usar valores do config (preservar parâmetros se fornecidos)
-        chunk_size = chunk_size or CHUNK_SIZE_CHARS
-        overlap = overlap or CHUNK_OVERLAP_CHARS
+        # Usar valores do config se não especificados (explicit None check to allow 0)
+        chunk_size = chunk_size if chunk_size is not None else CHUNK_SIZE_CHARS
+        overlap = overlap if overlap is not None else CHUNK_OVERLAP_CHARS
 
         # Se documento é pequeno, não dividir
         if len(texto) <= chunk_size:
@@ -1303,12 +1303,13 @@ REVISTO:"""
         from src.config import CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS
         from src.pipeline.schema_unified import Chunk, ExtractionMethod
 
-        # Usar valores do config se não especificados
-        chunk_size = chunk_size or CHUNK_SIZE_CHARS
-        overlap = overlap or CHUNK_OVERLAP_CHARS
+        # Usar valores do config se não especificados (explicit None check to allow 0)
+        chunk_size = chunk_size if chunk_size is not None else CHUNK_SIZE_CHARS
+        overlap = overlap if overlap is not None else CHUNK_OVERLAP_CHARS
 
         total_chars = len(texto)
         step = chunk_size - overlap  # 47500 com defaults
+        step = max(1, step)  # Guard against infinite loop if overlap >= chunk_size
 
         # Calcular número total de chunks
         if total_chars <= chunk_size:
@@ -2230,7 +2231,7 @@ CRÍTICO: Preservar TODOS os dados numéricos, datas, valores e referências de 
 
                 if pages:
                     # Verificar cobertura de sinais pelos extratores
-                    extractor_outputs = {f"E{i+1}": (r.conteudo or "") for i, r in enumerate(resultados)}
+                    extractor_outputs = {(r.role.replace("extrator_", "E").upper() if "extrator" in r.role else f"E{i+1}"): (r.conteudo or "") for i, r in enumerate(resultados)}
                     signal_report = verificar_cobertura_sinais(pages, extractor_outputs)
                     logger.info(f"=== DETETOR: verificar_cobertura_sinais executado ===")
 
@@ -3217,7 +3218,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
                 logger.info(
                     f"[CONSENSUS] Completo: "
                     f"Citations {consensus_result['citation_validation']['valid']}/{consensus_result['citation_validation']['total']} válidas | "
-                    f"Fases activas: A={'SIM'} B={'SIM' if consensus_result['phases_active']['B'] else 'NÃO'} C={'SIM' if consensus_result['phases_active']['C'] else 'NÃO'}"
+                    f"Fases activas: A={'SIM' if consensus_result['phases_active'].get('A', True) else 'NÃO'} B={'SIM' if consensus_result['phases_active']['B'] else 'NÃO'} C={'SIM' if consensus_result['phases_active']['C'] else 'NÃO'}"
                 )
             else:
                 logger.warning("[CONSENSUS] Dados insuficientes para consensus engine (sem texto canónico ou page map)")
@@ -3451,7 +3452,7 @@ CRITICAL: Respond with ONLY the JSON object. Do NOT include any text, explanatio
         if perguntas:
             perguntas_fmt = "\n".join([f"{i+1}. {p}" for i, p in enumerate(perguntas)])
             respostas_fmt = "\n\n".join([
-                f"### Relator {r['juiz']} ({r['modelo']}):\n{r.get('opinion', {})}"
+                f"### Relator {r['juiz']} ({r['modelo']}):\n{r.get('resposta', '')}"
                 for r in respostas_qa if r.get('opinion')
             ])
             bloco_qa = f"""
@@ -4109,7 +4110,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         # Defense-in-depth: sanitize filename to prevent prompt injection
         import re as _re
         if hasattr(documento, 'filename') and documento.filename:
-            documento.filename = _re.sub(r'[^a-zA-Z0-9._\-\s]', '_', documento.filename)[:255]
+            documento.filename = _re.sub(r'[^\w._\-\s]', '_', documento.filename)[:255]
 
         # Parse e validação de perguntas
         perguntas = parse_perguntas(perguntas_raw)
@@ -4190,8 +4191,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         except Exception as e:
             logger.warning(f"[PERF] PerformanceTracker indisponivel: {e}")
 
-        # Guardar run_id e tier para o performance tracker
-        self._run_id = run_id
+        # Guardar tier para o performance tracker
         self._tier = getattr(self, '_tier', 'bronze')
 
         # Inicializar variáveis usadas após o try/except principal

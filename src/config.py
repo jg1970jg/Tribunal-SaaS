@@ -7,7 +7,7 @@ PIPELINE 6 FASES:
   Fase 0: Triagem (3 IAs baratas: GPT-4o-mini, Gemini Flash, Llama 8B)
   Fase 1: Extração (7 IAs: Haiku, Gemini Pro, GPT-5.2, Sonnet, Llama 3.3, GPT-5 Nano, Nemotron)
   Fase 2: Agregação com deduplicação semântica
-  Fase 3: Auditoria (4 IAs: GPT-5.2, Gemini Pro, Sonnet 4.5, Qwen3 Max) + A5 Opus (Elite)
+  Fase 3: Auditoria (4 IAs: GPT-5.2, Gemini Pro, Sonnet 4.6, Qwen3 Max) + A5 Opus (Elite)
   Fase 4: Julgamento (3 IAs reasoning: o1-pro, DeepSeek R1, Opus 4.6)
   Fase 5: Síntese (GPT-5.2 Standard / Opus 4.6 Premium / GPT-5.2-Pro Elite)
 
@@ -19,6 +19,7 @@ FAILOVER: GPT-5.2 → GPT-4.1 → Gemini 3 Pro (3 níveis)
 import os
 import logging
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 
 # Importar prompts maximizados
@@ -208,7 +209,7 @@ MAX_TOKENS_POR_FASE = {
     "sintese":      8192,   # Sínteses curtas (cross-zona futuro)
 }
 
-def get_max_tokens_para_fase(role_name: str) -> int:
+def get_max_tokens_para_fase(role_name: str) -> Optional[int]:
     """
     Retorna max_tokens fixo para a fase, ou None para usar cálculo dinâmico.
     
@@ -237,7 +238,7 @@ def get_max_tokens_para_fase(role_name: str) -> int:
 # E1: Haiku 4.5 (CAMPEÃO: 955 itens)
 # E2: Gemini 3 Pro (VISÃO: carimbos, selos) — Flash REMOVIDO (83% omissão)
 # E3: GPT-5.2 (JSON robusto: 729 itens) — GPT-4o promovido
-# E4: Sonnet 4.5 (Nuance PT: 616 itens)
+# E4: Sonnet 4.6 (Nuance PT: 616 itens)
 # E5: Llama 3.3 70B (Meta) — texto
 # E6: GPT-5 Nano (OpenAI) — visual
 # E7: Nemotron 70B (NVIDIA) — texto
@@ -303,7 +304,7 @@ EXTRATOR_MODELS = [cfg["model"] for cfg in LLM_CONFIGS]
 # AUDITORES — v5.0 SUBSTITUTES
 # A1: GPT-5.2 (Prazos e lógica)
 # A2: Gemini 3 Pro (Visual: carimbos vs texto)
-# A3: Sonnet 4.5 (Texto + visão complementar)
+# A3: Sonnet 4.6 (Texto + visão complementar)
 # A4: Qwen3 Max Thinking (Advogado do Diabo) — substitui Llama 405B (100% falhas)
 # A5: Opus 4.6 (Auditor Sénior — APENAS ELITE) — ver engine.py
 #
@@ -390,7 +391,7 @@ PRESIDENTE_SUBSTITUTES = {
 # =============================================================================
 # LIMITES DE CONTEXTO E OUTPUT POR MODELO (tokens)
 # Fonte: OpenRouter API (verificado 2025-02-11)
-# ACTUALIZADO: Adicionado Sonnet 4.5
+# ACTUALIZADO: Adicionado Sonnet 4.6
 # =============================================================================
 
 MODEL_CONTEXT_LIMITS = {
@@ -465,12 +466,12 @@ EXTRACTOR_SUBSTITUTES = [
 ]
 
 # =============================================================================
-# FAILOVER: GPT-5.2 → GPT-4.1 → GROK (3 NÍVEIS)
+# FAILOVER: GPT-5.2 → GPT-4.1 → Gemini Pro (3 NÍVEIS)
 # Quando titular não cabe, suplente assume automaticamente
 # =============================================================================
 
 FALLBACK_MODEL_NIVEL2 = "openai/gpt-4.1"           # Suplente (ctx 1.048K, out 32K)
-FALLBACK_MODEL_NIVEL3 = "google/gemini-3-pro-preview"  # v4.0: Grok BANIDO → Gemini Pro (1M+ ctx)
+FALLBACK_MODEL_NIVEL3 = "google/gemini-3-pro-preview"  # v4.0: Gemini Pro (1M+ ctx)
 
 # Limites em caracteres (tokens x 4) com margem de 30% para prompt overhead
 LIMITE_NIVEL1_CHARS = 1_120_000     # ~400K tokens x 4 x 0.70 = docs até ~280 páginas
@@ -638,7 +639,7 @@ def selecionar_modelo_com_failover(modelo_titular: str, doc_chars: int, papel: s
     """
     Seleciona o modelo adequado com failover automático.
 
-    Cadeia: GPT-5.2 (400K) → GPT-4.1 (1.048K) → Grok (2.000K)
+    Cadeia: GPT-5.2 (400K) → GPT-4.1 (1.048K) → Gemini Pro (1.049K)
 
     Args:
         modelo_titular: Modelo original (ex: "openai/gpt-5.2")
@@ -665,7 +666,7 @@ def selecionar_modelo_com_failover(modelo_titular: str, doc_chars: int, papel: s
         )
         return FALLBACK_MODEL_NIVEL2
 
-    # Nível 3: Emergência Grok
+    # Nível 3: Emergência Gemini Pro
     if doc_chars <= LIMITE_NIVEL3_CHARS:
         logger.warning(
             f"[FAILOVER-EMERGENCIA] {papel}: GPT-4.1 tambem excluido "

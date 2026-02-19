@@ -13,7 +13,7 @@ NOTA: Usa tabela `profiles` (NÃO `users`) para credits_balance/credits_blocked.
 
 import logging
 from typing import Any, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from supabase import Client
 
 logger = logging.getLogger(__name__)
@@ -334,7 +334,7 @@ class WalletManager:
 
             self.sb.table("blocked_credits").update({
                 "status": "settled",
-                "settled_at": datetime.now().isoformat(),
+                "settled_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", block["id"]).execute()
 
             self.sb.table("wallet_transactions").insert({
@@ -404,7 +404,7 @@ class WalletManager:
 
                 self.sb.table("blocked_credits").update({
                     "status": "cancelled",
-                    "settled_at": datetime.now().isoformat(),
+                    "settled_at": datetime.now(timezone.utc).isoformat(),
                 }).eq("id", block["id"]).execute()
 
             logger.info(f"[WALLET-FALLBACK] Bloqueio cancelado: analysis={analysis_id}")

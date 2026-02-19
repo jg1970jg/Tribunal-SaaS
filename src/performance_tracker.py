@@ -280,12 +280,15 @@ class PerformanceTracker:
         """Carrega dados agregados do Supabase para cache em memoria."""
         try:
             # Buscar ultimos 30 dias de performance agrupado por modelo+role
+            from datetime import datetime, timedelta, timezone
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+
             result = self.sb.table("model_performance").select(
                 "model, role, success, excerpt_mismatches, range_invalids, "
                 "offset_imprecises, offset_wrongs, page_mismatches, "
                 "missing_citations, error_recovered, latency_ms, "
                 "total_tokens, cost_usd"
-            ).order("created_at", desc=True).limit(2000).execute()
+            ).gte("created_at", cutoff).order("created_at", desc=True).limit(2000).execute()
 
             rows = result.data or []
             if not rows:
@@ -399,7 +402,8 @@ class PerformanceTracker:
 
     def get_summary(self) -> List[Dict]:
         """Retorna o resumo em cache para o dashboard admin."""
-        return self._summary_cache
+        with self._cache_lock:
+            return self._summary_cache
 
 
 # ============================================================
@@ -472,8 +476,6 @@ def check_response_quality(content: str, role_name: str) -> Optional[Dict]:
                 for cit in item.get("citations", []):
                     if isinstance(cit, dict) and (cit.get("page_num") or cit.get("excerpt") or cit.get("start_char") is not None):
                         total_citations += 1
-                    elif isinstance(cit, dict):
-                        total_citations += 1  # Contar mesmo citação vazia (melhor que 0)
         for item in parsed.get("decision_points", []):
             if isinstance(item, dict):
                 # Somar ambos os campos — prompt pede "citations" mas IA pode usar "supporting_citations"

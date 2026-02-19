@@ -324,9 +324,9 @@ class LegalVerifier:
         r"\brcp\b": "Regulamento das Custas Processuais",
         r"\bnrau\b": "NRAU",
         r"\brjue\b": "RJUE",
-        r"lei\s*(?:n[.º°]?\s*)?(\d+[/-]\d+)": r"Lei n.º \1",
-        r"decreto[- ]lei\s*(?:n[.º°]?\s*)?(\d+[/-]\d+)": r"Decreto-Lei n.º \1",
-        r"dl\s*(?:n[.º°]?\s*)?(\d+[/-]\d+)": r"Decreto-Lei n.º \1",
+        r"\blei\s*(?:n[.º°]?\s*)?(\d+[/-]\d+)": r"Lei n.º \1",
+        r"\bdecreto[- ]lei\s*(?:n[.º°]?\s*)?(\d+[/-]\d+)": r"Decreto-Lei n.º \1",
+        r"\bdl\s*(?:n[.º°]?\s*)?(\d+[/-]\d+)": r"Decreto-Lei n.º \1",
     }
 
     ARTIGO_PATTERN = re.compile(
@@ -928,14 +928,14 @@ class LegalVerifier:
 
         artigo = f"{artigo_num}º"
         if artigo_letra:
-            artigo += f"-{artigo_letra}"
+            artigo += f"-{artigo_letra.upper()}"
         while "ºº" in artigo:
             artigo = artigo.replace("ºº", "º")
 
         # Número e alínea
         numero = None
         alinea = None
-        num_match = re.search(r"n\.?[º°]?\s*(\d+)", texto_lower)
+        num_match = re.search(r"\bn\.?[º°]?\s*(\d+)", texto_lower)
         if num_match:
             numero = num_match.group(1)
         alinea_match = re.search(r"al[ií]nea\s*([a-z])\)?|al\.\s*([a-z])\)?", texto_lower)

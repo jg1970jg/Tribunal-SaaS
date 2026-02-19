@@ -31,7 +31,6 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
     before_sleep_log,
     retry_if_exception,
 )
@@ -486,7 +485,7 @@ class OpenAIClient:
             "model": clean_model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
         }
 
         logger.debug(f"OpenAI Request para {clean_model}: {len(str(messages))} chars")
@@ -1023,9 +1022,10 @@ class OpenRouterClient:
         payload = {
             "model": clean_model,
             "messages": messages,
-            "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if supports_temperature(model):
+            payload["temperature"] = temperature
 
         # v5.2: Desligar filtros de conteúdo do Google Gemini
         # Documentos legais contêm palavras que activam o filtro (homicídio, violação, etc.)
@@ -1326,6 +1326,7 @@ class UnifiedLLMClient:
         # FIX 2026-02-14: Circuit breaker — após insufficient_quota, skip OpenAI
         self._openai_circuit_open = False
         self._openai_circuit_reason = ""
+        self._openai_circuit_opened_at = None
 
         # Clientes
         self.openai_client = OpenAIClient(
@@ -1453,6 +1454,13 @@ class UnifiedLLMClient:
         use_openai_direct = should_use_openai_direct(model)
 
         if use_openai_direct:
+            # FIX 2026-02-19: Circuit breaker auto-reset após 5 minutos
+            if self._openai_circuit_open and self._openai_circuit_opened_at:
+                if (datetime.now() - self._openai_circuit_opened_at).total_seconds() > 300:
+                    self._openai_circuit_open = False
+                    self._openai_circuit_reason = ""
+                    logger.info("[CIRCUIT-BREAKER] Auto-reset após 5 minutos")
+
             # FIX 2026-02-14: Circuit breaker — skip OpenAI se saldo esgotado
             if self._openai_circuit_open:
                 logger.info(
@@ -1511,6 +1519,7 @@ class UnifiedLLMClient:
             if "insufficient_quota" in error_str or "exceeded your current quota" in error_str:
                 self._openai_circuit_open = True
                 self._openai_circuit_reason = "insufficient_quota"
+                self._openai_circuit_opened_at = datetime.now()
                 logger.warning(
                     "🔴 CIRCUIT BREAKER ACTIVADO: OpenAI saldo esgotado! "
                     "Todas as chamadas seguintes vão directo para OpenRouter."

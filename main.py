@@ -541,9 +541,6 @@ async def analyze(
                 detail="Tier inválido. Opções: bronze/standard, silver/premium, gold/elite.",
             )
 
-        if area_direito and area_direito not in VALID_AREAS:
-            logger.warning(f"Área de direito não standard: {area_direito[:50]}")
-
         # v5.2: Gerar analysis_id no main para o SIGTERM handler poder cancelar bloqueios
         import uuid as _uuid
         _analysis_id = str(_uuid.uuid4())

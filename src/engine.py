@@ -35,7 +35,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 import io
 import hashlib
 import logging
-from datetime import datetime
+import unicodedata
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Callable
 
 # --- Wallet imports (APENAS de wallet_manager.py) ---
@@ -426,7 +427,7 @@ def executar_analise(
         MissingApiKeyError: Se API key nao configurada
         EngineError: Outros erros
     """
-    timestamp_inicio = datetime.now()
+    timestamp_inicio = datetime.now(timezone.utc)
     # v5.2: Aceitar analysis_id do caller (main.py) para SIGTERM cleanup
     analysis_id = kwargs.pop("analysis_id", None) or str(uuid.uuid4())
 
@@ -463,7 +464,6 @@ def executar_analise(
     if file_bytes is not None and not filename:
         raise EngineError("filename e obrigatorio quando file_bytes e fornecido.")
     # Normalizar área do direito (case-insensitive, aceitar variações sem acento)
-    import unicodedata
     def _normalize_area(s):
         s = s.strip().lower()
         return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
@@ -546,7 +546,7 @@ def executar_analise(
     logger.info(f"[ENGINE] Titulo: {titulo}")
 
     # ── 8. BLOQUEAR CREDITOS (antes de processar) ──
-    num_chars = documento.num_chars if documento else 0
+    num_chars = documento.num_chars
     document_tokens = num_chars // 4  # Estimativa grosseira
 
     try:
@@ -666,7 +666,7 @@ def executar_analise(
     resultado.custos["analysis_id"] = analysis_id
 
     # ── 12. Reportar resultado ──
-    duracao = (datetime.now() - timestamp_inicio).total_seconds()
+    duracao = (datetime.now(timezone.utc) - timestamp_inicio).total_seconds()
     logger.info(f"[ENGINE] Pipeline concluido em {duracao:.1f}s")
     logger.info(f"[ENGINE] Parecer: {resultado.simbolo_final} {resultado.veredicto_final}")
     logger.info(f"[ENGINE] Tokens: {resultado.total_tokens:,}")

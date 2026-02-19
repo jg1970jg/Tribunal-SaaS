@@ -290,7 +290,7 @@ class AuditReport:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'AuditReport':
-        return cls(
+        report = cls(
             auditor_id=data.get("auditor_id", ""),
             model_name=data.get("model_name", ""),
             run_id=data.get("run_id", ""),
@@ -300,6 +300,13 @@ class AuditReport:
             errors=data.get("errors", []),
             warnings=data.get("warnings", []),
         )
+        if "timestamp" in data:
+            try:
+                from datetime import datetime as _dt
+                report.timestamp = _dt.fromisoformat(data["timestamp"])
+            except (ValueError, TypeError):
+                pass
+        return report
 
     def to_markdown(self) -> str:
         """Renderiza o relatório como Markdown."""
@@ -423,7 +430,7 @@ class JudgePoint:
             point_id=data.get("point_id", ""),
             conclusion=data.get("conclusion", ""),
             rationale=data.get("rationale", ""),
-            citations=[Citation.from_dict(c) for c in raw_citations if isinstance(c, dict)],
+            citations=[Citation.from_dict(c) for c in raw_citations if isinstance(c, (dict, str))],
             legal_basis=data.get("legal_basis", []) if isinstance(data.get("legal_basis"), list) else [],
             risks=data.get("risks", []) if isinstance(data.get("risks"), list) else [],
             alternatives=data.get("alternatives", []) if isinstance(data.get("alternatives"), list) else [],
@@ -513,7 +520,7 @@ class JudgeOpinion:
         raw_disagree = data.get("disagreements", [])
         if not isinstance(raw_disagree, list):
             raw_disagree = []
-        return cls(
+        opinion = cls(
             judge_id=data.get("judge_id", ""),
             model_name=data.get("model_name", ""),
             run_id=data.get("run_id", ""),
@@ -524,6 +531,13 @@ class JudgeOpinion:
             errors=data.get("errors", []) if isinstance(data.get("errors"), list) else [],
             warnings=data.get("warnings", []) if isinstance(data.get("warnings"), list) else [],
         )
+        if "timestamp" in data:
+            try:
+                from datetime import datetime as _dt
+                opinion.timestamp = _dt.fromisoformat(data["timestamp"])
+            except (ValueError, TypeError):
+                pass
+        return opinion
 
     def to_markdown(self) -> str:
         """Renderiza o parecer como Markdown."""
@@ -675,7 +689,7 @@ class FinalDecision:
         raw_conflicts = data.get("conflicts_resolved", [])
         if not isinstance(raw_conflicts, list):
             raw_conflicts = []
-        return cls(
+        decision = cls(
             decision_id=data.get("decision_id", ""),
             run_id=data.get("run_id", ""),
             model_name=data.get("model_name", ""),
@@ -693,6 +707,13 @@ class FinalDecision:
             errors=data.get("errors", []) if isinstance(data.get("errors"), list) else [],
             warnings=data.get("warnings", []) if isinstance(data.get("warnings"), list) else [],
         )
+        if "timestamp" in data:
+            try:
+                from datetime import datetime as _dt
+                decision.timestamp = _dt.fromisoformat(data["timestamp"])
+            except (ValueError, TypeError):
+                pass
+        return decision
 
     def generate_markdown(self) -> str:
         """Gera Markdown a partir da estrutura JSON."""
@@ -725,7 +746,7 @@ class FinalDecision:
                 if point.legal_basis:
                     lines.append(f"**Base Legal:** {', '.join(point.legal_basis)}")
                     lines.append("")
-                if point.confidence and point.confidence != 0.8:
+                if point.confidence is not None:
                     lines.append(f"**Confiança:** {point.confidence:.0%}")
                     lines.append("")
         non_empty_conflicts = [c for c in self.conflicts_resolved if c.chosen_value or c.reasoning or c.resolution]
@@ -954,9 +975,10 @@ class ChefeConsolidatedReport:
             f"**Timestamp:** {self.timestamp.isoformat()}",
             "",
         ]
-        if self.errors:
-            lines.append("## ⚠️ Erros")
-            for err in self.errors:
+        visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
+        if visible_errors:
+            lines.append("## Erros")
+            for err in visible_errors:
                 lines.append(f"- {err}")
             lines.append("")
         lines.append(f"## Findings Consolidados ({len(self.consolidated_findings)})")

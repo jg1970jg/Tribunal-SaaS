@@ -46,6 +46,9 @@ _supabase: Client | None = None
 # Cliente Supabase com service_role key
 _supabase_admin: Client | None = None
 
+# Lock para inicialização thread-safe dos singletons Supabase
+_supabase_lock = threading.Lock()
+
 # Cache de tokens validados (evita decode repetido)
 # Formato: {token_hash: {"payload": {...}, "expires": timestamp}}
 _token_cache: dict = {}
@@ -183,27 +186,29 @@ def _find_signing_key(token: str, jwks: list[dict]):
 def get_supabase() -> Client:
     """Retorna o cliente Supabase com anon key."""
     global _supabase
-    if _supabase is None:
-        url = os.environ.get("SUPABASE_URL", "")
-        key = os.environ.get("SUPABASE_KEY", "")
-        if not url or not key:
-            raise RuntimeError("SUPABASE_URL e SUPABASE_KEY devem estar definidos.")
-        _supabase = create_client(url, key)
-    return _supabase
+    with _supabase_lock:
+        if _supabase is None:
+            url = os.environ.get("SUPABASE_URL", "")
+            key = os.environ.get("SUPABASE_KEY", "")
+            if not url or not key:
+                raise RuntimeError("SUPABASE_URL e SUPABASE_KEY devem estar definidos.")
+            _supabase = create_client(url, key)
+        return _supabase
 
 
 def get_supabase_admin() -> Client:
     """Retorna o cliente Supabase com service_role key (acesso total)."""
     global _supabase_admin
-    if _supabase_admin is None:
-        url = os.environ.get("SUPABASE_URL", "")
-        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-        if not url or not key:
-            raise RuntimeError(
-                "SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY devem estar definidos."
-            )
-        _supabase_admin = create_client(url, key)
-    return _supabase_admin
+    with _supabase_lock:
+        if _supabase_admin is None:
+            url = os.environ.get("SUPABASE_URL", "")
+            key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+            if not url or not key:
+                raise RuntimeError(
+                    "SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY devem estar definidos."
+                )
+            _supabase_admin = create_client(url, key)
+        return _supabase_admin
 
 
 def _get_token_hash(token: str) -> str:
@@ -353,7 +358,7 @@ async def get_current_user(
                 del _token_cache[token_hash]
 
         # Limpar cache expirado periodicamente ou se excede tamanho máximo
-        if len(_token_cache) > TOKEN_CACHE_MAX_SIZE or len(_token_cache) > 100:
+        if len(_token_cache) > TOKEN_CACHE_MAX_SIZE or len(_token_cache) > TOKEN_CACHE_MAX_SIZE // 2:
             expired_keys = [k for k, v in _token_cache.items() if now >= v["expires"]]
             for k in expired_keys:
                 del _token_cache[k]

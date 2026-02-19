@@ -643,10 +643,13 @@ class CostController:
     def get_cost_by_phase(self) -> Dict[str, float]:
         """Retorna custo agrupado por fase (fase1, fase2, fase3, fase4)."""
         PHASE_MAP = {
+            "fase0": "fase0", "triage": "fase0",
             "fase1": "fase1", "extrator": "fase1", "agregador": "fase1",
             "fase2": "fase2", "auditor": "fase2", "chefe": "fase2",
-            "fase3": "fase3", "juiz": "fase3",
-            "fase4": "fase4", "presidente": "fase4",
+            "fase3": "fase3", "juiz": "fase3", "relator": "fase3",
+            "fase4": "fase4", "presidente": "fase4", "conselheiro": "fase4",
+            "fase5": "fase5", "sintese": "fase5",
+            "rlm": "rlm",
         }
         costs = {}
         for phase in self.usage.phases:
