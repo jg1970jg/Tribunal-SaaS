@@ -999,6 +999,16 @@ class OpenRouterClient:
             "max_tokens": max_tokens,
         }
 
+        # v5.2: Desligar filtros de conteúdo do Google Gemini
+        # Documentos legais contêm palavras que activam o filtro (homicídio, violação, etc.)
+        if clean_model.startswith("google/"):
+            payload["safety_settings"] = [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ]
+
         logger.debug(f"OpenRouter Request para {clean_model}: {len(str(messages))} chars")
 
         post_kwargs = {"json": payload}

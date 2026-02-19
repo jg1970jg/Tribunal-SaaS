@@ -952,6 +952,15 @@ REVISTO:"""
             "deepseek/deepseek-r1": 2,       # v5.2: J2 precisa de 2 retries para citations
         }
         MAX_RETRIES = MODEL_MAX_RETRIES.get(modelo_final, 2)
+
+        # v5.2: content_filter → skip retries (Gemini vai recusar outra vez)
+        if not response.success and getattr(response, 'finish_reason', '') == 'content_filter':
+            logger.warning(
+                f"[QUALITY-GATE] {role_name}: CONTENT_FILTER — skip retries "
+                f"(modelo {modelo_final} bloqueou conteúdo, suplente assumirá)"
+            )
+            MAX_RETRIES = 0  # Não fazer retry nenhum
+
         for retry_num in range(1, MAX_RETRIES + 1):
             if not response.success or not response.content:
                 # FIX 2026-02-18: Distinguir output truncado de falha generica
@@ -4158,24 +4167,6 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                         f"modo fila recomendado"
                     )
                 self._reportar_progresso("fase0", 8, f"Triagem concluída: {fase0_triage.domain}")
-
-                # v5.2: Override modelos Google/Gemini em casos Penais
-                # Gemini devolve PROHIBITED_CONTENT em casos criminais — skip directo
-                _triage_domain = fase0_triage.domain if fase0_triage else ""
-                _effective_domain = _triage_domain or area_direito
-                if _effective_domain and _effective_domain.lower() in ("penal", "criminal"):
-                    _overridden = []
-                    for cfg in self._llm_configs:
-                        if cfg["model"].startswith("google/") and cfg["id"].startswith("E"):
-                            old_model = cfg["model"]
-                            cfg["model"] = "openai/gpt-5-mini"
-                            cfg["visual"] = False  # gpt-5-mini não precisa de flag visual
-                            _overridden.append(f"{cfg['id']}: {old_model} → openai/gpt-5-mini")
-                    if _overridden:
-                        logger.info(
-                            f"[PENAL-OVERRIDE] Caso Penal detectado — "
-                            f"Google/Gemini substituídos: {', '.join(_overridden)}"
-                        )
             except Exception as e:
                 logger.warning(f"[FASE0] Triagem falhou (non-blocking): {e}")
 
