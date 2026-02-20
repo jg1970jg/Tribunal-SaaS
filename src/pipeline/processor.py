@@ -1674,6 +1674,44 @@ INSTRUÇÕES ESPECÍFICAS DO EXTRATOR {extractor_id} ({role}):
                             raise
                         logger.warning(f"[CUSTO] Erro ao registar {extractor_id}-chunk{chunk_idx}: {e}")
 
+                # Registar no PerformanceTracker (Fase 1 — extrator)
+                perf_tracker = getattr(self, '_perf_tracker', None)
+                if perf_tracker:
+                    try:
+                        _cost_usd_ext = 0.0
+                        _pricing_src_ext = ""
+                        if hasattr(self, '_cost_controller') and self._cost_controller:
+                            _usage = getattr(self._cost_controller, 'usage', None)
+                            if _usage and hasattr(_usage, 'phases') and _usage.phases:
+                                _last_p = _usage.phases[-1]
+                                _cost_usd_ext = getattr(_last_p, 'cost_usd', 0)
+                                _pricing_src_ext = getattr(_last_p, 'pricing_source', '')
+                        from src.llm_client import classify_error
+                        perf_tracker.record_call(
+                            run_id=getattr(self, '_run_id', ''),
+                            model=model,
+                            phase="extrator",
+                            role=self._normalize_role_for_perf(f"extrator_{extractor_id}"),
+                            tier=getattr(self, '_tier', 'bronze'),
+                            prompt_tokens=r_prompt,
+                            completion_tokens=r_completion,
+                            total_tokens=r_total,
+                            cost_usd=_cost_usd_ext,
+                            pricing_source=_pricing_src_ext,
+                            latency_ms=getattr(response, 'latency_ms', 0) or 0,
+                            success=getattr(response, 'success', True),
+                            error_message=getattr(response, 'error', None),
+                            error_type=classify_error(response.error) if getattr(response, 'error', None) else None,
+                            was_retry=False,
+                            retry_number=0,
+                            cached_tokens=getattr(response, 'cached_tokens', 0) or 0,
+                            reasoning_tokens=getattr(response, 'reasoning_tokens', 0) or 0,
+                            finish_reason=getattr(response, 'finish_reason', '') or '',
+                            api_used=getattr(response, 'api_used', '') or '',
+                        )
+                    except Exception as _perf_err:
+                        logger.debug(f"[PERF] Erro ao registar extrator: {_perf_err}")
+
                 # Parsear output e criar EvidenceItems com source_spans
                 items, unreadable, errors = parse_unified_output(
                     output=response.content,
