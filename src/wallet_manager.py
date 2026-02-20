@@ -178,6 +178,8 @@ class WalletManager:
 
             if rpc_result.data:
                 data = rpc_result.data
+                if isinstance(data, list) and data:
+                    data = data[0]
                 if isinstance(data, str):
                     data = json.loads(data)
                 if data.get("success"):
@@ -275,6 +277,8 @@ class WalletManager:
 
             if rpc_result.data:
                 data = rpc_result.data
+                if isinstance(data, list) and data:
+                    data = data[0]
                 if isinstance(data, str):
                     data = json.loads(data)
                 if data.get("success"):
@@ -384,6 +388,8 @@ class WalletManager:
 
             if rpc_result.data:
                 data = rpc_result.data
+                if isinstance(data, list) and data:
+                    data = data[0]
                 if isinstance(data, str):
                     data = json.loads(data)
                 if data.get("success"):

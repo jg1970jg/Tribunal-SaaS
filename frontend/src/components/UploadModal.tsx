@@ -13,9 +13,10 @@ import { TierSelectStep, type TierLevel } from "./TierSelectStep";
 const BACKEND_URL = "https://tribunal-saas.onrender.com";
 const MAX_FILES = 10;
 const MIN_TEXT_LENGTH = 50;
-const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".xlsx", ".txt"];
+const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".doc", ".xlsx", ".txt"];
 const ACCEPTED_MIME = [
   "application/pdf",
+  "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "text/plain",
@@ -359,7 +360,7 @@ export const UploadModal = ({ open, onClose, onSuccess }: UploadModalProps) => {
                 <input
                   ref={inputRef}
                   type="file"
-                  accept=".pdf,.docx,.xlsx,.txt"
+                  accept=".pdf,.doc,.docx,.xlsx,.txt"
                   multiple
                   onChange={handleFileSelect}
                   className="hidden"
@@ -401,7 +402,7 @@ export const UploadModal = ({ open, onClose, onSuccess }: UploadModalProps) => {
                       Arraste ficheiros ou clique para selecionar
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      PDF, DOCX, XLSX, TXT — até {MAX_FILES} ficheiros, 20MB cada
+                      PDF, DOC, DOCX, XLSX, TXT — até {MAX_FILES} ficheiros, 50MB cada
                     </p>
                   </>
                 )}

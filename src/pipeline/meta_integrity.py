@@ -146,7 +146,7 @@ class ConsistencyCheckResult:
 class MetaIntegrityReport:
     """Relatório completo de meta-integridade."""
     run_id: str
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     run_start: Optional[datetime] = None
 
     # Verificação de ficheiros

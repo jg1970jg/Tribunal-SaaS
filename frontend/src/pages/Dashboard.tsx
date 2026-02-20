@@ -62,12 +62,12 @@ const Dashboard = () => {
   }, [navigate]);
 
   const fetchDocuments = async () => {
-    setLoading(false);
     const { data } = await supabase
       .from("documents")
       .select("*")
       .order("created_at", { ascending: false });
     if (data) setDocuments(data);
+    setLoading(false);
   };
 
   const handleLogout = async () => {

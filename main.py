@@ -878,10 +878,14 @@ async def abandon_analysis(
             logger.warning(f"[ABANDON] Falha ao apagar checkpoints: {e}")
 
     # 3. Actualizar status do documento
-    sb.table("documents").update({
-        "status": "abandoned",
-        "interrupted_at": None,
-    }).eq("id", document_id).execute()
+    try:
+        sb.table("documents").update({
+            "status": "abandoned",
+            "interrupted_at": None,
+        }).eq("id", document_id).execute()
+    except Exception as e:
+        logger.error(f"[ABANDON] Falha ao actualizar status do documento: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao abandonar análise no banco de dados.")
 
     logger.info(f"[ABANDON] Análise abandonada: doc={document_id}")
     return {"status": "abandoned", "document_id": document_id}
@@ -1069,7 +1073,7 @@ def _build_docx(data: dict[str, Any]) -> bytes:
 
 @app.post("/export/pdf")
 @limiter.limit("30/minute")
-async def export_pdf(request: Request, req: ExportRequest, user: dict = Depends(get_current_user)):
+def export_pdf(request: Request, req: ExportRequest, user: dict = Depends(get_current_user)):
     """Exporta o resultado da análise como PDF."""
     try:
         pdf_bytes = _build_pdf(req.analysis_result)
@@ -1087,7 +1091,7 @@ async def export_pdf(request: Request, req: ExportRequest, user: dict = Depends(
 
 @app.post("/export/docx")
 @limiter.limit("30/minute")
-async def export_docx(request: Request, req: ExportRequest, user: dict = Depends(get_current_user)):
+def export_docx(request: Request, req: ExportRequest, user: dict = Depends(get_current_user)):
     """Exporta o resultado da análise como DOCX."""
     try:
         docx_bytes = _build_docx(req.analysis_result)
@@ -2142,7 +2146,7 @@ async def admin_diagnostics(
 
         tx_resp = sb.table("wallet_transactions").select(
             "amount_usd, cost_real_usd, created_at"
-        ).eq("type", "debit").gte("created_at", cutoff).execute()
+        ).eq("type", "debit").gte("created_at", cutoff).limit(5000).execute()
 
         rows = perf_resp.data or []
 

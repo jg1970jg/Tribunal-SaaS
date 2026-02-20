@@ -93,6 +93,8 @@ const statusConfig = {
   analyzing: { label: "A analisar", icon: Loader2, className: "text-accent bg-accent/10" },
   completed: { label: "Concluído", icon: CheckCircle, className: "text-success bg-success/10" },
   error: { label: "Erro", icon: AlertTriangle, className: "text-destructive bg-destructive/10" },
+  interrupted: { label: "Interrompido", icon: AlertTriangle, className: "text-orange-600 bg-orange-100" },
+  abandoned: { label: "Abandonado", icon: AlertTriangle, className: "text-muted-foreground bg-muted" },
 };
 
 const DocumentDetails = () => {
