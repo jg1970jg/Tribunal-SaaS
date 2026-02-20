@@ -29,8 +29,9 @@ _backup_supabase/
 # Supabase local/temp
 supabase/.temp/
 
-# Claude Code settings (contains local permissions, may include secrets)
+# Claude Code settings and memory (contains credentials, NEVER track)
 .claude/settings.local.json
+.claude/MEMORY.md
 
 # Ruff cache
 .ruff_cache/

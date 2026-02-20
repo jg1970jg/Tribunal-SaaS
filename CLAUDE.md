@@ -81,11 +81,18 @@ IMPORTANT: Never commit secrets to git. All secrets are in .env (git-ignored) or
 - Legacy JWT-based API keys: DISABLED in Supabase
 - SUPABASE_JWT_SECRET: DELETED from Render (HS256 key was revoked)
 
+### Full credentials file (AUTHORIZED ACCESS):
+- **Path**: `.claude/MEMORY.md` (git-ignored, local only)
+- Contains ALL API keys, service IDs, curl commands for Render, Supabase, GitHub, OpenRouter, Lovable
+- READ THIS FILE FIRST when you need to access any external service
+- The user has explicitly authorized Claude to use these credentials to verify, diagnose, and modify services
+
 ### Security rules:
 - NEVER put secrets in git-tracked files (use .env or Render env vars)
 - .env is in .gitignore - safe for local secrets
 - .claude/settings.local.json is in .gitignore - never track it
+- .claude/MEMORY.md is in .gitignore - contains all credentials, NEVER track it
 - GitHub PAT is in Windows Credential Manager (not in any file)
-- When rotating keys: update BOTH the source dashboard AND the Render env vars
+- When rotating keys: update BOTH the source dashboard AND the Render env vars AND .claude/MEMORY.md
 - Supabase uses ES256 JWKS for JWT verification (HS256 was revoked)
 - All Supabase keys use new format: sb_secret_ (service role) and sb_publishable_ (anon)
