@@ -1465,22 +1465,32 @@ async def admin_model_performance(
 # ============================================================
 
 _DIAG_PHASE_LABELS = {
-    "phase0": "Fase 0 \u2013 Triagem",
-    "phase1": "Fase 1 \u2013 Extrac\u00e7\u00e3o",
-    "phase2": "Fase 2 \u2013 Agrega\u00e7\u00e3o",
-    "phase3": "Fase 3 \u2013 Auditoria",
-    "phase4": "Fase 4 \u2013 Julgamento",
-    "phase5": "Fase 5 \u2013 S\u00edntese",
+    "extrator": "Fase 1 \u2013 Extrac\u00e7\u00e3o",
+    "agregador": "Fase 2 \u2013 Agrega\u00e7\u00e3o",
+    "auditor": "Fase 3 \u2013 Auditoria",
+    "consolidador": "Fase 3B \u2013 Consolida\u00e7\u00e3o",
+    "relator": "Fase 4 \u2013 Julgamento",
+    "presidente": "Fase 5 \u2013 S\u00edntese",
+    "curador": "Fase 0 \u2013 Triagem",
+}
+
+# Mapeamento de nomes de fase para cores no frontend
+_DIAG_PHASE_ORDER = {
+    "curador": "phase0",
+    "extrator": "phase1",
+    "agregador": "phase2",
+    "auditor": "phase3",
+    "consolidador": "phase3b",
+    "relator": "phase4",
+    "presidente": "phase5",
 }
 
 
 def _diag_phase_number(phase_str: str) -> str:
-    """Extrai 'phase1' de 'fase1_E3'."""
+    """Mapeia nome de fase do DB para identificador de fase."""
     if not phase_str:
         return "unknown"
-    part = phase_str.split("_")[0]
-    num = "".join(c for c in part if c.isdigit())
-    return f"phase{num}" if num else "unknown"
+    return _DIAG_PHASE_ORDER.get(phase_str.lower().strip(), phase_str)
 
 
 def _diag_system_health() -> dict:
