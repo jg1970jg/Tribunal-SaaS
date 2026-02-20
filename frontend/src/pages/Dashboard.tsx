@@ -2,14 +2,17 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Scale, Plus, LogOut, FileText, Clock, AlertTriangle, CheckCircle, Search, Settings, ShieldCheck } from "lucide-react";
+import { Scale, Plus, LogOut, FileText, Clock, AlertTriangle, CheckCircle, Search, Settings, ShieldCheck, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { UploadModal } from "@/components/UploadModal";
 import { DocumentCard } from "@/components/DocumentCard";
 import { WalletIndicator } from "@/components/WalletIndicator";
 import { useWallet } from "@/contexts/WalletContext";
+import { useToast } from "@/hooks/use-toast";
 import type { Tables } from "@/integrations/supabase/types";
 import type { Json } from "@/integrations/supabase/types";
+
+const BACKEND_URL = "https://tribunal-saas.onrender.com";
 
 type Document = Tables<"documents">;
 
@@ -31,8 +34,10 @@ const Dashboard = () => {
   const [userName, setUserName] = useState("");
   const [verdictFilter, setVerdictFilter] = useState<VerdictFilter>("all");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [resumingDocId, setResumingDocId] = useState<string | null>(null);
   const navigate = useNavigate();
   const { balance } = useWallet();
+  const { toast } = useToast();
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -70,6 +75,85 @@ const Dashboard = () => {
     navigate("/auth");
   };
 
+  const handleResume = async (documentId: string) => {
+    setResumingDocId(documentId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        navigate("/auth");
+        return;
+      }
+
+      const response = await fetch(`${BACKEND_URL}/analyze/resume/${documentId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: "Erro desconhecido" }));
+        throw new Error(typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail));
+      }
+
+      toast({
+        title: "Analise retomada",
+        description: "A analise foi concluida com sucesso.",
+      });
+
+      // Refresh e navegar para o documento
+      await fetchDocuments();
+      navigate(`/document/${documentId}`);
+    } catch (err: any) {
+      toast({
+        title: "Erro ao retomar",
+        description: err.message || "Nao foi possivel retomar a analise.",
+        variant: "destructive",
+      });
+    } finally {
+      setResumingDocId(null);
+    }
+  };
+
+  const handleAbandon = async (documentId: string) => {
+    if (!confirm("Tem a certeza que deseja abandonar esta analise? Os creditos bloqueados serao devolvidos.")) {
+      return;
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        navigate("/auth");
+        return;
+      }
+
+      const response = await fetch(`${BACKEND_URL}/analyze/abandon/${documentId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: "Erro desconhecido" }));
+        throw new Error(typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail));
+      }
+
+      toast({
+        title: "Analise abandonada",
+        description: "Os creditos bloqueados foram devolvidos.",
+      });
+
+      await fetchDocuments();
+    } catch (err: any) {
+      toast({
+        title: "Erro ao abandonar",
+        description: err.message || "Nao foi possivel abandonar a analise.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const filteredDocs = documents.filter((d) => {
     const matchesSearch =
       d.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -79,6 +163,8 @@ const Dashboard = () => {
     const statusFinal = getAnalysisField(d.analysis_result, "status_final") as string | null;
     return statusFinal === verdictFilter;
   });
+
+  const interruptedCount = documents.filter((d) => d.status === "interrupted").length;
 
   const stats = {
     total: documents.length,
@@ -141,6 +227,18 @@ const Dashboard = () => {
           </Button>
         </div>
 
+        {/* Interrupted banner */}
+        {interruptedCount > 0 && (
+          <div className="mb-6 p-4 rounded-xl border border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-900/20 animate-fade-in">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-orange-600 dark:text-orange-400 shrink-0" />
+              <p className="text-sm font-medium text-orange-800 dark:text-orange-300">
+                {interruptedCount} analise(s) interrompida(s) — pode retomar ou abandonar abaixo.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           {[
@@ -187,6 +285,19 @@ const Dashboard = () => {
           </div>
         </div>
 
+        {/* Resuming overlay */}
+        {resumingDocId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <div className="bg-card rounded-xl border border-border p-8 text-center shadow-xl max-w-sm">
+              <Loader2 className="w-10 h-10 text-accent mx-auto mb-4 animate-spin" />
+              <h3 className="text-lg font-semibold text-foreground mb-2">A retomar analise...</h3>
+              <p className="text-sm text-muted-foreground">
+                A retomar a partir da ultima fase completa. Isto pode demorar alguns minutos.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Documents */}
         {loading ? (
           <div className="flex justify-center py-20">
@@ -207,7 +318,13 @@ const Dashboard = () => {
         ) : (
           <div className="grid gap-3">
             {filteredDocs.map((doc) => (
-              <DocumentCard key={doc.id} document={doc} onClick={() => navigate(`/document/${doc.id}`)} />
+              <DocumentCard
+                key={doc.id}
+                document={doc}
+                onClick={() => navigate(`/document/${doc.id}`)}
+                onResume={doc.status === "interrupted" ? () => handleResume(doc.id) : undefined}
+                onAbandon={doc.status === "interrupted" ? () => handleAbandon(doc.id) : undefined}
+              />
             ))}
           </div>
         )}

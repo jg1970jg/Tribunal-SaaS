@@ -623,6 +623,7 @@ def executar_analise(
             analysis_id=analysis_id,
         )
         processor._tier = tier  # Passar tier para o performance tracker
+        processor._user_id = user_id  # v5.3: Para checkpoints no Supabase
         processor._use_a5_opus = use_a5_opus  # v4.0: Flag para A5 Opus
         resultado = processor.processar(documento, area_direito, perguntas_raw, titulo)
     except ValueError as e:
@@ -698,6 +699,208 @@ def executar_analise_texto(
         perguntas_raw=perguntas_raw,
         **kwargs,
     )
+
+
+def executar_analise_resume(
+    user_id: str,
+    document_id: str,
+    analysis_id: str,
+    callback_progresso: Optional[Callable[[str, int, str], None]] = None,
+) -> PipelineResult:
+    """
+    Retoma uma análise interrompida a partir dos checkpoints guardados no Supabase.
+
+    Fluxo:
+      1. Carrega checkpoints do Supabase (analysis_checkpoints)
+      2. Reconstrói DocumentContent a partir do pipeline_context
+      3. Verifica/reutiliza créditos bloqueados existentes
+      4. Executa pipeline a partir da última fase completa
+      5. Liquida créditos (só custo das fases executadas)
+
+    Args:
+        user_id: UUID do utilizador
+        document_id: UUID do documento na tabela documents
+        analysis_id: analysis_id original da análise interrompida
+        callback_progresso: Callback(fase, progresso_percent, mensagem)
+
+    Returns:
+        PipelineResult com todos os resultados
+    """
+    import src.config as config_module
+    from src.config import get_chefe_model
+    from src.tier_config import get_openrouter_model
+
+    sb = get_supabase_admin()
+
+    # 1. Carregar checkpoints do Supabase
+    logger.info(f"[RESUME] Carregando checkpoints para analysis={analysis_id[:8]}...")
+    cp_resp = sb.table("analysis_checkpoints").select("*").eq(
+        "analysis_id", analysis_id
+    ).order("fase_num").execute()
+
+    checkpoints = cp_resp.data or []
+    if not checkpoints:
+        raise EngineError(f"Sem checkpoints para analysis_id={analysis_id}. Não é possível retomar.")
+
+    # Determinar última fase completa
+    last_phase = max(cp["fase_num"] for cp in checkpoints)
+    logger.info(f"[RESUME] {len(checkpoints)} checkpoint(s) encontrado(s), última fase: {last_phase}")
+
+    # Organizar checkpoint data por fase_num
+    checkpoint_data = {}
+    pipeline_context = {}
+    for cp in checkpoints:
+        fase_num = cp["fase_num"]
+        checkpoint_data[fase_num] = cp.get("phase_data", {})
+        # pipeline_context é guardado apenas na fase 1
+        if cp.get("pipeline_context"):
+            pipeline_context.update(cp["pipeline_context"])
+
+    if not pipeline_context:
+        raise EngineError("pipeline_context não encontrado nos checkpoints. Não é possível reconstruir documento.")
+
+    # 2. Reconstruir DocumentContent a partir do pipeline_context
+    doc_text = pipeline_context.get("documento_text", "")
+    doc_filename = pipeline_context.get("documento_filename", "documento_resumido.txt")
+    if not doc_text:
+        raise EngineError("Texto do documento não encontrado no pipeline_context.")
+
+    documento = DocumentContent(
+        filename=doc_filename,
+        extension=os.path.splitext(doc_filename)[1] if doc_filename else ".txt",
+        text=doc_text,
+        num_chars=pipeline_context.get("num_chars", len(doc_text)),
+        num_words=pipeline_context.get("num_words", len(doc_text.split())),
+        num_pages=pipeline_context.get("num_pages", 0),
+        success=True,
+    )
+
+    area_direito = pipeline_context.get("area_direito", "Civil")
+    perguntas_raw = pipeline_context.get("perguntas_raw", "")
+    titulo = pipeline_context.get("titulo", "")
+    tier = pipeline_context.get("tier", "bronze")
+    existing_run_id = pipeline_context.get("run_id")
+
+    logger.info(
+        f"[RESUME] Documento reconstruído: {doc_filename} ({documento.num_chars:,} chars), "
+        f"tier={tier}, area={area_direito}"
+    )
+
+    # 3. Verificar créditos bloqueados existentes
+    try:
+        tier_level = TierLevel(tier.lower())
+    except ValueError:
+        tier_level = TierLevel("bronze")
+
+    # Verificar se há bloqueio existente para reutilizar
+    block_resp = sb.table("blocked_credits").select("*").eq(
+        "analysis_id", analysis_id
+    ).eq("status", "blocked").execute()
+
+    existing_block = block_resp.data[0] if block_resp.data else None
+
+    if existing_block:
+        logger.info(
+            f"[RESUME] Reutilizando bloqueio existente: ${existing_block['amount']:.4f} "
+            f"(criado em {existing_block['created_at']})"
+        )
+    else:
+        # Criar novo bloqueio
+        logger.info("[RESUME] Sem bloqueio existente — criando novo...")
+        document_tokens = documento.num_chars // 4
+        try:
+            block_result = bloquear_creditos(
+                user_id=user_id,
+                analysis_id=analysis_id,
+                tier=tier_level,
+                document_tokens=document_tokens,
+            )
+            logger.info(f"[RESUME] Novo bloqueio: ${block_result['blocked_usd']:.4f}")
+        except InsufficientBalanceError:
+            raise
+        except Exception as e:
+            raise EngineError(f"Erro ao bloquear créditos para resume: {e}")
+
+    # 4. Configurar modelos e criar processor
+    tier_models = get_tier_models(tier_level)
+    consolidador_model_key = tier_models.get("audit_chief", "gpt-5.2")
+    chefe_model_for_run = get_chefe_model(consolidador_model_key)
+
+    auditor_models_for_run = list(config_module.AUDITOR_MODELS)
+    president_key = tier_models.get("president", "gpt-5.2")
+    presidente_model_for_run = get_openrouter_model(president_key)
+
+    extrator_models_for_run = list(config_module.EXTRATOR_MODELS)
+    relator_models_for_run = list(config_module.JUIZ_MODELS)
+
+    if tier == "bronze":
+        extrator_models_for_run = [
+            m for m in extrator_models_for_run
+            if m != "anthropic/claude-sonnet-4.6"
+        ]
+        relator_models_for_run = [
+            "anthropic/claude-sonnet-4.6" if m == "anthropic/claude-opus-4.6" else m
+            for m in relator_models_for_run
+        ]
+
+    callback = callback_progresso or (lambda f, p, m: logger.info(f"[{p:3d}%] {f}: {m}"))
+
+    processor = LexForumProcessor(
+        extrator_models=extrator_models_for_run,
+        auditor_models=auditor_models_for_run,
+        relator_models=relator_models_for_run,
+        chefe_model=chefe_model_for_run,
+        presidente_model=presidente_model_for_run,
+        callback_progresso=callback,
+        analysis_id=analysis_id,
+    )
+    processor._tier = tier
+    processor._user_id = user_id
+    processor._use_a5_opus = tier_models.get("audit_a5_opus", False)
+
+    # 5. Executar pipeline a partir do checkpoint
+    try:
+        resultado = processor.processar_from_checkpoint(
+            documento=documento,
+            area_direito=area_direito,
+            perguntas_raw=perguntas_raw,
+            titulo=titulo,
+            resume_from_phase=last_phase,
+            checkpoint_data=checkpoint_data,
+            existing_run_id=existing_run_id,
+        )
+    except ValueError as e:
+        cancelar_bloqueio(analysis_id)
+        raise EngineError(f"Erro de validação no resume: {e}")
+    except BudgetExceededError:
+        cancelar_bloqueio(analysis_id)
+        raise
+    except Exception as e:
+        cancelar_bloqueio(analysis_id)
+        logger.exception("[RESUME] Erro fatal no pipeline")
+        raise EngineError(f"Erro no resume do pipeline: {e}")
+
+    # 6. Liquidar créditos (só custo das fases executadas no resume)
+    custo_real_usd = 0.0
+    if resultado.custos and resultado.custos.get("custo_total_usd"):
+        custo_real_usd = float(resultado.custos["custo_total_usd"])
+
+    if custo_real_usd > 0 and resultado.sucesso:
+        liquidar_creditos(analysis_id, custo_real_usd)
+    elif not resultado.sucesso:
+        cancelar_bloqueio(analysis_id)
+    else:
+        cancelar_bloqueio(analysis_id)
+
+    # 7. Limpar checkpoints após sucesso
+    if resultado.sucesso:
+        try:
+            sb.table("analysis_checkpoints").delete().eq("analysis_id", analysis_id).execute()
+            logger.info(f"[RESUME] Checkpoints limpos para analysis={analysis_id[:8]}")
+        except Exception as e:
+            logger.warning(f"[RESUME] Falha ao limpar checkpoints: {e}")
+
+    return resultado
 
 
 def executar_analise_documento(

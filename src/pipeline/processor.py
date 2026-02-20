@@ -807,6 +807,7 @@ REVISTO:"""
         self.legal_verifier = get_legal_verifier()
 
         self._analysis_id: Optional[str] = analysis_id
+        self._user_id: Optional[str] = None  # Set by engine before processar()
         self._run_id: Optional[str] = None
         self._output_dir: Optional[Path] = None
         self._titulo: str = ""
@@ -841,11 +842,19 @@ REVISTO:"""
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
 
-    def _save_checkpoint(self, fase_num: int, fase_nome: str, data_resumo: dict):
+    def _save_checkpoint(
+        self,
+        fase_num: int,
+        fase_nome: str,
+        data_resumo: dict,
+        phase_data: dict = None,
+        pipeline_context: dict = None,
+    ):
         """
-        v5.2: Guarda checkpoint após cada fase do pipeline.
+        v5.3: Guarda checkpoint após cada fase do pipeline.
         - Salva JSON local no output_dir
         - Tenta actualizar blocked_credits com fase_atual (graceful failure)
+        - Upsert dados reais da fase no Supabase (analysis_checkpoints) para resume
         """
         import json as _json
         checkpoint = {
@@ -884,6 +893,34 @@ REVISTO:"""
                 logger.info(
                     f"[CHECKPOINT] Fase {fase_num} ({fase_nome}) salva localmente — "
                     f"run={self._run_id}"
+                )
+
+        # 3. Upsert dados reais da fase no Supabase (para resume)
+        if self._analysis_id and phase_data is not None:
+            try:
+                from auth_service import get_supabase_admin
+                sb = get_supabase_admin()
+                row = {
+                    "analysis_id": self._analysis_id,
+                    "user_id": self._user_id,
+                    "fase_num": fase_num,
+                    "fase_nome": fase_nome,
+                    "phase_data": phase_data,
+                    "pipeline_context": pipeline_context or {},
+                }
+                sb.table("analysis_checkpoints").upsert(
+                    row,
+                    on_conflict="analysis_id,fase_num",
+                ).execute()
+                data_size = len(_json.dumps(phase_data, default=str))
+                logger.info(
+                    f"[CHECKPOINT] Fase {fase_num} dados reais ({data_size:,} bytes) "
+                    f"salvos no Supabase — analysis={self._analysis_id[:8]}..."
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[CHECKPOINT] Supabase upsert (analysis_checkpoints) falhou "
+                    f"(non-blocking): {e}"
                 )
 
     def _call_llm(
@@ -4292,11 +4329,26 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                     f"com sucesso (mínimo: 2). Pipeline abortado."
                 )
 
-            # v5.2: Checkpoint após Fase 1
+            # v5.3: Checkpoint após Fase 1 — gravar dados reais + contexto pipeline
+            _pipeline_ctx = {
+                "area_direito": area_direito,
+                "perguntas_raw": perguntas_raw,
+                "titulo": self._titulo,
+                "tier": getattr(self, '_tier', 'bronze'),
+                "run_id": self._run_id,
+                "documento_text": documento.text or "",
+                "documento_filename": documento.filename or "",
+                "num_chars": documento.num_chars,
+                "num_words": documento.num_words,
+                "num_pages": getattr(documento, 'num_pages', 0),
+            }
             self._save_checkpoint(1, "extracao", {
                 "extractores": len(extracoes),
                 "agregado_chars": len(consolidado_f1) if consolidado_f1 else 0,
-            })
+            }, phase_data={
+                "consolidado_f1": consolidado_f1 or "",
+                "bruto_f1": bruto_f1 or "",
+            }, pipeline_context=_pipeline_ctx)
 
             # Guardar referência ao documento para consensus engine
             self._documento = documento
@@ -4372,10 +4424,17 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.fase2_chefe_consolidado = consolidado_f2
             result.fase2_chefe = consolidado_f2  # Backwards compat
 
-            # v5.2: Checkpoint após Fase 2
+            # v5.3: Checkpoint após Fase 2 — gravar dados reais
+            _audit_reports_ser = []
+            if audit_reports:
+                _audit_reports_ser = [r.to_dict() for r in audit_reports]
             self._save_checkpoint(2, "auditoria", {
                 "auditores": len(auditorias),
                 "consolidado_chars": len(consolidado_f2) if consolidado_f2 else 0,
+            }, phase_data={
+                "consolidado_f2": consolidado_f2 or "",
+                "bruto_f2": bruto_f2 or "",
+                "audit_reports": _audit_reports_ser,
             })
 
             # FALLBACK: Se Consolidador produziu 0 findings, usar auditorias individuais
@@ -4445,10 +4504,16 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
             result.fase3_pareceres = pareceres
             result.respostas_juizes_qa = respostas_qa
 
-            # v5.2: Checkpoint após Fase 3
+            # v5.3: Checkpoint após Fase 3 — gravar dados reais
+            _judge_opinions_ser = []
+            if judge_opinions:
+                _judge_opinions_ser = [o.to_dict() for o in judge_opinions]
             self._save_checkpoint(3, "relatoria", {
                 "juizes": len(pareceres),
                 "qa_respostas": len(respostas_qa) if respostas_qa else 0,
+            }, phase_data={
+                "judge_opinions": _judge_opinions_ser,
+                "respostas_qa": respostas_qa or [],
             })
 
             # Fase 4: Conselheiro-Mor (COM perguntas)
@@ -4477,11 +4542,16 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                 # Limpar SEMPRE (mesmo em excepção) para não contaminar próximas runs
                 self.legal_verifier.set_data_factos(None)
 
-            # v5.2: Checkpoint após Fase 4 (presidente + verificação legal)
+            # v5.3: Checkpoint após Fase 4 — gravar dados reais
+            _final_decision_ser = final_decision.to_dict() if final_decision else {}
             self._save_checkpoint(4, "presidente", {
                 "veredicto": "pending",
                 "verificacoes_legais": len(verificacoes) if verificacoes else 0,
                 "presidente_chars": len(presidente) if presidente else 0,
+            }, phase_data={
+                "presidente": presidente or "",
+                "final_decision": _final_decision_ser,
+                "verificacoes_legais": verificacoes or [],
             })
 
             # Determinar parecer — preferir decision_type do JSON (mais fiável)
@@ -4730,6 +4800,409 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         # Cleanup: release large document reference to avoid memory leak
         self._documento = None
 
+        return result
+
+    def processar_from_checkpoint(
+        self,
+        documento: DocumentContent,
+        area_direito: str,
+        perguntas_raw: str = "",
+        titulo: str = "",
+        resume_from_phase: int = 0,
+        checkpoint_data: dict = None,
+        existing_run_id: str = None,
+    ) -> PipelineResult:
+        """
+        Retoma o pipeline a partir de uma fase já completa.
+
+        Args:
+            documento: Documento (reconstruído a partir do pipeline_context)
+            area_direito: Área do direito
+            perguntas_raw: Texto bruto com perguntas
+            titulo: Título do projecto
+            resume_from_phase: Última fase completa (1-4). Retoma a partir da seguinte.
+            checkpoint_data: Dict com dados das fases completas (phase_data por fase_num)
+            existing_run_id: Run ID original (para manter consistência)
+
+        Returns:
+            PipelineResult com todos os resultados
+        """
+        from src.pipeline.schema_audit import AuditReport, JudgeOpinion, FinalDecision
+
+        # Usar run_id existente em vez de gerar novo
+        if existing_run_id:
+            self._run_id = existing_run_id
+            self._output_dir = OUTPUT_DIR / self._run_id
+            self._output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self._setup_run()
+
+        run_id = self._run_id
+        timestamp_inicio = datetime.now(timezone.utc)
+
+        # Sanitize filename
+        if hasattr(documento, 'filename') and documento.filename:
+            documento.filename = re.sub(r'[^\w._\-\s\(\)]', '_', documento.filename, flags=re.UNICODE)[:255]
+
+        # Parse perguntas
+        perguntas = parse_perguntas(perguntas_raw)
+        if perguntas:
+            pode_continuar, msg = validar_perguntas(perguntas)
+            if not pode_continuar:
+                raise ValueError(f"Perguntas invalidas: {msg}")
+
+        if not titulo:
+            titulo = gerar_titulo_automatico(documento.filename, area_direito)
+        self._titulo = titulo
+        self._document_text = documento.text or ""
+
+        result = PipelineResult(
+            run_id=run_id,
+            documento=documento,
+            area_direito=area_direito,
+            perguntas_utilizador=perguntas,
+            timestamp_inicio=timestamp_inicio,
+        )
+
+        # Inicializar CostController
+        tier_name = getattr(self, '_tier', 'bronze')
+        default_budget = 10.0
+        if tier_name == 'gold':
+            default_budget = 25.0
+        elif tier_name == 'silver':
+            default_budget = 15.0
+        budget = float(os.getenv("MAX_BUDGET_USD", str(default_budget)))
+        doc_chars = len(self._document_text)
+        num_extractors = len([c for c in self._llm_configs if c["id"].startswith("E")])
+        num_chunks = max(1, doc_chars // CHUNK_SIZE_CHARS + 1)
+        fase1_estimate = num_extractors * num_chunks * 25_000
+        fases_2_4_estimate = 200_000
+        token_limit = max(500_000, fase1_estimate + fases_2_4_estimate)
+
+        self._cost_controller = CostController(
+            run_id=run_id,
+            budget_limit_usd=budget,
+            token_limit=token_limit,
+        )
+
+        # PerformanceTracker
+        self._perf_tracker = None
+        try:
+            from src.performance_tracker import PerformanceTracker
+            from auth_service import get_supabase_admin
+            self._perf_tracker = PerformanceTracker.get_instance(get_supabase_admin())
+            self._perf_tracker.refresh_cache()
+        except Exception:
+            pass
+
+        self._tier = getattr(self, '_tier', 'bronze')
+
+        checkpoint_data = checkpoint_data or {}
+        final_decision = None
+        judge_opinions = None
+
+        logger.info(
+            f"[RESUME] Retomando pipeline da fase {resume_from_phase + 1} — "
+            f"run={run_id}, analysis={self._analysis_id}"
+        )
+
+        try:
+            # === Reconstituir dados das fases já completas ===
+
+            # Variáveis necessárias para fases seguintes
+            consolidado_f1 = ""
+            bruto_f1 = ""
+            extracoes = []
+            consolidado_f2 = ""
+            bruto_f2 = ""
+            audit_reports = []
+            auditorias = []
+            pareceres = []
+            respostas_qa = []
+            presidente = ""
+            verificacoes = []
+
+            # Fase 1 data
+            if resume_from_phase >= 1 and 1 in checkpoint_data:
+                f1 = checkpoint_data[1]
+                consolidado_f1 = f1.get("consolidado_f1", "")
+                bruto_f1 = f1.get("bruto_f1", "")
+                result.fase1_agregado_consolidado = consolidado_f1
+                result.fase1_agregado_bruto = bruto_f1
+                result.fase1_agregado = consolidado_f1
+                self._reportar_progresso("resume", 10, "Fase 1 (extração) restaurada do checkpoint")
+                logger.info(f"[RESUME] Fase 1 restaurada: {len(consolidado_f1):,} chars")
+
+            # Fase 2 data
+            if resume_from_phase >= 2 and 2 in checkpoint_data:
+                f2 = checkpoint_data[2]
+                consolidado_f2 = f2.get("consolidado_f2", "")
+                bruto_f2 = f2.get("bruto_f2", "")
+                if f2.get("audit_reports"):
+                    audit_reports = [AuditReport.from_dict(r) for r in f2["audit_reports"]]
+                    for r in audit_reports:
+                        auditorias.append(FaseResult(
+                            fase="auditoria",
+                            modelo=r.model_name,
+                            role=f"auditor_{r.auditor_id}",
+                            conteudo=r.to_markdown(),
+                            tokens_usados=0,
+                            sucesso=True,
+                        ))
+                result.fase2_auditorias = auditorias
+                result.fase2_auditorias_brutas = bruto_f2
+                result.fase2_chefe_consolidado = consolidado_f2
+                result.fase2_chefe = consolidado_f2
+                self._reportar_progresso("resume", 30, "Fase 2 (auditoria) restaurada do checkpoint")
+                logger.info(f"[RESUME] Fase 2 restaurada: {len(consolidado_f2):,} chars, {len(audit_reports)} reports")
+
+            # Fase 3 data
+            if resume_from_phase >= 3 and 3 in checkpoint_data:
+                f3 = checkpoint_data[3]
+                respostas_qa = f3.get("respostas_qa", [])
+                if f3.get("judge_opinions"):
+                    judge_opinions = [JudgeOpinion.from_dict(o) for o in f3["judge_opinions"]]
+                    for o in judge_opinions:
+                        pareceres.append(FaseResult(
+                            fase="relatoria",
+                            modelo=o.model_name,
+                            role=f"relator_{o.judge_id}",
+                            conteudo=o.to_markdown(),
+                            tokens_usados=0,
+                            sucesso=True,
+                        ))
+                result.fase3_pareceres = pareceres
+                result.respostas_juizes_qa = respostas_qa
+                self._reportar_progresso("resume", 60, "Fase 3 (relatoria) restaurada do checkpoint")
+                logger.info(f"[RESUME] Fase 3 restaurada: {len(judge_opinions or [])} opinions")
+
+            # Fase 4 data
+            if resume_from_phase >= 4 and 4 in checkpoint_data:
+                f4 = checkpoint_data[4]
+                presidente = f4.get("presidente", "")
+                verificacoes_raw = f4.get("verificacoes_legais", [])
+                if f4.get("final_decision"):
+                    final_decision = FinalDecision.from_dict(f4["final_decision"])
+                result.fase3_presidente = presidente
+                result.verificacoes_legais = verificacoes_raw if isinstance(verificacoes_raw, list) else []
+                self._reportar_progresso("resume", 85, "Fase 4 (presidente) restaurada do checkpoint")
+                logger.info(f"[RESUME] Fase 4 restaurada: {len(presidente):,} chars")
+
+            # Guardar referência ao documento
+            self._documento = documento
+
+            # === Executar fases em falta ===
+
+            # Fase 0: Triagem (sempre re-executar se Fase 1 não está completa)
+            fase0_triage = None
+            if resume_from_phase < 1:
+                try:
+                    from src.pipeline.triage import TriageProcessor, inject_page_markers
+                    triage_proc = TriageProcessor(
+                        llm_client=self.llm_client,
+                        cost_controller=self._cost_controller,
+                    )
+                    self._reportar_progresso("fase0", 2, "Triagem: classificando domínio jurídico...")
+                    fase0_triage = triage_proc.run(
+                        text=documento.text,
+                        filename=documento.filename,
+                        num_pages=getattr(documento, 'num_pages', 0),
+                    )
+                    documento.text = inject_page_markers(documento.text)
+                except Exception as e:
+                    logger.warning(f"[FASE0] Triagem falhou (non-blocking): {e}")
+
+            if fase0_triage:
+                result.fase0_triage = fase0_triage.to_dict()
+
+            # Fase 1: Extração
+            if resume_from_phase < 1:
+                unified_result = None
+                if USE_UNIFIED_PROVENANCE:
+                    extracoes, bruto_f1, consolidado_f1, unified_result = self._fase1_extracao_unified(
+                        documento, area_direito
+                    )
+                else:
+                    extracoes, bruto_f1, consolidado_f1 = self._fase1_extracao(documento, area_direito)
+
+                result.fase1_extracoes = extracoes
+                result.fase1_agregado_bruto = bruto_f1
+                result.fase1_agregado_consolidado = consolidado_f1
+                result.fase1_agregado = consolidado_f1
+
+                successful_extractors = sum(1 for e in extracoes if e.sucesso)
+                if successful_extractors < 2 and not consolidado_f1:
+                    raise ValueError(
+                        f"Extracção insuficiente: apenas {successful_extractors} extractores "
+                        f"com sucesso (mínimo: 2). Pipeline abortado."
+                    )
+
+            # Fase 2: Auditoria
+            if resume_from_phase < 2:
+                chefe_report = None
+                if USE_UNIFIED_PROVENANCE:
+                    audit_reports, bruto_f2, consolidado_f2, chefe_report = self._fase2_auditoria_unified(
+                        consolidado_f1, area_direito, run_id
+                    )
+                    auditorias = []
+                    for r in audit_reports:
+                        real_errors = [e for e in r.errors if not str(e).startswith("INTEGRITY_WARNING:")]
+                        auditorias.append(FaseResult(
+                            fase="auditoria",
+                            modelo=r.model_name,
+                            role=f"auditor_{r.auditor_id}",
+                            conteudo=r.to_markdown(),
+                            tokens_usados=0,
+                            sucesso=len(real_errors) == 0,
+                        ))
+                else:
+                    auditorias, bruto_f2, consolidado_f2 = self._fase2_auditoria(consolidado_f1, area_direito)
+
+                result.fase2_auditorias = auditorias
+                result.fase2_auditorias_brutas = bruto_f2
+                result.fase2_chefe_consolidado = consolidado_f2
+                result.fase2_chefe = consolidado_f2
+
+                # Fallback
+                if chefe_report and hasattr(chefe_report, 'consolidated_findings'):
+                    if not chefe_report.consolidated_findings or len(chefe_report.consolidated_findings) == 0:
+                        consolidado_f2 = bruto_f2
+                        if audit_reports:
+                            partes = [r.to_markdown() for r in audit_reports]
+                            if partes:
+                                consolidado_f2 = (
+                                    "# AUDITORIAS INDIVIDUAIS (fallback)\n\n"
+                                    + "\n\n---\n\n".join(partes)
+                                )
+
+            # Fase 3: Relatoria
+            if resume_from_phase < 3:
+                if USE_UNIFIED_PROVENANCE:
+                    judge_opinions, respostas_qa = self._fase3_relatoria_unified(
+                        consolidado_f2, area_direito, perguntas, run_id
+                    )
+                    pareceres = []
+                    for o in judge_opinions:
+                        real_errors_j = [e for e in o.errors if not str(e).startswith("INTEGRITY_WARNING:")]
+                        pareceres.append(FaseResult(
+                            fase="relatoria",
+                            modelo=o.model_name,
+                            role=f"relator_{o.judge_id}",
+                            conteudo=o.to_markdown(),
+                            tokens_usados=0,
+                            sucesso=len(real_errors_j) == 0,
+                        ))
+                else:
+                    pareceres, respostas_qa = self._fase3_relatoria(consolidado_f2, area_direito, perguntas)
+
+                result.fase3_pareceres = pareceres
+                result.respostas_juizes_qa = respostas_qa
+
+            # Fase 4: Presidente
+            if resume_from_phase < 4:
+                if USE_UNIFIED_PROVENANCE and judge_opinions:
+                    final_decision = self._fase4_presidente_unified(
+                        judge_opinions, perguntas, respostas_qa, run_id
+                    )
+                    presidente = final_decision.output_markdown
+                else:
+                    presidente = self._fase4_presidente(pareceres, perguntas, respostas_qa)
+
+                result.fase3_presidente = presidente
+                result.respostas_finais_qa = presidente if perguntas else ""
+
+                # Verificação Legal
+                data_factos = self._extrair_data_factos(self._document_text or "")
+                try:
+                    if data_factos:
+                        self.legal_verifier.set_data_factos(data_factos)
+                    verificacoes = self._verificar_legislacao(presidente)
+                    result.verificacoes_legais = verificacoes
+                finally:
+                    self.legal_verifier.set_data_factos(None)
+
+            # Determinar parecer
+            if final_decision and hasattr(final_decision, 'decision_type'):
+                dt = final_decision.decision_type
+                veredicto_map = {
+                    DecisionType.PROCEDENTE: ("PROCEDENTE", SIMBOLOS_VERIFICACAO["aprovado"], "aprovado"),
+                    DecisionType.IMPROCEDENTE: ("IMPROCEDENTE", SIMBOLOS_VERIFICACAO["rejeitado"], "rejeitado"),
+                    DecisionType.PARCIALMENTE_PROCEDENTE: ("PARCIALMENTE PROCEDENTE", SIMBOLOS_VERIFICACAO["atencao"], "atencao"),
+                    DecisionType.INCONCLUSIVO: ("INCONCLUSIVO", SIMBOLOS_VERIFICACAO["atencao"], "atencao"),
+                }
+                veredicto, simbolo, status = veredicto_map.get(
+                    dt, ("INCONCLUSIVO", SIMBOLOS_VERIFICACAO["atencao"], "atencao")
+                )
+            else:
+                veredicto, simbolo, status = self._determinar_parecer(presidente)
+            result.veredicto_final = veredicto
+            result.simbolo_final = simbolo
+            result.status_final = status
+
+            # Fase 5: Curadoria Sénior
+            if resume_from_phase < 4:
+                self._reportar_progresso("fase5", 92, "Curador Sénior: redigindo parecer final...")
+                raw_presidente = result.fase3_presidente
+                try:
+                    relatorio_curador = self._fase5_curadoria(
+                        final_decision=final_decision,
+                        verificacoes=result.verificacoes_legais,
+                        area_direito=area_direito,
+                        fase0_triage=fase0_triage,
+                        perguntas=perguntas,
+                        documento=documento,
+                        presidente_texto=raw_presidente,
+                    )
+                    if relatorio_curador and relatorio_curador.strip():
+                        result.fase3_presidente = relatorio_curador
+                except Exception as e:
+                    logger.warning(f"[CURADOR] Falhou (non-blocking): {e}")
+
+            # Custos
+            if self._cost_controller:
+                run_usage = self._cost_controller.finalize()
+                result.total_tokens = run_usage.total_tokens
+                MARGEM = 2.0
+                custo_por_fase = self._cost_controller.get_cost_by_phase()
+                pricing_info = self._cost_controller.get_pricing_info()
+                result.custos = {
+                    "custo_total_usd": round(run_usage.total_cost_usd, 4),
+                    "custo_cliente_usd": round(run_usage.total_cost_usd * MARGEM, 4),
+                    "margem_percentagem": round((MARGEM - 1.0) * 100, 1),
+                    "total_prompt_tokens": run_usage.total_prompt_tokens,
+                    "total_completion_tokens": run_usage.total_completion_tokens,
+                    "total_tokens": run_usage.total_tokens,
+                    "por_fase": custo_por_fase,
+                    "detalhado": [pu.to_dict() for pu in run_usage.phases],
+                    "budget_limit_usd": run_usage.budget_limit_usd,
+                    "budget_restante_usd": round(self._cost_controller.get_remaining_budget(), 4),
+                    "precos_fonte": pricing_info["fonte"],
+                    "precos_timestamp": pricing_info["timestamp"],
+                    "precos_por_modelo": pricing_info["precos_por_modelo"],
+                    "resumed_from_phase": resume_from_phase,
+                }
+
+            result.total_latencia_ms = (datetime.now(timezone.utc) - result.timestamp_inicio).total_seconds() * 1000
+            result.sucesso = True
+            self._reportar_progresso("concluido", 100, "Pipeline retomado e concluído!")
+
+        except (BudgetExceededError, InsufficientCreditsError) as e:
+            logger.error(f"[RESUME] Erro de créditos: {e}")
+            result.sucesso = False
+            result.erro = str(e)
+            self._documento = None
+            raise
+        except KeyboardInterrupt:
+            self._documento = None
+            raise
+        except Exception as e:
+            logger.error(f"[RESUME] Erro no pipeline: {e}")
+            result.sucesso = False
+            result.erro = str(e)
+
+        result.timestamp_fim = datetime.now(timezone.utc)
+        self._guardar_resultado(result)
+        self._documento = None
         return result
 
     def _guardar_resultado(self, result: PipelineResult):

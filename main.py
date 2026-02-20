@@ -37,11 +37,13 @@ import threading
 from auth_service import get_current_user, get_supabase, get_supabase_admin
 from src.engine import (
     executar_analise_documento,
+    executar_analise_resume,
     InsufficientBalanceError,
     InvalidDocumentError,
     MissingApiKeyError,
     EngineError,
     get_wallet_manager,
+    cancelar_bloqueio,
 )
 from src.cost_controller import BudgetExceededError
 
@@ -282,10 +284,10 @@ def _check_blacklist(request: Request, user: dict = None):
 # ============================================================
 
 def _cleanup_orphan_blocks():
-    """Limpa créditos bloqueados há mais de 2 horas (órfãos de crashes/deploys)."""
+    """Limpa créditos bloqueados há mais de 24 horas (órfãos de crashes/deploys)."""
     try:
         sb = get_supabase_admin()
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         resp = sb.table("blocked_credits").select(
             "id, user_id, analysis_id, amount"
         ).eq("status", "blocked").lt("created_at", cutoff).execute()
@@ -306,26 +308,42 @@ def _cleanup_orphan_blocks():
 
 
 def _sigterm_handler(signum, frame):
-    """Handler SIGTERM/SIGINT: desbloquear créditos de análises activas antes de morrer."""
+    """
+    Handler SIGTERM/SIGINT: marcar análises activas como interrompidas (para resume).
+    NÃO cancela bloqueios de créditos — ficam para reutilizar no resume.
+    """
     sig_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
-    logger.warning(f"[SHUTDOWN] {sig_name} recebido — a limpar créditos bloqueados...")
+    logger.warning(f"[SHUTDOWN] {sig_name} recebido — a salvar estado de análises activas...")
     with _active_lock:
         active_ids = list(_active_user_analyses.items())
     if not active_ids:
         logger.info("[SHUTDOWN] Sem análises activas — shutdown limpo.")
         sys.exit(0)
-    logger.warning(f"[SHUTDOWN] {len(active_ids)} análise(s) activa(s) — a cancelar bloqueios...")
+    logger.warning(f"[SHUTDOWN] {len(active_ids)} análise(s) activa(s) — a marcar como interrompidas...")
     try:
-        from src.engine import cancelar_bloqueio
+        sb = get_supabase_admin()
         for user_id, analysis_id in active_ids:
             if analysis_id and analysis_id != "starting":
                 try:
-                    cancelar_bloqueio(analysis_id)
-                    logger.info(f"[SHUTDOWN] Bloqueio cancelado: user={user_id[:8]}, analysis={analysis_id}")
+                    # Marcar documentos com esta analysis_id como "interrupted"
+                    sb.table("documents").update({
+                        "status": "interrupted",
+                        "interrupted_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("analysis_id", analysis_id).execute()
+                    logger.info(
+                        f"[SHUTDOWN] Análise marcada como interrompida: "
+                        f"user={user_id[:8]}, analysis={analysis_id}"
+                    )
                 except Exception as e:
-                    logger.error(f"[SHUTDOWN] Falha ao cancelar bloqueio {analysis_id}: {e}")
+                    logger.error(f"[SHUTDOWN] Falha ao marcar análise {analysis_id}: {e}")
+                    # Fallback: cancelar bloqueio se não conseguiu marcar
+                    try:
+                        cancelar_bloqueio(analysis_id)
+                        logger.info(f"[SHUTDOWN] Fallback — bloqueio cancelado: {analysis_id}")
+                    except Exception:
+                        pass
             else:
-                logger.warning(f"[SHUTDOWN] User {user_id[:8]} em fase 'starting' — sem analysis_id para cancelar")
+                logger.warning(f"[SHUTDOWN] User {user_id[:8]} em fase 'starting' — sem analysis_id")
     except Exception as e:
         logger.error(f"[SHUTDOWN] Erro geral no cleanup: {e}")
     sys.exit(0)
@@ -591,6 +609,7 @@ async def analyze(
                 "custo_real_usd": float(custo_real) if custo_real else 0.0,
                 "custo_cobrado_usd": float(custo_cobrado) if custo_cobrado else 0.0,
                 "duracao_segundos": result_dict.get("duracao_total_s", 0),
+                "analysis_id": _analysis_id,
             }
             insert_resp = sb_admin.table("documents").insert(doc_record).execute()
             if not insert_resp.data:
@@ -658,6 +677,175 @@ async def analyze(
         # Anti-duplo-clique: libertar o user
         with _active_lock:
             _active_user_analyses.pop(user_id, None)
+
+
+# ============================================================
+# RESUME / ABANDON — Análises Interrompidas
+# ============================================================
+
+@app.post("/analyze/resume/{document_id}")
+@limiter.limit("5/minute")
+async def resume_analysis(
+    request: Request,
+    document_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Retoma uma análise interrompida a partir dos checkpoints guardados.
+
+    Requer que o documento tenha status='interrupted' e checkpoints existentes.
+    Reutiliza créditos bloqueados se ainda existirem.
+    """
+    user_id = user["id"]
+
+    # Anti-duplo-clique
+    with _active_lock:
+        if user_id in _active_user_analyses:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Já tem uma análise em curso. Aguarde que termine.",
+            )
+        _active_user_analyses[user_id] = "resuming"
+
+    try:
+        sb = get_supabase_admin()
+
+        # Buscar documento
+        doc_resp = sb.table("documents").select("*").eq("id", document_id).eq("user_id", user_id).execute()
+        if not doc_resp.data:
+            raise HTTPException(status_code=404, detail="Documento não encontrado.")
+        doc = doc_resp.data[0]
+
+        if doc["status"] != "interrupted":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Documento não está interrompido (status={doc['status']}). Só é possível retomar análises interrompidas.",
+            )
+
+        analysis_id = doc.get("analysis_id")
+        if not analysis_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Documento sem analysis_id. Não é possível retomar.",
+            )
+
+        # Actualizar tracker
+        with _active_lock:
+            _active_user_analyses[user_id] = analysis_id
+
+        # Marcar como "analyzing"
+        sb.table("documents").update({"status": "analyzing"}).eq("id", document_id).execute()
+
+        # Executar resume em thread separada
+        resultado = await asyncio.to_thread(
+            executar_analise_resume,
+            user_id=user_id,
+            document_id=document_id,
+            analysis_id=analysis_id,
+        )
+
+        result_dict = resultado.to_dict()
+
+        # Actualizar documento com resultado completo
+        custos = result_dict.get("custos") or {}
+        custo_real = custos.get("custo_total_usd", 0)
+        custo_cobrado = custos.get("custo_cliente_usd", 0)
+
+        sb.table("documents").update({
+            "analysis_result": result_dict,
+            "status": "completed" if resultado.sucesso else "error",
+            "total_tokens": result_dict.get("total_tokens", 0),
+            "custo_real_usd": float(custo_real) if custo_real else 0.0,
+            "custo_cobrado_usd": float(custo_cobrado) if custo_cobrado else 0.0,
+            "duracao_segundos": result_dict.get("duracao_total_s", 0),
+            "interrupted_at": None,
+        }).eq("id", document_id).execute()
+
+        result_dict["document_id"] = document_id
+        logger.info(f"[RESUME] Análise retomada com sucesso: doc={document_id}")
+        return result_dict
+
+    except HTTPException:
+        raise
+    except InsufficientBalanceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "message": "Saldo insuficiente para retomar a análise.",
+                "saldo_atual": e.saldo_atual,
+                "saldo_necessario": getattr(e, 'saldo_necessario', e.saldo_minimo),
+            },
+        )
+    except BudgetExceededError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={"error": "insufficient_credits", "message": str(e)},
+        )
+    except EngineError as e:
+        logger.error(f"[RESUME] Erro do engine: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("[RESUME] Erro inesperado")
+        raise HTTPException(status_code=500, detail="Erro interno do servidor.")
+    finally:
+        with _active_lock:
+            _active_user_analyses.pop(user_id, None)
+
+
+@app.post("/analyze/abandon/{document_id}")
+@limiter.limit("10/minute")
+async def abandon_analysis(
+    request: Request,
+    document_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Abandona uma análise interrompida: cancela créditos bloqueados e apaga checkpoints.
+    """
+    user_id = user["id"]
+    sb = get_supabase_admin()
+
+    # Buscar documento
+    doc_resp = sb.table("documents").select("id, status, analysis_id, user_id").eq(
+        "id", document_id
+    ).eq("user_id", user_id).execute()
+
+    if not doc_resp.data:
+        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+    doc = doc_resp.data[0]
+
+    if doc["status"] != "interrupted":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Só é possível abandonar análises com status 'interrupted'.",
+        )
+
+    analysis_id = doc.get("analysis_id")
+
+    # 1. Cancelar créditos bloqueados
+    if analysis_id:
+        try:
+            cancelar_bloqueio(analysis_id)
+            logger.info(f"[ABANDON] Créditos desbloqueados: analysis={analysis_id}")
+        except Exception as e:
+            logger.warning(f"[ABANDON] Falha ao cancelar bloqueio: {e}")
+
+    # 2. Apagar checkpoints
+    if analysis_id:
+        try:
+            sb.table("analysis_checkpoints").delete().eq("analysis_id", analysis_id).execute()
+            logger.info(f"[ABANDON] Checkpoints apagados: analysis={analysis_id}")
+        except Exception as e:
+            logger.warning(f"[ABANDON] Falha ao apagar checkpoints: {e}")
+
+    # 3. Actualizar status do documento
+    sb.table("documents").update({
+        "status": "abandoned",
+        "interrupted_at": None,
+    }).eq("id", document_id).execute()
+
+    logger.info(f"[ABANDON] Análise abandonada: doc={document_id}")
+    return {"status": "abandoned", "document_id": document_id}
 
 
 # ============================================================
