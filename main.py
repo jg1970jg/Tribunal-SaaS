@@ -1460,6 +1460,474 @@ async def admin_model_performance(
         raise HTTPException(status_code=500, detail="Erro ao consultar performance.")
 
 
+# ============================================================
+# ADMIN - DIAGNOSTICO TECNICO COMPLETO
+# ============================================================
+
+_DIAG_PHASE_LABELS = {
+    "phase0": "Fase 0 \u2013 Triagem",
+    "phase1": "Fase 1 \u2013 Extrac\u00e7\u00e3o",
+    "phase2": "Fase 2 \u2013 Agrega\u00e7\u00e3o",
+    "phase3": "Fase 3 \u2013 Auditoria",
+    "phase4": "Fase 4 \u2013 Julgamento",
+    "phase5": "Fase 5 \u2013 S\u00edntese",
+}
+
+
+def _diag_phase_number(phase_str: str) -> str:
+    """Extrai 'phase1' de 'fase1_E3'."""
+    if not phase_str:
+        return "unknown"
+    part = phase_str.split("_")[0]
+    num = "".join(c for c in part if c.isdigit())
+    return f"phase{num}" if num else "unknown"
+
+
+def _diag_system_health() -> dict:
+    """Recolhe estado do sistema (circuit breaker, pricing, analises activas)."""
+    circuit = {"openai_open": False, "reason": "", "opened_at": None}
+    try:
+        from src.llm_client import get_llm_client
+        client = get_llm_client()
+        with client._circuit_lock:
+            circuit["openai_open"] = client._openai_circuit_open
+            circuit["reason"] = client._openai_circuit_reason or ""
+            if client._openai_circuit_opened_at:
+                circuit["opened_at"] = client._openai_circuit_opened_at.isoformat()
+    except Exception:
+        pass
+
+    pricing_source = "unknown"
+    pricing_cache = {}
+    try:
+        from src.cost_controller import DynamicPricing
+        pricing_source = DynamicPricing.get_pricing_source()
+        pricing_cache = DynamicPricing.get_cache_info()
+    except Exception:
+        pass
+
+    with _active_lock:
+        active_count = len(_active_user_analyses)
+
+    return {
+        "circuit_breaker": circuit,
+        "pricing_source": pricing_source,
+        "pricing_cache": pricing_cache,
+        "active_analyses": active_count,
+    }
+
+
+def _diag_per_phase(rows: list) -> list:
+    """Agrega metricas por fase do pipeline."""
+    from collections import defaultdict
+    phases: dict = defaultdict(lambda: {
+        "calls": 0, "success": 0, "total_latency": 0.0, "total_cost": 0.0,
+        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0,
+    })
+    for r in rows:
+        p = _diag_phase_number(r.get("phase", ""))
+        ph = phases[p]
+        ph["calls"] += 1
+        if r.get("success"):
+            ph["success"] += 1
+        ph["total_latency"] += float(r.get("latency_ms") or 0)
+        ph["total_cost"] += float(r.get("cost_usd") or 0)
+        ph["prompt_tokens"] += int(r.get("prompt_tokens") or 0)
+        ph["completion_tokens"] += int(r.get("completion_tokens") or 0)
+        ph["cached_tokens"] += int(r.get("cached_tokens") or 0)
+        ph["reasoning_tokens"] += int(r.get("reasoning_tokens") or 0)
+
+    total_latency_all = sum(ph["total_latency"] for ph in phases.values()) or 1.0
+    max_avg_lat = 0.0
+    max_lat_phase = ""
+    result = []
+    for p_key in sorted(phases.keys()):
+        ph = phases[p_key]
+        tc = max(ph["calls"], 1)
+        avg_lat = ph["total_latency"] / tc
+        if ph["calls"] >= 3 and avg_lat > max_avg_lat:
+            max_avg_lat = avg_lat
+            max_lat_phase = p_key
+        result.append({
+            "phase": p_key,
+            "phase_label": _DIAG_PHASE_LABELS.get(p_key, p_key),
+            "total_calls": ph["calls"],
+            "success_rate": round(ph["success"] / tc * 100, 1),
+            "avg_latency_ms": round(avg_lat),
+            "avg_cost_usd": round(ph["total_cost"] / tc, 4),
+            "total_cost_usd": round(ph["total_cost"], 4),
+            "total_prompt_tokens": ph["prompt_tokens"],
+            "total_completion_tokens": ph["completion_tokens"],
+            "total_cached_tokens": ph["cached_tokens"],
+            "total_reasoning_tokens": ph["reasoning_tokens"],
+            "is_bottleneck": False,
+            "pct_of_total_time": round(ph["total_latency"] / total_latency_all * 100, 1),
+        })
+    for item in result:
+        if item["phase"] == max_lat_phase:
+            item["is_bottleneck"] = True
+    return result
+
+
+def _diag_per_model(rows: list) -> list:
+    """Agrega metricas por modelo de IA."""
+    from collections import defaultdict
+    models: dict = defaultdict(lambda: {
+        "roles": set(), "calls": 0, "success": 0,
+        "total_latency": 0.0, "total_cost": 0.0, "total_tokens": 0,
+        "cached_tokens": 0, "prompt_tokens": 0,
+        "excerpt_mismatches": 0, "range_invalids": 0,
+        "page_mismatches": 0, "missing_citations": 0,
+        "confidence_sum": 0.0, "confidence_count": 0,
+        "errors": defaultdict(int),
+        "retries": 0, "retry_success": 0,
+    })
+    for r in rows:
+        m = r.get("model") or "unknown"
+        md = models[m]
+        md["roles"].add(r.get("role") or "?")
+        md["calls"] += 1
+        if r.get("success"):
+            md["success"] += 1
+        md["total_latency"] += float(r.get("latency_ms") or 0)
+        md["total_cost"] += float(r.get("cost_usd") or 0)
+        md["total_tokens"] += int(r.get("total_tokens") or 0)
+        md["cached_tokens"] += int(r.get("cached_tokens") or 0)
+        md["prompt_tokens"] += int(r.get("prompt_tokens") or 0)
+        md["excerpt_mismatches"] += int(r.get("excerpt_mismatches") or 0)
+        md["range_invalids"] += int(r.get("range_invalids") or 0)
+        md["page_mismatches"] += int(r.get("page_mismatches") or 0)
+        md["missing_citations"] += int(r.get("missing_citations") or 0)
+        conf = r.get("confidence_adjusted")
+        if conf is not None:
+            md["confidence_sum"] += float(conf)
+            md["confidence_count"] += 1
+        if not r.get("success") and r.get("error_type"):
+            md["errors"][r["error_type"]] += 1
+        if r.get("was_retry"):
+            md["retries"] += 1
+            if r.get("success"):
+                md["retry_success"] += 1
+
+    result = []
+    for m_name in sorted(models.keys()):
+        md = models[m_name]
+        tc = max(md["calls"], 1)
+        tt = max(md["total_tokens"], 1)
+        result.append({
+            "model": m_name,
+            "roles": sorted(md["roles"]),
+            "total_calls": md["calls"],
+            "successful": md["success"],
+            "failed": md["calls"] - md["success"],
+            "success_rate": round(md["success"] / tc * 100, 1),
+            "avg_latency_ms": round(md["total_latency"] / tc),
+            "avg_cost_usd": round(md["total_cost"] / tc, 4),
+            "total_cost_usd": round(md["total_cost"], 4),
+            "cost_per_1k_tokens": round(md["total_cost"] / tt * 1000, 4),
+            "cache_hit_rate": round(md["cached_tokens"] / max(md["prompt_tokens"], 1) * 100, 1),
+            "quality": {
+                "excerpt_mismatches": md["excerpt_mismatches"],
+                "range_invalids": md["range_invalids"],
+                "page_mismatches": md["page_mismatches"],
+                "missing_citations": md["missing_citations"],
+                "avg_confidence": round(
+                    md["confidence_sum"] / md["confidence_count"], 2
+                ) if md["confidence_count"] > 0 else None,
+            },
+            "errors": dict(md["errors"]),
+            "retry_stats": {
+                "total_retries": md["retries"],
+                "retry_success": md["retry_success"],
+                "retry_success_rate": round(
+                    md["retry_success"] / max(md["retries"], 1) * 100, 1
+                ),
+            },
+        })
+    result.sort(key=lambda x: x["total_calls"], reverse=True)
+    return result
+
+
+def _diag_quality(rows: list) -> dict:
+    """Agrega metricas de qualidade (citacoes, confianca, hints)."""
+    from collections import Counter
+    total_findings = 0
+    total_citations = 0
+    excerpt_total = 0
+    excerpt_mismatches = 0
+    page_total = 0
+    page_mismatches = 0
+    range_total = 0
+    range_invalids = 0
+    conf_buckets = {"high_90_100": 0, "good_75_90": 0, "moderate_50_75": 0, "low_0_50": 0}
+    hints_counter: Counter = Counter()
+
+    for r in rows:
+        fc = int(r.get("findings_count") or 0)
+        cc = int(r.get("citations_count") or 0)
+        total_findings += fc
+        total_citations += cc
+        em = int(r.get("excerpt_mismatches") or 0)
+        if cc > 0:
+            excerpt_total += cc
+            excerpt_mismatches += em
+        pm = int(r.get("page_mismatches") or 0)
+        if cc > 0:
+            page_total += cc
+            page_mismatches += pm
+        rv = int(r.get("range_invalids") or 0)
+        if cc > 0:
+            range_total += cc
+            range_invalids += rv
+        conf = r.get("confidence_adjusted")
+        if conf is not None:
+            c = float(conf)
+            if c >= 0.9:
+                conf_buckets["high_90_100"] += 1
+            elif c >= 0.75:
+                conf_buckets["good_75_90"] += 1
+            elif c >= 0.5:
+                conf_buckets["moderate_50_75"] += 1
+            else:
+                conf_buckets["low_0_50"] += 1
+        hints = r.get("adaptive_hints_used")
+        if hints and isinstance(hints, list):
+            for h in hints:
+                hints_counter[h] += 1
+
+    return {
+        "citation_accuracy": {
+            "total_findings": total_findings,
+            "total_citations": total_citations,
+            "avg_citations_per_finding": round(
+                total_citations / max(total_findings, 1), 2
+            ),
+            "findings_without_citations_pct": round(
+                max(0, total_findings - total_citations) / max(total_findings, 1) * 100, 1
+            ) if total_findings > total_citations else 0.0,
+        },
+        "excerpt_match_rate": round(
+            (1 - excerpt_mismatches / max(excerpt_total, 1)) * 100, 1
+        ),
+        "page_match_rate": round(
+            (1 - page_mismatches / max(page_total, 1)) * 100, 1
+        ),
+        "range_valid_rate": round(
+            (1 - range_invalids / max(range_total, 1)) * 100, 1
+        ),
+        "confidence_distribution": conf_buckets,
+        "top_adaptive_hints": [
+            {"hint": h, "count": c} for h, c in hints_counter.most_common(10)
+        ],
+    }
+
+
+def _diag_costs(rows: list, transactions: list) -> dict:
+    """Agrega custos por fase e tendencia diaria."""
+    from collections import defaultdict
+    cost_by_phase: dict = defaultdict(float)
+    for r in rows:
+        p = _diag_phase_number(r.get("phase", ""))
+        cost_by_phase[p] += float(r.get("cost_usd") or 0)
+
+    daily: dict = defaultdict(lambda: {"cost_usd": 0.0, "charged_usd": 0.0, "analyses": 0})
+    for tx in transactions:
+        d = (tx.get("created_at") or "")[:10]
+        if d:
+            daily[d]["cost_usd"] += float(tx.get("cost_real_usd") or 0)
+            daily[d]["charged_usd"] += float(tx.get("amount_usd") or 0)
+            daily[d]["analyses"] += 1
+
+    total_cost = sum(cost_by_phase.values())
+    total_charged = sum(dd["charged_usd"] for dd in daily.values())
+    total_analyses = sum(dd["analyses"] for dd in daily.values()) or 1
+
+    return {
+        "cost_per_phase": sorted(
+            [
+                {
+                    "phase": p,
+                    "label": _DIAG_PHASE_LABELS.get(p, p),
+                    "cost_usd": round(c, 4),
+                }
+                for p, c in cost_by_phase.items()
+            ],
+            key=lambda x: x["cost_usd"],
+            reverse=True,
+        ),
+        "daily_trend": sorted(
+            [
+                {
+                    "date": d,
+                    "cost_usd": round(v["cost_usd"], 4),
+                    "charged_usd": round(v["charged_usd"], 4),
+                    "analyses": v["analyses"],
+                }
+                for d, v in daily.items()
+            ],
+            key=lambda x: x["date"],
+        ),
+        "total_cost_usd": round(total_cost, 4),
+        "total_charged_usd": round(total_charged, 4),
+        "markup_effective_pct": round(
+            (total_charged / max(total_cost, 0.0001) - 1) * 100, 1
+        ) if total_cost > 0 else 0.0,
+        "avg_cost_per_analysis": round(total_cost / total_analyses, 4),
+        "avg_charge_per_analysis": round(total_charged / total_analyses, 4),
+    }
+
+
+def _diag_errors(rows: list) -> dict:
+    """Agrega erros por tipo, tendencia e piores modelos."""
+    from collections import defaultdict, Counter
+    error_types: Counter = Counter()
+    daily_errors: dict = defaultdict(lambda: {"errors": 0, "total": 0})
+    model_fails: dict = defaultdict(lambda: {"calls": 0, "fails": 0})
+    total_retries = 0
+    retry_success = 0
+    total_errors = 0
+
+    for r in rows:
+        d = (r.get("created_at") or "")[:10]
+        if d:
+            daily_errors[d]["total"] += 1
+        m = r.get("model") or "unknown"
+        model_fails[m]["calls"] += 1
+        if not r.get("success"):
+            total_errors += 1
+            et = r.get("error_type") or "OTHER"
+            error_types[et] += 1
+            if d:
+                daily_errors[d]["errors"] += 1
+            model_fails[m]["fails"] += 1
+        if r.get("was_retry"):
+            total_retries += 1
+            if r.get("success"):
+                retry_success += 1
+
+    total_calls = max(len(rows), 1)
+
+    worst = sorted(
+        [
+            {
+                "model": m,
+                "success_rate": round(
+                    (1 - v["fails"] / max(v["calls"], 1)) * 100, 1
+                ),
+                "total_calls": v["calls"],
+                "fails": v["fails"],
+            }
+            for m, v in model_fails.items()
+            if v["calls"] >= 3
+        ],
+        key=lambda x: x["success_rate"],
+    )
+
+    return {
+        "total_errors": total_errors,
+        "error_rate_pct": round(total_errors / total_calls * 100, 1),
+        "errors_by_type": [
+            {"type": t, "count": c, "pct": round(c / max(total_errors, 1) * 100, 1)}
+            for t, c in error_types.most_common()
+        ],
+        "daily_error_trend": sorted(
+            [
+                {
+                    "date": d,
+                    "errors": v["errors"],
+                    "total_calls": v["total"],
+                    "error_rate": round(v["errors"] / max(v["total"], 1) * 100, 1),
+                }
+                for d, v in daily_errors.items()
+            ],
+            key=lambda x: x["date"],
+        ),
+        "retry_stats": {
+            "total_retries": total_retries,
+            "successful_retries": retry_success,
+            "retry_success_rate": round(
+                retry_success / max(total_retries, 1) * 100, 1
+            ),
+        },
+        "worst_models": worst[:5],
+    }
+
+
+def _diag_recent(docs: list) -> list:
+    """Formata analises recentes."""
+    result = []
+    for d in docs:
+        result.append({
+            "id": d.get("id"),
+            "title": d.get("title") or "Sem titulo",
+            "status": d.get("status") or "unknown",
+            "tier": d.get("tier") or "",
+            "area": d.get("area_direito") or "",
+            "cost_real_usd": float(d.get("custo_real_usd") or 0),
+            "cost_charged_usd": float(d.get("custo_cobrado_usd") or 0),
+            "duration_seconds": float(d.get("duracao_segundos") or 0),
+            "tokens": int(d.get("total_tokens") or 0),
+            "created_at": d.get("created_at") or "",
+        })
+    return result
+
+
+@app.get("/admin/diagnostics")
+@limiter.limit("10/minute")
+async def admin_diagnostics(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=90),
+    user: dict = Depends(get_current_user),
+):
+    """Painel de diagnostico tecnico completo (apenas admin)."""
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Apenas administradores.")
+
+    try:
+        sb = get_supabase_admin()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        perf_resp = sb.table("model_performance").select(
+            "phase, model, role, success, latency_ms, cost_usd, "
+            "prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, "
+            "excerpt_mismatches, range_invalids, page_mismatches, missing_citations, "
+            "error_type, was_retry, "
+            "confidence_adjusted, "
+            "adaptive_hints_used, "
+            "findings_count, citations_count, created_at"
+        ).gte("created_at", cutoff).order("created_at", desc=True).limit(5000).execute()
+
+        docs_resp = sb.table("documents").select(
+            "id, title, status, tier, area_direito, custo_real_usd, "
+            "custo_cobrado_usd, duracao_segundos, total_tokens, created_at"
+        ).order("created_at", desc=True).limit(20).execute()
+
+        tx_resp = sb.table("wallet_transactions").select(
+            "amount_usd, cost_real_usd, created_at"
+        ).eq("type", "debit").gte("created_at", cutoff).execute()
+
+        rows = perf_resp.data or []
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "data_window_days": days,
+            "total_records": len(rows),
+            "system_health": _diag_system_health(),
+            "per_phase": _diag_per_phase(rows),
+            "per_model": _diag_per_model(rows),
+            "quality_metrics": _diag_quality(rows),
+            "cost_analysis": _diag_costs(rows, tx_resp.data or []),
+            "error_analysis": _diag_errors(rows),
+            "recent_analyses": _diag_recent(docs_resp.data or []),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erro em diagnostics: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao gerar diagnostico.")
+
+
 @app.get("/admin/profit-report")
 @limiter.limit("30/minute")
 async def admin_profit_report(
