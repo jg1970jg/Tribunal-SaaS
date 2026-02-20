@@ -594,7 +594,7 @@ class OpenAIClient:
             )
 
             # Extrair resposta
-            choice = raw_response.get("choices", [{}])[0]
+            choice = (raw_response.get("choices") or [{}])[0]
             message = choice.get("message", {})
             content = message.get("content", "")
             usage = raw_response.get("usage", {})
@@ -1092,7 +1092,7 @@ class OpenRouterClient:
             )
 
             # Extrair resposta
-            choice = raw_response.get("choices", [{}])[0]
+            choice = (raw_response.get("choices") or [{}])[0]
             message = choice.get("message", {})
             content = message.get("content", "")
             usage = raw_response.get("usage", {})

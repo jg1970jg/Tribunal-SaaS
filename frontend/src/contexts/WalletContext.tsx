@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -49,8 +49,8 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
   const [balance, setBalance] = useState<WalletBalance | null>(null);
   const [loading, setLoading] = useState(true);
   const [insufficientFunds, setInsufficientFunds] = useState<InsufficientFundsError | null>(null);
-  const [lastFetchTime, setLastFetchTime] = useState(0);
-  const [consecutiveErrors, setConsecutiveErrors] = useState(0);
+  const lastFetchTimeRef = useRef(0);
+  const consecutiveErrorsRef = useRef(0);
 
   const getAuthHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -63,50 +63,44 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
 
   const refreshBalance = useCallback(async () => {
     // Stop completely after 5+ consecutive errors
-    if (consecutiveErrors >= 5) {
+    if (consecutiveErrorsRef.current >= 5) {
       setLoading(false);
       return;
     }
 
     // Minimum 10s between any calls to avoid duplicates
     const now = Date.now();
-    if (now - lastFetchTime < 10000) return;
+    if (now - lastFetchTimeRef.current < 10000) return;
 
     // Exponential backoff: 30s × 2^errors, max 5 min
-    const minInterval = Math.min(30000 * Math.pow(2, consecutiveErrors), 300000);
-    if (now - lastFetchTime < minInterval && lastFetchTime > 0) return;
+    const minInterval = Math.min(30000 * Math.pow(2, consecutiveErrorsRef.current), 300000);
+    if (now - lastFetchTimeRef.current < minInterval && lastFetchTimeRef.current > 0) return;
 
     try {
       const headers = await getAuthHeaders();
       if (!headers.Authorization) return;
-      setLastFetchTime(now);
+      lastFetchTimeRef.current = now;
       const res = await fetch(`${BACKEND_URL}/wallet/balance`, { headers });
       if (res.ok) {
         const data = await res.json();
         setBalance(data);
-        setConsecutiveErrors(0);
+        consecutiveErrorsRef.current = 0;
       } else {
-        setConsecutiveErrors(prev => {
-          const next = prev + 1;
-          if (next >= 5) {
-            toast.error("Não foi possível contactar o servidor. Recarregue a página para tentar novamente.");
-          }
-          return next;
-        });
+        consecutiveErrorsRef.current += 1;
+        if (consecutiveErrorsRef.current >= 5) {
+          toast.error("Não foi possível contactar o servidor. Recarregue a página para tentar novamente.");
+        }
         console.warn(`Wallet balance fetch failed: ${res.status} (backoff: ${minInterval / 1000}s)`);
       }
     } catch {
-      setConsecutiveErrors(prev => {
-        const next = prev + 1;
-        if (next >= 5) {
-          toast.error("Não foi possível contactar o servidor. Recarregue a página para tentar novamente.");
-        }
-        return next;
-      });
+      consecutiveErrorsRef.current += 1;
+      if (consecutiveErrorsRef.current >= 5) {
+        toast.error("Não foi possível contactar o servidor. Recarregue a página para tentar novamente.");
+      }
     } finally {
       setLoading(false);
     }
-  }, [getAuthHeaders, lastFetchTime, consecutiveErrors]);
+  }, [getAuthHeaders]);
 
   const fetchTransactions = useCallback(async (limit = 50, offset = 0, typeFilter = "") => {
     const headers = await getAuthHeaders();

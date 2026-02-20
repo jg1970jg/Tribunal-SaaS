@@ -360,14 +360,20 @@ async def lifespan(app: FastAPI):
     if not supabase_url or not supabase_key:
         logger.warning("[AVISO] SUPABASE_URL ou SUPABASE_KEY não definidos no .env")
     else:
-        get_supabase()
-        logger.info(f"[OK] Supabase (anon) conectado: {supabase_url[:40]}...")
+        try:
+            get_supabase()
+            logger.info(f"[OK] Supabase (anon) conectado: {supabase_url[:40]}...")
+        except Exception as e:
+            logger.error(f"[ERRO] Falha ao inicializar Supabase (anon): {e}")
 
     if not service_role_key:
         logger.warning("[AVISO] SUPABASE_SERVICE_ROLE_KEY não definida - operações de servidor falharão")
     else:
-        get_supabase_admin()
-        logger.info("[OK] Supabase (service_role) conectado.")
+        try:
+            get_supabase_admin()
+            logger.info("[OK] Supabase (service_role) conectado.")
+        except Exception as e:
+            logger.error(f"[ERRO] Falha ao inicializar Supabase (service_role): {e}")
 
     # v5.2: Registar signal handlers para cleanup de créditos
     signal.signal(signal.SIGTERM, _sigterm_handler)
@@ -376,6 +382,16 @@ async def lifespan(app: FastAPI):
 
     # v5.2: Cleanup de créditos órfãos no startup
     _cleanup_orphan_blocks()
+
+    # v7.0: Cleanup de pastas temporárias no startup
+    try:
+        from src.utils.cleanup import cleanup_temp_folders
+        from src.config import OUTPUT_DIR
+        removed, freed, msgs = cleanup_temp_folders(OUTPUT_DIR, max_age_hours=24, dry_run=False)
+        if removed > 0:
+            logger.info(f"[CLEANUP] {removed} pasta(s) temp removida(s), {freed} bytes libertados")
+    except Exception as e:
+        logger.debug(f"[CLEANUP] Limpeza de temp folders falhou (non-blocking): {e}")
 
     logger.info("[OK] LexForum - Servidor iniciado.")
     yield
@@ -470,6 +486,9 @@ async def me(request: Request, user: dict = Depends(get_current_user)):
         "email": user["email"],
     }
 
+
+# Semáforo global: limita análises concorrentes a 1 para prevenir OOM (512MB Render)
+_analysis_semaphore = asyncio.Semaphore(1)
 
 # Anti-duplicado: impede 2 análises do mesmo user ao mesmo tempo
 _active_user_analyses: dict[str, str] = {}  # user_id -> analysis_id
@@ -595,17 +614,22 @@ async def analyze(
             logger.warning(f"[DOCS] Erro ao criar documento pré-análise: {e}")
 
         # FIX 2026-02-14: Executar em thread separada para não bloquear event loop
-        resultado = await asyncio.to_thread(
-            executar_analise_documento,
-            user_id=user["id"],
-            file_bytes=file_bytes,
-            filename=safe_filename,
-            area_direito=area_direito,
-            perguntas_raw=perguntas_raw,
-            titulo=titulo,
-            tier=tier,
-            analysis_id=_analysis_id,
-        )
+        # v7.0: Semáforo limita a 1 análise concorrente (previne OOM em 512MB)
+        await _analysis_semaphore.acquire()
+        try:
+            resultado = await asyncio.to_thread(
+                executar_analise_documento,
+                user_id=user["id"],
+                file_bytes=file_bytes,
+                filename=safe_filename,
+                area_direito=area_direito,
+                perguntas_raw=perguntas_raw,
+                titulo=titulo,
+                tier=tier,
+                analysis_id=_analysis_id,
+            )
+        finally:
+            _analysis_semaphore.release()
 
         result_dict = resultado.to_dict()
 

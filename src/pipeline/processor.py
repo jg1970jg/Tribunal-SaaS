@@ -199,6 +199,8 @@ class PipelineResult:
     resumo_por_ia: Optional[dict] = None
     # v4.0: Fase 0 Triagem
     fase0_triage: Optional[dict] = None
+    # Metadata genérico (usado pelo engine para settlement warnings, etc.)
+    metadata: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return {
@@ -243,6 +245,7 @@ class PipelineResult:
             "documento_chars": self.documento.num_chars if self.documento else 0,
             "documento_palavras": self.documento.num_words if self.documento else 0,
             "documento_paginas": getattr(self.documento, 'num_pages', None) if self.documento else None,
+            "metadata": self.metadata,
         }
 
 

@@ -218,13 +218,16 @@ def _find_all_matches(
     """Encontra todos os matches de excerpt em text."""
     matches = []
 
+    text_lower = text.lower()
+    excerpt_lower = excerpt.lower()
+    excerpt_len = len(excerpt)
     start_pos = 0
     while True:
-        idx = text.lower().find(excerpt.lower(), start_pos)
+        idx = text_lower.find(excerpt_lower, start_pos)
         if idx < 0:
             break
-        ratio = 1.0 if text[idx:idx+len(excerpt)] == excerpt else 0.99
-        matches.append({"start": idx, "end": idx + len(excerpt), "ratio": ratio})
+        ratio = 1.0 if text[idx:idx+excerpt_len] == excerpt else 0.99
+        matches.append({"start": idx, "end": idx + excerpt_len, "ratio": ratio})
         start_pos = idx + 1
 
     if matches:
