@@ -44,7 +44,7 @@ CREATE POLICY "profiles_update_own"
 -- Service role (backend) pode fazer tudo
 CREATE POLICY "profiles_service_role_all"
     ON public.profiles FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 
 -- ============================================================
@@ -77,7 +77,7 @@ CREATE POLICY "blocked_credits_select_own"
 
 CREATE POLICY "blocked_credits_service_role_all"
     ON public.blocked_credits FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 
 -- ============================================================
@@ -113,7 +113,7 @@ CREATE POLICY "wallet_tx_select_own"
 
 CREATE POLICY "wallet_tx_service_role_all"
     ON public.wallet_transactions FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 
 -- ============================================================
@@ -134,7 +134,7 @@ CREATE POLICY "wallet_balances_select_own"
 
 CREATE POLICY "wallet_balances_service_role_all"
     ON public.wallet_balances FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 
 -- ============================================================

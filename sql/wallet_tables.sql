@@ -48,7 +48,7 @@ CREATE POLICY "Users can view own balance"
 -- Service role pode fazer tudo (backend)
 CREATE POLICY "Service role full access on wallet_balances"
     ON wallet_balances FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 COMMENT ON TABLE wallet_balances IS 'Saldo pré-pago de cada utilizador em USD';
 
@@ -92,7 +92,7 @@ CREATE POLICY "Users can view own transactions"
 -- Service role pode fazer tudo (backend)
 CREATE POLICY "Service role full access on wallet_transactions"
     ON wallet_transactions FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 COMMENT ON TABLE wallet_transactions IS 'Histórico de débitos e créditos da wallet';
 COMMENT ON COLUMN wallet_transactions.type IS 'debit = análise executada, credit = carregamento de saldo';
@@ -131,7 +131,7 @@ ALTER TABLE wallet_config ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Service role full access on wallet_config"
     ON wallet_config FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 COMMENT ON TABLE wallet_config IS 'Configuração dinâmica do sistema de wallet';
 

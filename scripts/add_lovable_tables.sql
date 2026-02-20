@@ -54,7 +54,7 @@ CREATE POLICY "documents_delete_own"
 -- Service role (backend) can do everything
 CREATE POLICY "documents_service_role_all"
     ON public.documents FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 
 -- ============================================================
@@ -84,7 +84,7 @@ CREATE POLICY "user_wallets_update_own"
 -- Service role (backend) pode fazer tudo
 CREATE POLICY "user_wallets_service_role_all"
     ON public.user_wallets FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 
 -- ============================================================
@@ -117,7 +117,7 @@ CREATE POLICY "user_roles_select_own"
 -- Service role (backend) pode fazer tudo
 CREATE POLICY "user_roles_service_role_all"
     ON public.user_roles FOR ALL
-    USING (auth.role() = 'service_role');
+    USING ((auth.jwt()->>'role') = 'service_role');
 
 
 -- ============================================================
