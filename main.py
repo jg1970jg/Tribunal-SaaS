@@ -1465,13 +1465,13 @@ async def admin_model_performance(
 # ============================================================
 
 _DIAG_PHASE_LABELS = {
-    "extrator": "Fase 1 \u2013 Extrac\u00e7\u00e3o",
-    "agregador": "Fase 2 \u2013 Agrega\u00e7\u00e3o",
-    "auditor": "Fase 3 \u2013 Auditoria",
-    "consolidador": "Fase 3B \u2013 Consolida\u00e7\u00e3o",
-    "relator": "Fase 4 \u2013 Julgamento",
-    "presidente": "Fase 5 \u2013 S\u00edntese",
-    "curador": "Fase 0 \u2013 Triagem",
+    "phase0": "Fase 0 \u2013 Triagem",
+    "phase1": "Fase 1 \u2013 Extrac\u00e7\u00e3o",
+    "phase2": "Fase 2 \u2013 Agrega\u00e7\u00e3o",
+    "phase3": "Fase 3 \u2013 Auditoria",
+    "phase3b": "Fase 3B \u2013 Consolida\u00e7\u00e3o",
+    "phase4": "Fase 4 \u2013 Julgamento",
+    "phase5": "Fase 5 \u2013 S\u00edntese",
 }
 
 # Mapeamento de nomes de fase para cores no frontend
