@@ -386,6 +386,7 @@ CORS_ORIGINS = [
     "https://www.lexforum.eu",
     "https://lovable.dev",
     "https://lexportal.lovable.app",
+    "https://lexforum.lovable.app",
     "https://lexportal.lovable.dev",
 ]
 if os.environ.get("ENV", "production").lower() in ("development", "dev", "local"):
