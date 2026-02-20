@@ -1,0 +1,1 @@
+ALTER TABLE public.documents DROP CONSTRAINT IF EXISTS documents_risk_level_check;

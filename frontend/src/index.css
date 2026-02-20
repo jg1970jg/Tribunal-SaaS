@@ -1,0 +1,122 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 220 30% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 30% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 30% 15%;
+
+    --primary: 220 50% 20%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 15% 92%;
+    --secondary-foreground: 220 30% 15%;
+
+    --muted: 220 15% 95%;
+    --muted-foreground: 220 10% 50%;
+
+    --accent: 220 60% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 15% 90%;
+    --input: 220 15% 90%;
+    --ring: 220 50% 20%;
+
+    --radius: 0.625rem;
+
+    --sidebar-background: 220 50% 20%;
+    --sidebar-foreground: 220 15% 92%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 220 50% 20%;
+    --sidebar-accent: 220 45% 28%;
+    --sidebar-accent-foreground: 220 15% 92%;
+    --sidebar-border: 220 45% 28%;
+    --sidebar-ring: 220 60% 50%;
+
+    /* Custom tokens */
+    --navy: 220 50% 20%;
+    --navy-light: 220 45% 28%;
+    --navy-dark: 220 55% 14%;
+    --steel: 220 15% 65%;
+    --ice: 220 30% 96%;
+    --success: 152 60% 42%;
+    --warning: 38 92% 50%;
+  }
+
+  .dark {
+    --background: 220 30% 8%;
+    --foreground: 220 15% 92%;
+    --card: 220 30% 12%;
+    --card-foreground: 220 15% 92%;
+    --popover: 220 30% 12%;
+    --popover-foreground: 220 15% 92%;
+    --primary: 220 60% 60%;
+    --primary-foreground: 220 30% 8%;
+    --secondary: 220 25% 18%;
+    --secondary-foreground: 220 15% 92%;
+    --muted: 220 25% 18%;
+    --muted-foreground: 220 10% 60%;
+    --accent: 220 60% 50%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 25% 20%;
+    --input: 220 25% 20%;
+    --ring: 220 60% 60%;
+    --sidebar-background: 220 30% 8%;
+    --sidebar-foreground: 220 15% 92%;
+    --sidebar-primary: 220 60% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 25% 18%;
+    --sidebar-accent-foreground: 220 15% 92%;
+    --sidebar-border: 220 25% 20%;
+    --sidebar-ring: 220 60% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-card/80 backdrop-blur-xl border border-border/50;
+  }
+  
+  .gradient-navy {
+    background: linear-gradient(135deg, hsl(var(--navy-dark)), hsl(var(--navy)), hsl(var(--navy-light)));
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--navy)), hsl(var(--accent)));
+  }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-shimmer {
+  animation: shimmer 3s infinite;
+}
