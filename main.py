@@ -517,6 +517,9 @@ async def analyze(
             )
         _active_user_analyses[user_id] = "starting"
 
+    _doc_id = None  # v6.0: inicializado cedo para estar disponível no finally
+    _analysis_id = None
+
     try:
         # Pre-check Content-Length to reject oversized files early
         content_length = request.headers.get("content-length")
@@ -569,6 +572,28 @@ async def analyze(
         with _active_lock:
             _active_user_analyses[user_id] = _analysis_id
 
+        # v6.0: Criar documento na BD ANTES da análise (visibilidade + SIGTERM)
+        try:
+            sb_admin = get_supabase_admin()
+            doc_record = {
+                "user_id": user["id"],
+                "title": titulo or safe_filename,
+                "status": "analyzing",
+                "tier": tier,
+                "area_direito": area_direito.strip().title(),
+                "filename": safe_filename,
+                "file_size_bytes": len(file_bytes),
+                "analysis_id": _analysis_id,
+            }
+            insert_resp = sb_admin.table("documents").insert(doc_record).execute()
+            if insert_resp.data:
+                _doc_id = insert_resp.data[0]["id"]
+                logger.info(f"[DOCS] Documento criado (analyzing): doc_id={_doc_id}, analysis_id={_analysis_id}")
+            else:
+                logger.warning("[DOCS] Insert returned empty data — documento pode não ter sido criado")
+        except Exception as e:
+            logger.warning(f"[DOCS] Erro ao criar documento pré-análise: {e}")
+
         # FIX 2026-02-14: Executar em thread separada para não bloquear event loop
         resultado = await asyncio.to_thread(
             executar_analise_documento,
@@ -584,7 +609,7 @@ async def analyze(
 
         result_dict = resultado.to_dict()
 
-        # Guardar resultado na tabela documents
+        # v6.0: Actualizar documento com resultado (em vez de criar novo)
         try:
             sb_admin = get_supabase_admin()
             custos = result_dict.get("custos") or {}
@@ -595,37 +620,41 @@ async def analyze(
                 f"custo_real={custo_real}, custo_cobrado={custo_cobrado}, "
                 f"type_real={type(custo_real).__name__}, type_cobrado={type(custo_cobrado).__name__}"
             )
-            doc_record = {
-                "user_id": user["id"],
-                "title": titulo or result_dict.get("documento_filename", ""),
+            update_data = {
+                "title": titulo or result_dict.get("documento_filename", safe_filename),
                 "analysis_result": result_dict,
                 "status": "completed" if resultado.sucesso else "error",
-                "tier": tier,
-                "area_direito": area_direito.strip().title(),
                 "run_id": result_dict.get("run_id", ""),
-                "filename": safe_filename,
-                "file_size_bytes": len(file_bytes),
                 "total_tokens": result_dict.get("total_tokens", 0),
                 "custo_real_usd": float(custo_real) if custo_real else 0.0,
                 "custo_cobrado_usd": float(custo_cobrado) if custo_cobrado else 0.0,
                 "duracao_segundos": result_dict.get("duracao_total_s", 0),
-                "analysis_id": _analysis_id,
             }
-            insert_resp = sb_admin.table("documents").insert(doc_record).execute()
-            if not insert_resp.data:
-                logger.warning("[DOCS] Insert returned empty data - document record may not have been saved")
-            doc_id = insert_resp.data[0]["id"] if insert_resp.data else None
-            if doc_id:
-                result_dict["document_id"] = doc_id
-                logger.info(f"[DOCS] Resultado guardado: doc_id={doc_id}")
+            if _doc_id:
+                sb_admin.table("documents").update(update_data).eq("id", _doc_id).execute()
+                result_dict["document_id"] = _doc_id
+                logger.info(f"[DOCS] Resultado guardado (update): doc_id={_doc_id}")
                 # Ligar document_id aos registos de model_performance
                 try:
                     from src.performance_tracker import PerformanceTracker
                     tracker = PerformanceTracker.get_instance()
                     if tracker:
-                        tracker.link_document_id(result_dict.get("run_id", ""), doc_id)
+                        tracker.link_document_id(result_dict.get("run_id", ""), _doc_id)
                 except Exception as e:
                     logger.warning(f"[PERF] Falha ao ligar document_id: {e}")
+            else:
+                # Fallback: inserir se não temos doc_id (não deveria acontecer)
+                update_data.update({
+                    "user_id": user["id"],
+                    "filename": safe_filename,
+                    "file_size_bytes": len(file_bytes),
+                    "analysis_id": _analysis_id,
+                })
+                insert_resp = sb_admin.table("documents").insert(update_data).execute()
+                doc_id = insert_resp.data[0]["id"] if insert_resp.data else None
+                if doc_id:
+                    result_dict["document_id"] = doc_id
+                    logger.info(f"[DOCS] Resultado guardado (fallback insert): doc_id={doc_id}")
         except Exception as e:
             logger.warning(f"[DOCS] Erro ao guardar resultado: {e}")
 
@@ -677,6 +706,16 @@ async def analyze(
         # Anti-duplo-clique: libertar o user
         with _active_lock:
             _active_user_analyses.pop(user_id, None)
+        # v6.0: Marcar documento como "error" se ainda estiver "analyzing"
+        if _doc_id:
+            try:
+                sb_admin = get_supabase_admin()
+                check = sb_admin.table("documents").select("status").eq("id", _doc_id).single().execute()
+                if check.data and check.data.get("status") == "analyzing":
+                    sb_admin.table("documents").update({"status": "error"}).eq("id", _doc_id).execute()
+                    logger.warning(f"[DOCS] Documento marcado como error (excepção): doc_id={_doc_id}")
+            except Exception as e:
+                logger.warning(f"[DOCS] Falha ao actualizar status do documento após erro: {e}")
 
 
 # ============================================================
