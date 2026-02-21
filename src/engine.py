@@ -305,11 +305,22 @@ def carregar_documento_de_bytes(
             f"Falha ao carregar documento '{filename}': {doc.error}"
         )
 
+    # Pipeline v4.2: guardar file_bytes no metadata para OCR posterior
+    from src.config import USE_PIPELINE_V42
+    if doc.metadata is None:
+        doc.metadata = {}
+    doc.metadata["file_bytes"] = file_bytes
+
     if not doc.text or not doc.text.strip():
-        raise InvalidDocumentError(
-            f"Documento '{filename}' nao tem texto extraivel. "
-            f"Verifique se o PDF nao e uma imagem escaneada."
-        )
+        if USE_PIPELINE_V42 and ext == ".pdf":
+            # Pipeline v4.2: PDFs sem texto serão processados por OCR (Eden AI)
+            logger.info(f"[DOC] PDF sem texto nativo — Pipeline v4.2 fará OCR: {filename}")
+            doc.text = ""  # Texto vazio, M1 detectará is_scanned=True
+        else:
+            raise InvalidDocumentError(
+                f"Documento '{filename}' nao tem texto extraivel. "
+                f"Verifique se o PDF nao e uma imagem escaneada."
+            )
 
     logger.info(f"[DOC] Carregado: {filename} | {doc.num_chars:,} chars | {doc.num_words:,} palavras | {doc.num_pages} paginas")
     return doc
