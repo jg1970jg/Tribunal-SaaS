@@ -33,6 +33,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 import threading
+import httpx
 
 from auth_service import get_current_user, get_supabase, get_supabase_admin
 from src.engine import (
@@ -1633,6 +1634,66 @@ async def admin_list_users(
     except Exception as e:
         logger.error(f"Erro ao listar utilizadores: {e}")
         raise HTTPException(status_code=500, detail="Erro ao listar utilizadores.")
+
+
+# ============================================================
+# ADMIN - EXTERNAL BALANCES (OpenRouter + Eden AI)
+# ============================================================
+
+_ext_balance_cache: dict = {"data": None, "ts": 0.0}
+
+@app.get("/admin/external-balances")
+@limiter.limit("30/minute")
+async def admin_external_balances(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Saldos externos: OpenRouter (API) + Eden AI (link). Apenas admin."""
+    admin_email = (user.get("email", "") or "").lower().strip()
+    if admin_email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Apenas administradores.")
+
+    now = datetime.now(timezone.utc).timestamp()
+    if _ext_balance_cache["data"] and (now - _ext_balance_cache["ts"]) < 60:
+        return _ext_balance_cache["data"]
+
+    openrouter_data = {"error": "Não foi possível obter saldo"}
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if api_key:
+        headers = {"Authorization": f"Bearer {api_key}"}
+        for endpoint in ["/api/v1/credits", "/api/v1/key"]:
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.get(f"https://openrouter.ai{endpoint}", headers=headers)
+                if resp.status_code == 200:
+                    d = resp.json()
+                    if "data" in d:
+                        d = d["data"]
+                    total = float(d.get("total_credits", d.get("limit", 0)) or 0)
+                    usage = float(d.get("total_usage", d.get("usage", 0)) or 0)
+                    openrouter_data = {
+                        "balance_usd": round(total - usage, 2),
+                        "total_credits": round(total, 2),
+                        "total_usage": round(usage, 2),
+                        "last_updated": datetime.now(timezone.utc).isoformat(),
+                    }
+                    break
+                elif resp.status_code == 403:
+                    continue
+                else:
+                    openrouter_data = {"error": f"HTTP {resp.status_code}"}
+                    break
+            except Exception as e:
+                openrouter_data = {"error": str(e)}
+                break
+
+    result = {
+        "openrouter": openrouter_data,
+        "eden_ai": {"dashboard_url": "https://app.edenai.run/billing"},
+    }
+    _ext_balance_cache["data"] = result
+    _ext_balance_cache["ts"] = now
+    return result
 
 
 # ============================================================

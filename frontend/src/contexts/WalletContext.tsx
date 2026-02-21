@@ -27,6 +27,19 @@ interface InsufficientFundsError {
   moeda: string;
 }
 
+export interface ExternalBalances {
+  openrouter?: {
+    balance_usd: number;
+    total_credits: number;
+    total_usage: number;
+    last_updated: string;
+    error?: string;
+  };
+  eden_ai?: {
+    dashboard_url: string;
+  };
+}
+
 interface WalletContextType {
   balance: WalletBalance | null;
   loading: boolean;
@@ -35,6 +48,9 @@ interface WalletContextType {
   insufficientFunds: InsufficientFundsError | null;
   setInsufficientFunds: (e: InsufficientFundsError | null) => void;
   getAuthHeaders: () => Promise<Record<string, string>>;
+  isAdmin: boolean;
+  externalBalances: ExternalBalances | null;
+  refreshExternalBalances: () => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextType | null>(null);
@@ -49,6 +65,8 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
   const [balance, setBalance] = useState<WalletBalance | null>(null);
   const [loading, setLoading] = useState(true);
   const [insufficientFunds, setInsufficientFunds] = useState<InsufficientFundsError | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [externalBalances, setExternalBalances] = useState<ExternalBalances | null>(null);
   const lastFetchTimeRef = useRef(0);
   const consecutiveErrorsRef = useRef(0);
 
@@ -102,6 +120,19 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [getAuthHeaders]);
 
+  const refreshExternalBalances = useCallback(async () => {
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers.Authorization) return;
+      const res = await fetch(`${BACKEND_URL}/admin/external-balances`, { headers });
+      if (res.ok) {
+        setExternalBalances(await res.json());
+      }
+    } catch {
+      // Silent — admin-only, no need to toast
+    }
+  }, [getAuthHeaders]);
+
   const fetchTransactions = useCallback(async (limit = 50, offset = 0, typeFilter = "") => {
     const headers = await getAuthHeaders();
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
@@ -112,17 +143,39 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
     return { data: Array.isArray(data) ? data : data.transactions || [], total: data.total || (Array.isArray(data) ? data.length : 0) };
   }, [getAuthHeaders]);
 
+  // Check admin role on auth
   useEffect(() => {
+    const checkAdmin = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { setIsAdmin(false); return; }
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", session.user.id)
+        .eq("role", "admin")
+        .maybeSingle();
+      setIsAdmin(!!roleData);
+    };
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_IN") refreshBalance();
-      if (event === "SIGNED_OUT") { setBalance(null); setLoading(false); }
+      if (event === "SIGNED_IN") { refreshBalance(); checkAdmin(); }
+      if (event === "SIGNED_OUT") { setBalance(null); setLoading(false); setIsAdmin(false); setExternalBalances(null); }
     });
     refreshBalance();
+    checkAdmin();
     return () => subscription.unsubscribe();
   }, [refreshBalance]);
 
+  // Auto-refresh external balances for admin
+  useEffect(() => {
+    if (!isAdmin) return;
+    refreshExternalBalances();
+    const interval = setInterval(refreshExternalBalances, 60_000);
+    return () => clearInterval(interval);
+  }, [isAdmin, refreshExternalBalances]);
+
   return (
-    <WalletContext.Provider value={{ balance, loading, refreshBalance, fetchTransactions, insufficientFunds, setInsufficientFunds, getAuthHeaders }}>
+    <WalletContext.Provider value={{ balance, loading, refreshBalance, fetchTransactions, insufficientFunds, setInsufficientFunds, getAuthHeaders, isAdmin, externalBalances, refreshExternalBalances }}>
       {children}
     </WalletContext.Provider>
   );
