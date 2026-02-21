@@ -788,7 +788,7 @@ const DocumentDetails = () => {
                   </AccordionTrigger>
                   <AccordionContent>
                     {(() => {
-                      const costUsd = analysis.total_tokens != null ? analysis.total_tokens * 0.000003 : null;
+                      const costUsd = analysis.custos?.custo_cliente_usd ?? analysis.custos?.custo_total_usd ?? null;
                       let budgetLimit: number | null = null;
                       try { budgetLimit = parseFloat(localStorage.getItem("max_budget_usd") || ""); } catch {}
                       const overBudget = costUsd != null && budgetLimit != null && !isNaN(budgetLimit) && costUsd > budgetLimit;
@@ -810,7 +810,7 @@ const DocumentDetails = () => {
                             )}
                             {costUsd != null && (
                               <div className="bg-muted/50 rounded-lg p-3">
-                                <p className="text-xs text-muted-foreground mb-1">Custo Estimado</p>
+                                <p className="text-xs text-muted-foreground mb-1">Custo</p>
                                 <p className="text-sm font-semibold text-foreground">${costUsd.toFixed(4)}</p>
                               </div>
                             )}
@@ -825,7 +825,7 @@ const DocumentDetails = () => {
                             <div className="mt-3 rounded-lg bg-warning/10 border border-warning/30 p-3 flex items-start gap-2">
                               <span className="text-sm">⚠️</span>
                               <p className="text-sm text-warning">
-                                O custo estimado (${costUsd!.toFixed(4)}) excedeu o budget configurado (${budgetLimit!.toFixed(2)}).
+                                O custo (${costUsd!.toFixed(2)}) excedeu o budget configurado (${budgetLimit!.toFixed(2)}).
                               </p>
                             </div>
                           )}
