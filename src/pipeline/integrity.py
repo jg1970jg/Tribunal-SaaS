@@ -331,7 +331,11 @@ def validate_audit_report(
     if unified_result is not None:
         union_items = getattr(unified_result, 'union_items', [])
         for item in union_items:
-            valid_item_ids.add(getattr(item, 'item_id', ''))
+            iid = getattr(item, 'item_id', '')
+            if isinstance(iid, str):
+                valid_item_ids.add(iid)
+            elif iid:
+                valid_item_ids.add(str(iid))
 
     findings = getattr(report, 'findings', [])
     for finding in findings:
@@ -365,7 +369,8 @@ def validate_audit_report(
                 confidence_penalty += 0.03
 
         evidence_ids = getattr(finding, 'evidence_item_ids', [])
-        for item_id in evidence_ids:
+        for raw_item_id in evidence_ids:
+            item_id = str(raw_item_id) if not isinstance(raw_item_id, str) else raw_item_id
             if valid_item_ids and item_id not in valid_item_ids:
                 # FIX 2026-02-14: Fuzzy match — LLMs frequentemente truncam ou alteram item_ids
                 # Verificar se existe um item_id que começa com o mesmo prefixo (≥10 chars)

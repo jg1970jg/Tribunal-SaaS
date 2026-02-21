@@ -398,9 +398,10 @@ class ConfidencePolicyCalculator:
 
     def _count_string_errors(self, errors: list[str], counts: dict[str, int]):
         """Conta erros de uma lista de strings."""
-        for error in errors:
-            if not error:
+        for raw_error in errors:
+            if not raw_error:
                 continue
+            error = str(raw_error) if not isinstance(raw_error, str) else raw_error
 
             error_upper = error.upper()
             error_lower = error.lower()

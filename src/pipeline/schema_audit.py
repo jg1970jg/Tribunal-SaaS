@@ -208,7 +208,7 @@ class AuditFinding:
             finding_type=FindingType(data.get("finding_type", "facto")),
             severity=Severity(data.get("severity", "medio")),
             citations=[Citation.from_dict(c) for c in data.get("citations", []) if isinstance(c, (dict, str))],
-            evidence_item_ids=data.get("evidence_item_ids", []),
+            evidence_item_ids=[str(x) for x in data.get("evidence_item_ids", []) if x],
             conflicts=data.get("conflicts", []),
             notes=data.get("notes", ""),
             is_determinant=data.get("is_determinant", False),
@@ -295,8 +295,8 @@ class AuditReport:
             findings=[AuditFinding.from_dict(f) for f in data.get("findings", [])],
             coverage_check=CoverageCheck.from_dict(data.get("coverage_check", {})),
             open_questions=data.get("open_questions", []),
-            errors=data.get("errors", []),
-            warnings=data.get("warnings", []),
+            errors=[str(e) for e in data.get("errors", []) if e],
+            warnings=[str(w) for w in data.get("warnings", []) if w],
         )
         if "timestamp" in data:
             try:
@@ -315,7 +315,7 @@ class AuditReport:
             f"**Timestamp:** {self.timestamp.isoformat()}",
             "",
         ]
-        visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
+        visible_errors = [e for e in self.errors if not str(e).startswith("INTEGRITY_WARNING:")]
         if visible_errors:
             lines.append("## ⚠️ Erros")
             for err in visible_errors:
@@ -526,8 +526,8 @@ class JudgeOpinion:
             decision_points=[JudgePoint.from_dict(p) for p in raw_points],
             disagreements=[Disagreement.from_dict(d) for d in raw_disagree],
             qa_responses=data.get("qa_responses", []) if isinstance(data.get("qa_responses"), list) else [],
-            errors=data.get("errors", []) if isinstance(data.get("errors"), list) else [],
-            warnings=data.get("warnings", []) if isinstance(data.get("warnings"), list) else [],
+            errors=[str(e) for e in data.get("errors", []) if e] if isinstance(data.get("errors"), list) else [],
+            warnings=[str(w) for w in data.get("warnings", []) if w] if isinstance(data.get("warnings"), list) else [],
         )
         if "timestamp" in data:
             try:
@@ -545,7 +545,7 @@ class JudgeOpinion:
             f"**Recomendação:** {self.recommendation.value.upper()}",
             "",
         ]
-        visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
+        visible_errors = [e for e in self.errors if not str(e).startswith("INTEGRITY_WARNING:")]
         if visible_errors:
             lines.append("## ⚠️ Erros")
             for err in visible_errors:
@@ -702,8 +702,8 @@ class FinalDecision:
             qa_final=data.get("qa_final", []) if isinstance(data.get("qa_final"), list) else [],
             judges_consulted=data.get("judges_consulted", []) if isinstance(data.get("judges_consulted"), list) else [],
             auditors_consulted=data.get("auditors_consulted", []) if isinstance(data.get("auditors_consulted"), list) else [],
-            errors=data.get("errors", []) if isinstance(data.get("errors"), list) else [],
-            warnings=data.get("warnings", []) if isinstance(data.get("warnings"), list) else [],
+            errors=[str(e) for e in data.get("errors", []) if e] if isinstance(data.get("errors"), list) else [],
+            warnings=[str(w) for w in data.get("warnings", []) if w] if isinstance(data.get("warnings"), list) else [],
         )
         if "timestamp" in data:
             try:
@@ -729,7 +729,7 @@ class FinalDecision:
             self.final_answer,
             "",
         ]
-        visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
+        visible_errors = [e for e in self.errors if not str(e).startswith("INTEGRITY_WARNING:")]
         if visible_errors:
             lines.extend(["## ⚠️ Erros Encontrados", ""])
             for err in visible_errors:
@@ -961,7 +961,8 @@ class ChefeConsolidatedReport:
             recommendations_phase3=data.get("recommendations_phase3", []),
             legal_refs_consolidated=data.get("legal_refs_consolidated", []),
             open_questions=data.get("open_questions", []),
-            errors=data.get("errors", []), warnings=data.get("warnings", []),
+            errors=[str(e) for e in data.get("errors", []) if e],
+            warnings=[str(w) for w in data.get("warnings", []) if w],
         )
 
     def to_markdown(self) -> str:
@@ -973,7 +974,7 @@ class ChefeConsolidatedReport:
             f"**Timestamp:** {self.timestamp.isoformat()}",
             "",
         ]
-        visible_errors = [e for e in self.errors if not e.startswith("INTEGRITY_WARNING:")]
+        visible_errors = [e for e in self.errors if not str(e).startswith("INTEGRITY_WARNING:")]
         if visible_errors:
             lines.append("## Erros")
             for err in visible_errors:
