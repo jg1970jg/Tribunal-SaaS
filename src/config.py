@@ -155,7 +155,7 @@ V42_CONSENSUS_IOU_THRESHOLD = 0.5
 V42_CLEANING_MODEL = os.getenv("V42_CLEANING_MODEL", "anthropic/claude-haiku-4.5")
 
 # M7 Legal Analysis model (capable)
-V42_ANALYSIS_MODEL = os.getenv("V42_ANALYSIS_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+V42_ANALYSIS_MODEL = os.getenv("V42_ANALYSIS_MODEL", "anthropic/claude-sonnet-4.5")
 
 # M6 Chunking params
 V42_CHUNK_TARGET_TOKENS = 4000
