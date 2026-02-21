@@ -77,6 +77,30 @@ class Severity(str, Enum):
     BAIXO = "baixo"
 
 
+# Mapa de tradução inglês → português para Severity (LLMs podem responder em inglês)
+_SEVERITY_EN_TO_PT = {
+    "critical": "critico",
+    "high": "alto",
+    "medium": "medio",
+    "low": "baixo",
+}
+
+
+def parse_severity(value: str) -> Severity:
+    """Parse Severity aceitando valores em português OU inglês."""
+    v = value.strip().lower()
+    # Tentar tradução de inglês para português
+    v = _SEVERITY_EN_TO_PT.get(v, v)
+    try:
+        return Severity(v)
+    except ValueError:
+        # Fallback: tentar match parcial
+        for sev in Severity:
+            if sev.value in v or v in sev.value:
+                return sev
+        return Severity.MEDIO  # Default seguro
+
+
 class DecisionType(str, Enum):
     """Tipo de decisão final."""
     PROCEDENTE = "procedente"
@@ -206,7 +230,7 @@ class AuditFinding:
             finding_id=data.get("finding_id", ""),
             claim=data.get("claim", ""),
             finding_type=FindingType(data.get("finding_type", "facto")),
-            severity=Severity(data.get("severity", "medio")),
+            severity=parse_severity(data.get("severity", "medio")),
             citations=[Citation.from_dict(c) for c in data.get("citations", []) if isinstance(c, (dict, str))],
             evidence_item_ids=[str(x) for x in data.get("evidence_item_ids", []) if x],
             conflicts=data.get("conflicts", []),
@@ -895,7 +919,7 @@ class ConsolidatedFinding:
         return cls(
             finding_id=data.get("finding_id", ""), claim=data.get("claim", ""),
             finding_type=FindingType(data.get("finding_type", "facto")),
-            severity=Severity(data.get("severity", "medio")),
+            severity=parse_severity(data.get("severity", "medio")),
             sources=data.get("sources", []),
             citations=[Citation.from_dict(c) for c in data.get("citations", []) if isinstance(c, (dict, str))],
             consensus_level=data.get("consensus_level", "unico"), notes=data.get("notes", ""),

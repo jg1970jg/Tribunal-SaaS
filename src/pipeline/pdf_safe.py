@@ -280,9 +280,40 @@ class PDFSafeLoader:
                         if page.ocr_success:
                             ocr_recovered_count += 1
                             self._detect_intra_page_signals(page)
+                elif self._vision_ocr_available:
+                    # Sem Tesseract mas com Vision OCR (LLM): transcrever via LLM
+                    self._auto_retry_vision_ocr(page, pages_dir)
+                    if page.ocr_attempted:
+                        ocr_attempted_count += 1
+                        if page.ocr_success:
+                            ocr_recovered_count += 1
+                            self._detect_intra_page_signals(page)
+                        else:
+                            # Vision OCR falhou: marcar como VISUAL_PENDING
+                            placeholder = (
+                                f"[PÁGINA {page.page_num} - DOCUMENTO DIGITALIZADO - "
+                                f"IMAGEM ANEXA PARA ANÁLISE VISUAL PELOS EXTRATORES]"
+                            )
+                            page.text_clean = placeholder
+                            page.text_raw = placeholder
+                            page.status_final = "VISUAL_PENDING"
+                            if "VISUAL_PENDING_PIPELINE" not in page.flags:
+                                page.flags.append("VISUAL_PENDING_PIPELINE")
+                            vision_pending_count += 1
+                    else:
+                        # Vision OCR não tentou (sem imagem?): fallback placeholder
+                        placeholder = (
+                            f"[PÁGINA {page.page_num} - DOCUMENTO DIGITALIZADO - "
+                            f"IMAGEM ANEXA PARA ANÁLISE VISUAL PELOS EXTRATORES]"
+                        )
+                        page.text_clean = placeholder
+                        page.text_raw = placeholder
+                        page.status_final = "VISUAL_PENDING"
+                        if "VISUAL_PENDING_PIPELINE" not in page.flags:
+                            page.flags.append("VISUAL_PENDING_PIPELINE")
+                        vision_pending_count += 1
                 else:
-                    # Sem Tesseract: marcar para análise visual pelos extratores do pipeline
-                    # Cada extrator (E1-E5) receberá a imagem e extrairá de forma independente
+                    # Sem Tesseract nem Vision OCR: marcar para análise visual pelos extratores
                     placeholder = (
                         f"[PÁGINA {page.page_num} - DOCUMENTO DIGITALIZADO - "
                         f"IMAGEM ANEXA PARA ANÁLISE VISUAL PELOS EXTRATORES]"

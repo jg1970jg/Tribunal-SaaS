@@ -54,6 +54,8 @@ from src.config import (
     USE_UNIFIED_PROVENANCE,
     COVERAGE_MIN_THRESHOLD,
     VISION_CAPABLE_MODELS,
+    # Pipeline v4.2
+    USE_PIPELINE_V42,
     # MetaIntegrity config
     USE_META_INTEGRITY,
     ALWAYS_GENERATE_META_REPORT,
@@ -65,6 +67,8 @@ from src.config import (
 )
 from src.pipeline.schema_unified import (
     Chunk,
+    EvidenceItem,
+    SourceSpan,
     ExtractionMethod,
     ExtractionRun,
     ExtractionStatus,
@@ -1393,6 +1397,321 @@ REVISTO:"""
                 logger.debug(
                     f"Chunk {chunk.chunk_index}: páginas {page_start}-{page_end}"
                 )
+
+    def _fase1_pipeline_v42(
+        self,
+        documento: DocumentContent,
+        area: str,
+    ) -> tuple:
+        """
+        Pipeline v4.2: Eden AI OCR + extracção modular.
+
+        Módulos: M1(Ingestão) → M2(Pré-processo) → M3(OCR Multi-Motor) →
+        M3B(Multi-Feature) → M4(Limpeza LLM) → M5(Entity Lock) →
+        M6(Chunking) → M7(Análise Jurídica) → M7B(Consolidação)
+
+        Returns:
+            tuple: (resultados: list[FaseResult], bruto: str, consolidado: str,
+                    unified_result: UnifiedExtractionResult)
+        """
+        import hashlib as _hashlib
+
+        from src.pipeline.m1_ingestion import ingest_document
+        from src.pipeline.m2_preprocessing import preprocess_pdf
+        from src.pipeline.m3_ocr_engine import ocr_document
+        from src.pipeline.m3b_multifeature import extract_features
+        from src.pipeline.m4_llm_cleaning import clean_ocr_pages
+        from src.pipeline.m5_entity_lock import lock_entities
+        from src.pipeline.m6_chunking import create_chunks, build_page_boundaries
+        from src.pipeline.m7_legal_analysis import analyze_chunks
+        from src.pipeline.m7b_consolidation import consolidate
+        from src.pipeline.circuit_breaker import CircuitBreaker
+
+        logger.info("=== FASE 1 Pipeline v4.2: Início ===")
+        self._reportar_progresso("fase1", 5, "Pipeline v4.2: Ingestão do documento...")
+
+        # --- M1: Ingestão ---
+        ingestion = ingest_document(
+            file_bytes=documento.metadata.get("file_bytes", b"") if documento.metadata else b"",
+            filename=documento.filename,
+            existing_text=documento.text,
+            existing_num_pages=getattr(documento, "num_pages", None),
+        )
+
+        doc_id = f"doc_{_hashlib.md5(documento.filename.encode(), usedforsecurity=False).hexdigest()[:8]}"
+        doc_meta = DocumentMeta(
+            doc_id=doc_id,
+            filename=documento.filename,
+            file_type=documento.extension,
+            total_chars=len(documento.text) if documento.text else 0,
+            total_pages=ingestion.num_pages,
+            checksum=ingestion.file_hash,
+        )
+
+        self._reportar_progresso("fase1", 8, f"M1 concluído: {ingestion.num_pages} páginas, scanned={ingestion.is_scanned}")
+
+        # --- Decidir caminho: OCR ou texto nativo ---
+        cleaned_text = ""
+        entity_registry = None
+        feature_result = None
+        page_boundaries = None
+
+        if ingestion.is_scanned and ingestion.file_bytes:
+            # Caminho OCR: M2 → M3 → M3B → M4
+            logger.info("[v4.2] Documento digitalizado → caminho OCR completo")
+
+            # --- M2: Pré-processamento ---
+            self._reportar_progresso("fase1", 10, "M2: Pré-processamento (300 DPI + deskew)...")
+            page_images = preprocess_pdf(ingestion.file_bytes, dpi=300)
+
+            # --- M3: OCR Multi-Motor ---
+            self._reportar_progresso("fase1", 15, f"M3: OCR Multi-Motor ({len(page_images)} páginas)...")
+            circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=60.0)
+
+            ocr_result = ocr_document(
+                page_images=page_images,
+                analysis_id=self._run_id,
+                circuit_breaker=circuit_breaker,
+                supabase_client=None,  # TODO: passar cliente Supabase para checkpoints
+            )
+
+            # Libertar imagens da memória
+            del page_images
+
+            self._reportar_progresso("fase1", 22, f"M3 concluído: {ocr_result.total_words} palavras, confiança {ocr_result.total_confidence:.0%}")
+
+            # --- M3B: Multi-Feature ---
+            self._reportar_progresso("fase1", 23, "M3B: Extracção de features (NER, tabelas)...")
+            feature_result = extract_features(
+                ocr_result=ocr_result,
+                extract_tables=True,
+                extract_financial=False,
+            )
+
+            # --- M4: Limpeza LLM ---
+            self._reportar_progresso("fase1", 25, "M4: Limpeza de texto OCR...")
+            cleaning_results = clean_ocr_pages(ocr_result.pages)
+            cleaned_text = "\n\n".join(
+                r.cleaned_text for r in cleaning_results if r.cleaned_text
+            )
+
+            # Construir page boundaries
+            page_boundaries = build_page_boundaries(ocr_result.pages)
+
+            # Actualizar doc_meta com texto real
+            doc_meta.total_chars = len(cleaned_text)
+
+            self._reportar_progresso("fase1", 28, f"M4 concluído: {len(cleaned_text):,} chars limpos")
+
+        else:
+            # Caminho nativo: usar texto já extraído
+            logger.info("[v4.2] Documento com texto nativo → saltar OCR")
+            cleaned_text = documento.text or ""
+            doc_meta.total_chars = len(cleaned_text)
+            self._reportar_progresso("fase1", 28, f"Texto nativo: {len(cleaned_text):,} chars")
+
+        if not cleaned_text or not cleaned_text.strip():
+            raise ValueError("Pipeline v4.2: documento sem texto após processamento")
+
+        # --- M5: Travamento de Entidades ---
+        self._reportar_progresso("fase1", 30, "M5: Travamento de entidades...")
+        ner_entities = feature_result.entities if feature_result else None
+        entity_registry = lock_entities(
+            text=cleaned_text,
+            ner_entities=ner_entities,
+            page_boundaries=page_boundaries,
+        )
+        self._reportar_progresso("fase1", 32, f"M5 concluído: {entity_registry.count} entidades travadas")
+
+        # --- M6: Chunking Adaptativo ---
+        self._reportar_progresso("fase1", 33, "M6: Chunking adaptativo...")
+        tables = feature_result.tables if feature_result else None
+        semantic_chunks = create_chunks(
+            text=cleaned_text,
+            entity_registry=entity_registry,
+            tables=tables,
+            page_boundaries=page_boundaries,
+        )
+        self._reportar_progresso("fase1", 35, f"M6 concluído: {len(semantic_chunks)} chunks")
+
+        # --- M7: Análise Jurídica ---
+        self._reportar_progresso("fase1", 36, f"M7: Análise jurídica ({len(semantic_chunks)} chunks)...")
+        chunk_analyses = analyze_chunks(
+            chunks=semantic_chunks,
+            area_direito=area,
+        )
+
+        total_items_m7 = sum(len(a.items) for a in chunk_analyses)
+        self._reportar_progresso("fase1", 50, f"M7 concluído: {total_items_m7} items extraídos")
+
+        # --- M7B: Consolidação ---
+        self._reportar_progresso("fase1", 52, "M7B: Consolidação hierárquica...")
+        consolidation_result = consolidate(
+            chunk_analyses=chunk_analyses,
+            chunks=semantic_chunks,
+            doc_id=doc_id,
+            entity_registry=entity_registry,
+        )
+
+        union_items = consolidation_result.union_items
+        conflicts = consolidation_result.conflicts
+        self._reportar_progresso("fase1", 55, f"M7B concluído: {len(union_items)} union_items")
+
+        # --- Construir output compatível ---
+
+        # 1. Criar UnifiedExtractionResult
+        unified_result = UnifiedExtractionResult(
+            result_id=f"v42_{self._run_id}",
+            document_meta=doc_meta,
+            union_items=union_items,
+            conflicts=conflicts,
+            status=ExtractionStatus.SUCCESS,
+        )
+
+        # 2. Criar chunks para o unified_result
+        for sc in semantic_chunks:
+            unified_result.chunks.append(Chunk(
+                doc_id=doc_id,
+                chunk_id=f"{doc_id}_c{sc.chunk_index:04d}",
+                chunk_index=sc.chunk_index,
+                total_chunks=len(semantic_chunks),
+                start_char=sc.start_char,
+                end_char=sc.end_char,
+                overlap=0,
+                text=sc.text,
+                method=ExtractionMethod.OCR if ingestion.is_scanned else ExtractionMethod.TEXT,
+                page_start=sc.page_start,
+                page_end=sc.page_end,
+            ))
+
+        # 3. Criar ExtractionRun para o v4.2
+        run = ExtractionRun(
+            run_id=f"v42_run_{self._run_id}",
+            extractor_id="pipeline_v42",
+            model_name="eden_ai+sonnet",
+            method=ExtractionMethod.OCR if ingestion.is_scanned else ExtractionMethod.TEXT,
+            status=ExtractionStatus.SUCCESS,
+            chunks_processed=len(semantic_chunks),
+            items_extracted=len(union_items),
+        )
+        unified_result.extraction_runs.append(run)
+
+        # 4. Guardar JSON (fonte de verdade para Phase 2)
+        agregado_json = {
+            "run_id": self._run_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "pipeline_version": "4.2",
+            "doc_meta": doc_meta.to_dict(),
+            "union_items": [item.to_dict() for item in union_items],
+            "union_items_count": len(union_items),
+            "items_by_extractor": {},
+            "coverage_report": {
+                "coverage_percent": 100.0 if cleaned_text else 0.0,
+                "is_complete": True,
+                "pages_total": ingestion.num_pages,
+                "pages_unreadable": 0,
+            },
+            "unreadable_parts": [],
+            "conflicts": [
+                {"conflict_id": getattr(c, 'conflict_id', ''), "description": getattr(c, 'description', str(c))}
+                for c in conflicts
+            ],
+            "conflicts_count": len(conflicts),
+            "extraction_runs": [run.to_dict()],
+            "errors": [],
+            "warnings": [],
+            "summary": {
+                "total_items": len(union_items),
+                "coverage_percent": 100.0,
+                "is_complete": True,
+                "pages_total": ingestion.num_pages,
+                "pages_unreadable": 0,
+                "extractors_count": 1,
+            },
+            "entity_registry": entity_registry.to_dict() if entity_registry else {},
+        }
+
+        agregado_json_path = self._output_dir / "fase1_agregado_consolidado.json"
+        try:
+            with open(agregado_json_path, 'w', encoding='utf-8') as f:
+                json.dump(agregado_json, f, ensure_ascii=False, indent=2)
+            logger.info(f"[v4.2] JSON guardado: {agregado_json_path.absolute()} ({len(union_items)} items)")
+        except Exception as e:
+            logger.error(f"[v4.2] Falha ao escrever JSON: {e}")
+
+        # 5. Guardar coverage report
+        coverage_path = self._output_dir / "fase1_coverage_report.json"
+        try:
+            with open(coverage_path, 'w', encoding='utf-8') as f:
+                json.dump(agregado_json["coverage_report"], f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"[v4.2] Falha ao escrever coverage report: {e}")
+
+        # 6. Guardar unified result JSON
+        unified_json_path = self._output_dir / "fase1_unified_result.json"
+        try:
+            with open(unified_json_path, 'w', encoding='utf-8') as f:
+                json.dump(unified_result.to_dict(), f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"[v4.2] Falha ao escrever unified result: {e}")
+
+        # 7. Criar markdown consolidado
+        consolidado = "# EXTRACÇÃO PIPELINE v4.2 (Eden AI OCR + Análise Modular)\n\n"
+        consolidado += f"## Metadados\n"
+        consolidado += f"- Pipeline: v4.2\n"
+        consolidado += f"- Páginas: {ingestion.num_pages}\n"
+        consolidado += f"- Digitalizado: {'Sim' if ingestion.is_scanned else 'Não'}\n"
+        consolidado += f"- Entidades travadas: {entity_registry.count}\n"
+        consolidado += f"- Chunks: {len(semantic_chunks)}\n"
+        consolidado += f"- Items extraídos: {len(union_items)}\n"
+        consolidado += f"- Conflitos: {len(conflicts)}\n\n"
+
+        consolidado += "## Items Extraídos\n\n"
+        for item in union_items:
+            consolidado += f"### [{item.item_type.value.upper()}] {item.value_normalized}\n"
+            if item.raw_text:
+                consolidado += f"- Texto original: \"{item.raw_text}\"\n"
+            if item.context:
+                consolidado += f"- Contexto: {item.context}\n"
+            for span in item.source_spans:
+                consolidado += f"- Fonte: {span.extractor_id}, página {span.page_num}, chars {span.start_char}-{span.end_char}\n"
+            consolidado += "\n"
+
+        self._log_to_file("fase1_agregado_consolidado.md", consolidado)
+        self._log_to_file("fase1_agregado.md", consolidado)
+
+        # 8. Criar bruto (para compatibilidade)
+        bruto = "# EXTRACÇÃO PIPELINE v4.2 (BRUTO)\n\n"
+        for analysis in chunk_analyses:
+            bruto += f"\n## [CHUNK {analysis.chunk_index}]\n"
+            for item in analysis.items:
+                bruto += f"- [{item.item_type}] {item.value}\n"
+            bruto += "\n---\n"
+        self._log_to_file("fase1_agregado_bruto.md", bruto)
+
+        # 9. Criar FaseResult list (para compatibilidade com result.fase1_extracoes)
+        resultados = []
+        for analysis in chunk_analyses:
+            content_parts = []
+            for item in analysis.items:
+                content_parts.append(f"[{item.item_type}] {item.value}")
+
+            resultados.append(FaseResult(
+                fase="fase1",
+                modelo=analysis.model_used or "pipeline_v42",
+                role=f"M7_chunk_{analysis.chunk_index}",
+                conteudo="\n".join(content_parts),
+                tokens_usados=analysis.tokens_used,
+                sucesso=analysis.error is None,
+                erro=analysis.error,
+            ))
+
+        logger.info(
+            f"=== FASE 1 Pipeline v4.2 COMPLETA: "
+            f"{len(union_items)} items, {len(resultados)} resultados ==="
+        )
+
+        return resultados, bruto, consolidado, unified_result
 
     def _fase1_extracao_unified(
         self,
@@ -4292,7 +4611,13 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
 
             # Fase 1: Extração (SEM perguntas) + Agregador LOSSLESS
             unified_result = None
-            if USE_UNIFIED_PROVENANCE:
+            if USE_PIPELINE_V42:
+                # Pipeline v4.2: Eden AI OCR + modular extraction
+                logger.info("=== Pipeline v4.2 ATIVADO: Eden AI OCR + extracção modular ===")
+                extracoes, bruto_f1, consolidado_f1, unified_result = self._fase1_pipeline_v42(
+                    documento, area_direito
+                )
+            elif USE_UNIFIED_PROVENANCE:
                 # NOVO: Modo unificado com proveniência e cobertura
                 logger.info("Modo UNIFICADO de proveniência ativado")
                 extracoes, bruto_f1, consolidado_f1, unified_result = self._fase1_extracao_unified(

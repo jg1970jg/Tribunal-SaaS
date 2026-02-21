@@ -133,6 +133,39 @@ CHUNK_SIZE_CHARS = 50000       # v4.0: 50k chars (era 22k)
 CHUNK_OVERLAP_CHARS = 12500    # v4.0: 25% overlap (era 10%)
 
 # =============================================================================
+# PIPELINE v4.2: Eden AI OCR Multi-Motor
+# =============================================================================
+
+# Feature flag: ativar pipeline v4.2 (Eden AI OCR + modular extraction)
+USE_PIPELINE_V42 = os.getenv("USE_PIPELINE_V42", "false").lower() in ("true", "1", "yes")
+
+# Eden AI API key (multi-engine OCR: Google Vision + Azure + AWS Textract)
+EDEN_AI_API_KEY = os.getenv("EDEN_AI_API_KEY", "")
+
+# Redis URL para Celery broker + circuit breaker
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# OCR page batch size (pages processed at a time to manage memory)
+V42_OCR_BATCH_SIZE = int(os.getenv("V42_OCR_BATCH_SIZE", "10"))
+
+# Consensus IoU threshold for word-level bounding box matching
+V42_CONSENSUS_IOU_THRESHOLD = 0.5
+
+# M4 LLM Cleaning model (fast + cheap)
+V42_CLEANING_MODEL = os.getenv("V42_CLEANING_MODEL", "anthropic/claude-haiku-4.5")
+
+# M7 Legal Analysis model (capable)
+V42_ANALYSIS_MODEL = os.getenv("V42_ANALYSIS_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+
+# M6 Chunking params
+V42_CHUNK_TARGET_TOKENS = 4000
+V42_CHUNK_OVERLAP_TOKENS = 500
+
+# M7B Consolidation: hierarchical threshold
+V42_HIERARCHICAL_THRESHOLD = 15  # >15 chunks → hierarchical consolidation
+V42_CONSOLIDATION_BATCH_SIZE = 10
+
+# =============================================================================
 # PROVENIÊNCIA E COBERTURA (NOVO!)
 # =============================================================================
 
@@ -512,8 +545,8 @@ CORES = {"aprovado": "#28a745", "rejeitado": "#dc3545", "atencao": "#ffc107", "n
 # VISION OCR - Extracção de texto de PDFs escaneados via LLM Vision
 # =============================================================================
 
-VISION_OCR_MODEL = "openai/gpt-4o"  # Fallback para Vision OCR básico
-VISION_OCR_MAX_TOKENS = 4096
+VISION_OCR_MODEL = "openai/gpt-5-nano"  # Vision OCR: barato, rápido, 128K output
+VISION_OCR_MAX_TOKENS = 8192
 VISION_OCR_TEMPERATURE = 0.0
 
 # Modelos com capacidade de visão (podem receber imagens)
