@@ -573,6 +573,38 @@ class CostController:
 
         return phase_usage
 
+    def register_external_cost(
+        self,
+        phase: str,
+        service: str,
+        cost_usd: float,
+        description: str = "",
+    ) -> PhaseUsage:
+        """Regista custo de serviço externo (não-LLM), e.g. Eden AI OCR."""
+        with self._lock:
+            phase_usage = PhaseUsage(
+                phase=phase,
+                model=service,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                cost_usd=cost_usd,
+                pricing_source="external_api",
+            )
+
+            self.usage.phases.append(phase_usage)
+            self.usage.total_cost_usd += cost_usd
+
+            logger.info(
+                f"[CUSTO] {phase}: {service} | "
+                f"${cost_usd:.4f} [EXTERNAL] {description} | "
+                f"Total: ${self.usage.total_cost_usd:.4f}/{self.budget_limit:.2f}"
+            )
+
+            self._warn_limits()
+
+        return phase_usage
+
     def _warn_limits(self):
         """Loga WARNING se limites foram excedidos (sem bloquear)."""
         if self.usage.total_cost_usd > self.budget_limit and not self.usage.blocked:

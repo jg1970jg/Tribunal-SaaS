@@ -1478,6 +1478,17 @@ REVISTO:"""
             # Libertar imagens da memória
             del page_images
 
+            # Registar custo Eden AI OCR
+            if self._cost_controller:
+                from src.config import V42_EDENAI_COST_PER_OCR_PAGE
+                ocr_cost = len(ocr_result.pages) * V42_EDENAI_COST_PER_OCR_PAGE
+                self._cost_controller.register_external_cost(
+                    phase="fase1_M3_OCR",
+                    service="edenai/ocr_multimotor",
+                    cost_usd=ocr_cost,
+                    description=f"{len(ocr_result.pages)} páginas OCR",
+                )
+
             self._reportar_progresso("fase1", 22, f"M3 concluído: {ocr_result.total_words} palavras, confiança {ocr_result.total_confidence:.0%}")
 
             # --- M3B: Multi-Feature ---
@@ -1488,12 +1499,39 @@ REVISTO:"""
                 extract_financial=False,
             )
 
+            # Registar custo Eden AI NER + Tabelas
+            if self._cost_controller:
+                from src.config import V42_EDENAI_COST_PER_NER_CALL, V42_EDENAI_COST_PER_TABLE_PAGE
+                ner_cost = V42_EDENAI_COST_PER_NER_CALL if feature_result.entities else 0
+                table_cost = len(ocr_result.file_ids) * V42_EDENAI_COST_PER_TABLE_PAGE if feature_result.tables else 0
+                if ner_cost + table_cost > 0:
+                    self._cost_controller.register_external_cost(
+                        phase="fase1_M3B_features",
+                        service="edenai/ner_tables",
+                        cost_usd=ner_cost + table_cost,
+                        description=f"NER=${ner_cost:.4f} + Tables=${table_cost:.4f}",
+                    )
+
             # --- M4: Limpeza LLM ---
             self._reportar_progresso("fase1", 25, "M4: Limpeza de texto OCR...")
             cleaning_results = clean_ocr_pages(ocr_result.pages)
             cleaned_text = "\n\n".join(
                 r.cleaned_text for r in cleaning_results if r.cleaned_text
             )
+
+            # Registar custo M4 LLM cleaning (tokens usados)
+            if self._cost_controller:
+                from src.config import V42_CLEANING_MODEL
+                total_m4_tokens = sum(r.tokens_used for r in cleaning_results if r.tokens_used)
+                if total_m4_tokens > 0:
+                    # Estimativa: ~60% input, ~40% output
+                    self._cost_controller.register_usage(
+                        phase="fase1_M4_cleaning",
+                        model=V42_CLEANING_MODEL,
+                        prompt_tokens=int(total_m4_tokens * 0.6),
+                        completion_tokens=int(total_m4_tokens * 0.4),
+                        raise_on_exceed=False,
+                    )
 
             # Construir page boundaries
             page_boundaries = build_page_boundaries(ocr_result.pages)
@@ -1542,6 +1580,20 @@ REVISTO:"""
         )
 
         total_items_m7 = sum(len(a.items) for a in chunk_analyses)
+
+        # Registar custo M7 LLM análise (tokens usados por chunk)
+        if self._cost_controller:
+            from src.config import V42_ANALYSIS_MODEL
+            for ca in chunk_analyses:
+                if ca.tokens_used > 0:
+                    self._cost_controller.register_usage(
+                        phase=f"fase1_M7_chunk{ca.chunk_index}",
+                        model=V42_ANALYSIS_MODEL,
+                        prompt_tokens=int(ca.tokens_used * 0.6),
+                        completion_tokens=int(ca.tokens_used * 0.4),
+                        raise_on_exceed=False,
+                    )
+
         self._reportar_progresso("fase1", 50, f"M7 concluído: {total_items_m7} items extraídos")
 
         # --- M7B: Consolidação ---

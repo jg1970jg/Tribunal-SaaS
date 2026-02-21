@@ -165,6 +165,12 @@ V42_CHUNK_OVERLAP_TOKENS = 500
 V42_HIERARCHICAL_THRESHOLD = 15  # >15 chunks → hierarchical consolidation
 V42_CONSOLIDATION_BATCH_SIZE = 10
 
+# Eden AI estimated costs (USD per API call) — for client billing
+# These are conservative estimates; actual Eden AI billing may vary slightly
+V42_EDENAI_COST_PER_OCR_PAGE = float(os.getenv("V42_EDENAI_COST_PER_OCR_PAGE", "0.003"))   # ~$0.003/page (2 providers)
+V42_EDENAI_COST_PER_NER_CALL = float(os.getenv("V42_EDENAI_COST_PER_NER_CALL", "0.002"))   # ~$0.002/call
+V42_EDENAI_COST_PER_TABLE_PAGE = float(os.getenv("V42_EDENAI_COST_PER_TABLE_PAGE", "0.003")) # ~$0.003/page
+
 # =============================================================================
 # PROVENIÊNCIA E COBERTURA (NOVO!)
 # =============================================================================
