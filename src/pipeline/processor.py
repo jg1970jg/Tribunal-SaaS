@@ -1544,9 +1544,9 @@ REVISTO:"""
             if self._cost_controller and ocr_result.total_api_cost_usd > 0:
                 self._cost_controller.register_external_cost(
                     phase="fase1_M3_OCR",
-                    service="edenai/ocr_multimotor",
+                    service="ocr/multimotor",
                     cost_usd=ocr_result.total_api_cost_usd,
-                    description=f"{len(ocr_result.pages)} páginas OCR (custo real Eden AI)",
+                    description=f"{len(ocr_result.pages)} páginas OCR",
                 )
             elif self._cost_controller:
                 # Fallback: estimativa se API não reportou custo
@@ -1554,9 +1554,9 @@ REVISTO:"""
                 ocr_cost = len(ocr_result.pages) * V42_EDENAI_COST_PER_OCR_PAGE
                 self._cost_controller.register_external_cost(
                     phase="fase1_M3_OCR",
-                    service="edenai/ocr_multimotor",
+                    service="ocr/multimotor",
                     cost_usd=ocr_cost,
-                    description=f"{len(ocr_result.pages)} páginas OCR (estimativa)",
+                    description=f"{len(ocr_result.pages)} páginas OCR",
                 )
 
             self._reportar_progresso("fase1", 22, f"M3 concluído: {ocr_result.total_words} palavras, confiança {ocr_result.total_confidence:.0%}")
@@ -1573,9 +1573,9 @@ REVISTO:"""
             if self._cost_controller and feature_result.api_cost_usd > 0:
                 self._cost_controller.register_external_cost(
                     phase="fase1_M3B_features",
-                    service="edenai/ner_tables",
+                    service="ocr/ner_tables",
                     cost_usd=feature_result.api_cost_usd,
-                    description=f"NER + Tabelas (custo real Eden AI)",
+                    description=f"NER + Tabelas",
                 )
             elif self._cost_controller:
                 # Fallback: estimativa se API não reportou custo
@@ -1585,9 +1585,9 @@ REVISTO:"""
                 if ner_cost + table_cost > 0:
                     self._cost_controller.register_external_cost(
                         phase="fase1_M3B_features",
-                        service="edenai/ner_tables",
+                        service="ocr/ner_tables",
                         cost_usd=ner_cost + table_cost,
-                        description=f"NER + Tabelas (estimativa)",
+                        description=f"NER + Tabelas",
                     )
 
             # --- M4: Limpeza LLM ---
@@ -1786,7 +1786,7 @@ REVISTO:"""
             logger.warning(f"[v4.2] Falha ao escrever unified result: {e}")
 
         # 7. Criar markdown consolidado
-        consolidado = "# EXTRACÇÃO PIPELINE v4.2 (Eden AI OCR + Análise Modular)\n\n"
+        consolidado = "# EXTRACÇÃO PIPELINE v4.2\n\n"
         consolidado += f"## Metadados\n"
         consolidado += f"- Pipeline: v4.2\n"
         consolidado += f"- Páginas: {ingestion.num_pages}\n"
