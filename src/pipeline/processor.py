@@ -1478,15 +1478,23 @@ REVISTO:"""
             # Libertar imagens da memória
             del page_images
 
-            # Registar custo Eden AI OCR
-            if self._cost_controller:
+            # Registar custo REAL Eden AI OCR (reportado pela API)
+            if self._cost_controller and ocr_result.total_api_cost_usd > 0:
+                self._cost_controller.register_external_cost(
+                    phase="fase1_M3_OCR",
+                    service="edenai/ocr_multimotor",
+                    cost_usd=ocr_result.total_api_cost_usd,
+                    description=f"{len(ocr_result.pages)} páginas OCR (custo real Eden AI)",
+                )
+            elif self._cost_controller:
+                # Fallback: estimativa se API não reportou custo
                 from src.config import V42_EDENAI_COST_PER_OCR_PAGE
                 ocr_cost = len(ocr_result.pages) * V42_EDENAI_COST_PER_OCR_PAGE
                 self._cost_controller.register_external_cost(
                     phase="fase1_M3_OCR",
                     service="edenai/ocr_multimotor",
                     cost_usd=ocr_cost,
-                    description=f"{len(ocr_result.pages)} páginas OCR",
+                    description=f"{len(ocr_result.pages)} páginas OCR (estimativa)",
                 )
 
             self._reportar_progresso("fase1", 22, f"M3 concluído: {ocr_result.total_words} palavras, confiança {ocr_result.total_confidence:.0%}")
@@ -1499,8 +1507,16 @@ REVISTO:"""
                 extract_financial=False,
             )
 
-            # Registar custo Eden AI NER + Tabelas
-            if self._cost_controller:
+            # Registar custo REAL Eden AI NER + Tabelas (reportado pela API)
+            if self._cost_controller and feature_result.api_cost_usd > 0:
+                self._cost_controller.register_external_cost(
+                    phase="fase1_M3B_features",
+                    service="edenai/ner_tables",
+                    cost_usd=feature_result.api_cost_usd,
+                    description=f"NER + Tabelas (custo real Eden AI)",
+                )
+            elif self._cost_controller:
+                # Fallback: estimativa se API não reportou custo
                 from src.config import V42_EDENAI_COST_PER_NER_CALL, V42_EDENAI_COST_PER_TABLE_PAGE
                 ner_cost = V42_EDENAI_COST_PER_NER_CALL if feature_result.entities else 0
                 table_cost = len(ocr_result.file_ids) * V42_EDENAI_COST_PER_TABLE_PAGE if feature_result.tables else 0
@@ -1509,7 +1525,7 @@ REVISTO:"""
                         phase="fase1_M3B_features",
                         service="edenai/ner_tables",
                         cost_usd=ner_cost + table_cost,
-                        description=f"NER=${ner_cost:.4f} + Tables=${table_cost:.4f}",
+                        description=f"NER + Tabelas (estimativa)",
                     )
 
             # --- M4: Limpeza LLM ---

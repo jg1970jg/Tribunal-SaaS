@@ -56,6 +56,7 @@ class MultiFeatureResult:
     entities: list[NamedEntity] = field(default_factory=list)
     tables: list[ExtractedTable] = field(default_factory=list)
     financial_data: Optional[dict] = None
+    api_cost_usd: float = 0.0       # custo real reportado pelo Eden AI
     errors: list[str] = field(default_factory=list)
 
 
@@ -118,11 +119,17 @@ def extract_features(
             try:
                 res = future.result(timeout=120)
                 if name == "ner":
-                    result.entities = res
+                    entities, cost = res
+                    result.entities = entities
+                    result.api_cost_usd += cost
                 elif name == "tables":
-                    result.tables = res
+                    tables, cost = res
+                    result.tables = tables
+                    result.api_cost_usd += cost
                 elif name == "financial":
-                    result.financial_data = res
+                    fin_data, cost = res
+                    result.financial_data = fin_data
+                    result.api_cost_usd += cost
             except Exception as e:
                 error_msg = f"{name}: {e}"
                 result.errors.append(error_msg)
@@ -131,7 +138,8 @@ def extract_features(
     logger.info(
         f"[M3B] Features extraídas: "
         f"{len(result.entities)} entidades, "
-        f"{len(result.tables)} tabelas"
+        f"{len(result.tables)} tabelas, "
+        f"custo Eden AI ${result.api_cost_usd:.4f}"
     )
 
     return result
@@ -141,8 +149,12 @@ def _extract_ner(
     full_text: str,
     pages: list,  # list[OCRPageResult]
     api_key: str,
-) -> list[NamedEntity]:
-    """Extrair entidades nomeadas via Eden AI NER."""
+) -> tuple[list[NamedEntity], float]:
+    """Extrair entidades nomeadas via Eden AI NER.
+
+    Returns:
+        (entities, cost_usd)
+    """
     # Limitar texto a 5000 chars para NER (limite API)
     text = full_text[:5000] if len(full_text) > 5000 else full_text
 
@@ -167,6 +179,13 @@ def _extract_ner(
         response.raise_for_status()
         data = response.json()
 
+        # Capturar custo real
+        cost_usd = 0.0
+        try:
+            cost_usd = float(data.get("cost", 0))
+        except (ValueError, TypeError):
+            pass
+
         entities = []
         items = data.get("output", {}).get("items", [])
 
@@ -188,20 +207,25 @@ def _extract_ner(
                 source="ner_edenai",
             ))
 
-        logger.info(f"[M3B] NER: {len(entities)} entidades detectadas")
-        return entities
+        logger.info(f"[M3B] NER: {len(entities)} entidades detectadas, ${cost_usd:.4f}")
+        return entities, cost_usd
 
     except Exception as e:
         logger.error(f"[M3B] NER falhou: {e}")
-        return []
+        return [], 0.0
 
 
 def _extract_tables(
     file_ids: dict[int, str],  # {page_num: file_id}
     api_key: str,
-) -> list[ExtractedTable]:
-    """Extrair tabelas das páginas via Eden AI."""
+) -> tuple[list[ExtractedTable], float]:
+    """Extrair tabelas das páginas via Eden AI.
+
+    Returns:
+        (tables, cost_usd)
+    """
     tables = []
+    total_cost = 0.0
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -225,6 +249,12 @@ def _extract_tables(
             response.raise_for_status()
             data = response.json()
 
+            # Capturar custo real
+            try:
+                total_cost += float(data.get("cost", 0))
+            except (ValueError, TypeError):
+                pass
+
             output = data.get("output", {})
             # Parse table data from response
             extracted_tables = _parse_table_output(output, page_num)
@@ -233,15 +263,19 @@ def _extract_tables(
         except Exception as e:
             logger.warning(f"[M3B] Extracção de tabela falhou página {page_num}: {e}")
 
-    logger.info(f"[M3B] Tabelas: {len(tables)} detectadas")
-    return tables
+    logger.info(f"[M3B] Tabelas: {len(tables)} detectadas, ${total_cost:.4f}")
+    return tables, total_cost
 
 
 def _extract_financial(
     file_ids: dict[int, str],
     api_key: str,
-) -> Optional[dict]:
-    """Extrair dados financeiros via Eden AI financial parser."""
+) -> tuple[Optional[dict], float]:
+    """Extrair dados financeiros via Eden AI financial parser.
+
+    Returns:
+        (financial_data, cost_usd)
+    """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -267,11 +301,18 @@ def _extract_financial(
         )
         response.raise_for_status()
         data = response.json()
-        return data.get("output", {})
+
+        cost_usd = 0.0
+        try:
+            cost_usd = float(data.get("cost", 0))
+        except (ValueError, TypeError):
+            pass
+
+        return data.get("output", {}), cost_usd
 
     except Exception as e:
         logger.warning(f"[M3B] Análise financeira falhou: {e}")
-        return None
+        return None, 0.0
 
 
 def _parse_table_output(output: dict, page_num: int) -> list[ExtractedTable]:

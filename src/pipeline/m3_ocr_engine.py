@@ -51,6 +51,7 @@ class OCRPageResult:
     confidence: float
     word_count: int
     processing_time: float           # seconds
+    api_cost_usd: float = 0.0       # custo real reportado pelo Eden AI
     errors: list[str] = field(default_factory=list)
 
 
@@ -64,6 +65,7 @@ class OCRDocumentResult:
     total_processing_time: float
     providers_used: list[str]
     file_ids: dict[int, str]         # {page_num: eden_ai_file_id}
+    total_api_cost_usd: float = 0.0  # custo total real Eden AI
 
 
 def ocr_document(
@@ -143,16 +145,18 @@ def ocr_document(
     providers_set = set()
     total_words = 0
     confidence_sum = 0
+    total_api_cost = 0.0
     for r in all_results:
         providers_set.update(r.providers_used)
         total_words += r.word_count
         confidence_sum += r.confidence
+        total_api_cost += r.api_cost_usd
 
     avg_confidence = confidence_sum / len(all_results) if all_results else 0
 
     logger.info(
         f"[M3] OCR concluído: {total_pages} páginas, {total_words} palavras, "
-        f"confiança média {avg_confidence:.1%}, {total_time:.1f}s"
+        f"confiança média {avg_confidence:.1%}, custo Eden AI ${total_api_cost:.4f}, {total_time:.1f}s"
     )
 
     return OCRDocumentResult(
@@ -163,6 +167,7 @@ def ocr_document(
         total_processing_time=total_time,
         providers_used=list(providers_set),
         file_ids=all_file_ids,
+        total_api_cost_usd=total_api_cost,
     )
 
 
@@ -182,6 +187,7 @@ def _ocr_single_page(
     errors = []
     provider_texts = {}
     file_id = None
+    page_cost = 0.0
 
     # 1. Upload da imagem para Eden AI
     try:
@@ -207,8 +213,9 @@ def _ocr_single_page(
             continue
 
         try:
-            text = _call_ocr_provider(file_id, provider, api_key)
+            text, cost = _call_ocr_provider(file_id, provider, api_key)
             provider_texts[provider] = text
+            page_cost += cost
             if circuit_breaker:
                 circuit_breaker.record_success(f"edenai_{provider}")
         except Exception as e:
@@ -225,8 +232,9 @@ def _ocr_single_page(
             if circuit_breaker and not circuit_breaker.can_call(f"edenai_{provider}"):
                 continue
             try:
-                text = _call_ocr_provider(file_id, provider, api_key)
+                text, cost = _call_ocr_provider(file_id, provider, api_key)
                 provider_texts[provider] = text
+                page_cost += cost
                 if circuit_breaker:
                     circuit_breaker.record_success(f"edenai_{provider}")
             except Exception as e:
@@ -242,7 +250,7 @@ def _ocr_single_page(
     logger.info(
         f"[M3] Página {page_num}: {word_count} palavras, "
         f"{len(provider_texts)} providers, confiança {confidence:.1%}, "
-        f"{processing_time:.1f}s"
+        f"${page_cost:.4f}, {processing_time:.1f}s"
     )
 
     return OCRPageResult(
@@ -253,6 +261,7 @@ def _ocr_single_page(
         confidence=confidence,
         word_count=word_count,
         processing_time=processing_time,
+        api_cost_usd=page_cost,
         errors=errors,
     ), file_id
 
@@ -276,8 +285,12 @@ def _upload_image(image_bytes: bytes, page_num: int, api_key: str) -> str:
     return file_id
 
 
-def _call_ocr_provider(file_id: str, provider: str, api_key: str) -> str:
-    """Chamar OCR de um provider específico via Eden AI."""
+def _call_ocr_provider(file_id: str, provider: str, api_key: str) -> tuple[str, float]:
+    """Chamar OCR de um provider específico via Eden AI.
+
+    Returns:
+        (text, cost_usd) — texto extraído e custo real reportado pela API
+    """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -299,6 +312,13 @@ def _call_ocr_provider(file_id: str, provider: str, api_key: str) -> str:
     response.raise_for_status()
     data = response.json()
 
+    # Capturar custo real da resposta Eden AI
+    cost_usd = 0.0
+    try:
+        cost_usd = float(data.get("cost", 0))
+    except (ValueError, TypeError):
+        pass
+
     text = ""
     output = data.get("output", {})
     if isinstance(output, dict):
@@ -306,7 +326,7 @@ def _call_ocr_provider(file_id: str, provider: str, api_key: str) -> str:
     elif isinstance(output, str):
         text = output
 
-    return text.strip()
+    return text.strip(), cost_usd
 
 
 def _build_consensus(provider_texts: dict[str, str]) -> tuple[str, float]:
