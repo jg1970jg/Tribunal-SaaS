@@ -423,8 +423,44 @@ class JudgePoint:
             data = {"conclusion": data, "point_id": f"point_str_{uuid.uuid4().hex[:6]}"}
         if not isinstance(data, dict):
             data = {"conclusion": str(data), "point_id": f"point_auto_{uuid.uuid4().hex[:6]}"}
+
+        # FIX: Mapear chaves alternativas que LLMs frequentemente usam
+        _alt_map = {
+            "conclusion": ["issue", "description", "summary", "finding", "claim", "texto", "text", "content"],
+            "rationale": ["reasoning", "justification", "explanation", "fundamentacao", "rationale_text", "basis"],
+            "point_id": ["id", "dp_id", "item_id", "index"],
+            "finding_refs": ["finding_ref", "source_finding", "ref"],
+        }
+        for target_key, alt_keys in _alt_map.items():
+            if not data.get(target_key):
+                for alt in alt_keys:
+                    val = data.get(alt)
+                    if val:
+                        if target_key == "finding_refs" and isinstance(val, str):
+                            data[target_key] = [val]
+                        else:
+                            data[target_key] = val
+                        break
+
+        # FIX: Fallback legível se ainda não há conclusion (em vez de str(dict))
         if not data.get("conclusion"):
-            data["conclusion"] = str({k: v for k, v in data.items() if k != "citations"})[:200]
+            # Tentar construir texto legível a partir das chaves disponíveis
+            readable_parts = []
+            for k in ("issue", "description", "summary", "claim", "finding", "text", "content", "severity"):
+                v = data.get(k)
+                if v and isinstance(v, str):
+                    readable_parts.append(v)
+            if readable_parts:
+                data["conclusion"] = "; ".join(readable_parts)[:500]
+            else:
+                # Último recurso: listar chaves=valor de forma legível (não str(dict))
+                parts = []
+                for k, v in data.items():
+                    if k in ("citations", "references", "supporting_citations"):
+                        continue
+                    if isinstance(v, str) and v:
+                        parts.append(f"{k}: {v}")
+                data["conclusion"] = "; ".join(parts)[:500] if parts else "(Ponto sem conclusão)"
 
         # FIX Bug #10 + #4: confidence segura e dinâmica
         raw_confidence = data.get("confidence")
@@ -448,6 +484,13 @@ class JudgePoint:
         if not isinstance(raw_citations, list):
             raw_citations = []
 
+        # FIX: finding_refs pode ser string única
+        raw_finding_refs = data.get("finding_refs", [])
+        if isinstance(raw_finding_refs, str):
+            raw_finding_refs = [raw_finding_refs] if raw_finding_refs else []
+        if not isinstance(raw_finding_refs, list):
+            raw_finding_refs = []
+
         return cls(
             point_id=data.get("point_id", ""),
             conclusion=data.get("conclusion", ""),
@@ -457,7 +500,7 @@ class JudgePoint:
             risks=data.get("risks", []) if isinstance(data.get("risks"), list) else [],
             alternatives=data.get("alternatives", []) if isinstance(data.get("alternatives"), list) else [],
             confidence=computed_confidence,
-            finding_refs=data.get("finding_refs", []) if isinstance(data.get("finding_refs"), list) else [],
+            finding_refs=raw_finding_refs,
             is_determinant=data.get("is_determinant", False),
         )
 
