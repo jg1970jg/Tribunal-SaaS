@@ -628,7 +628,13 @@ async def analyze(
 
         # FIX 2026-02-14: Executar em thread separada para não bloquear event loop
         # v7.0: Semáforo limita a 1 análise concorrente (previne OOM em 512MB)
-        await _analysis_semaphore.acquire()
+        try:
+            await asyncio.wait_for(_analysis_semaphore.acquire(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.error("[SEMAPHORE] Timeout 30s a aguardar semáforo — a forçar reset")
+            # Forçar reset do semáforo (leak recovery)
+            _analysis_semaphore._value = 1
+            await _analysis_semaphore.acquire()
         try:
             resultado = await asyncio.to_thread(
                 executar_analise_documento,
