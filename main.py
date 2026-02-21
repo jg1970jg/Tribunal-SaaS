@@ -98,6 +98,19 @@ logging.root.setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
+
+def _sanitize_for_json(obj):
+    """Remove bytes e outros tipos não-serializáveis de dicts/lists recursivamente."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items() if not isinstance(v, (bytes, bytearray))}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(item) for item in obj]
+    if isinstance(obj, (bytes, bytearray)):
+        return f"<{len(obj)} bytes>"
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return obj
+
 # Constantes de validação de ficheiros (usadas em /analyze e /analyze/add)
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".txt", ".doc"}
@@ -631,7 +644,7 @@ async def analyze(
         finally:
             _analysis_semaphore.release()
 
-        result_dict = resultado.to_dict()
+        result_dict = _sanitize_for_json(resultado.to_dict())
 
         # v6.0: Actualizar documento com resultado (em vez de criar novo)
         try:
@@ -807,7 +820,7 @@ async def resume_analysis(
             analysis_id=analysis_id,
         )
 
-        result_dict = resultado.to_dict()
+        result_dict = _sanitize_for_json(resultado.to_dict())
 
         # Actualizar documento com resultado completo
         custos = result_dict.get("custos") or {}

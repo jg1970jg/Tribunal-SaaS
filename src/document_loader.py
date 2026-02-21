@@ -45,7 +45,7 @@ class DocumentContent:
             "num_pages": self.num_pages,
             "num_chars": self.num_chars,
             "num_words": self.num_words,
-            "metadata": self.metadata,
+            "metadata": {k: v for k, v in self.metadata.items() if not isinstance(v, (bytes, bytearray))},
             "extraction_time": self.extraction_time.isoformat(),
             "file_hash": self.file_hash,
             "success": self.success,

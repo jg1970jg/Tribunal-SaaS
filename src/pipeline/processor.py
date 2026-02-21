@@ -130,6 +130,19 @@ REASONING_MODELS = {"openai/o1-pro", "openai/o1", "openai/o3-pro", "openai/o3-mi
 logger = logging.getLogger(__name__)
 
 
+def _safe_json_default(obj):
+    """Fallback para json.dump — converte tipos não-serializáveis."""
+    if isinstance(obj, (bytes, bytearray)):
+        return f"<{len(obj)} bytes>"
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    if hasattr(obj, "__dict__"):
+        return {k: v for k, v in obj.__dict__.items() if not isinstance(v, (bytes, bytearray))}
+    return str(obj)
+
+
 @dataclass
 class FaseResult:
     """Resultado de uma fase do pipeline."""
@@ -5654,10 +5667,12 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
         """Guarda o resultado completo em JSON."""
         if self._output_dir:
             try:
+                result_dict = result.to_dict()
+
                 # JSON completo
                 json_path = self._output_dir / "resultado.json"
                 with open(json_path, "w", encoding="utf-8") as f:
-                    json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
+                    json.dump(result_dict, f, ensure_ascii=False, indent=2, default=_safe_json_default)
 
                 # Markdown resumido
                 md_path = self._output_dir / "RESUMO.md"
@@ -5668,7 +5683,7 @@ Analisa os pareceres, verifica as citações legais, e emite o PARECER FINAL.{bl
                 # Copiar para histórico
                 historico_path = HISTORICO_DIR / f"{result.run_id}.json"
                 with open(historico_path, "w", encoding="utf-8") as f:
-                    json.dump(result.to_dict(), f, ensure_ascii=False, indent=2)
+                    json.dump(result_dict, f, ensure_ascii=False, indent=2, default=_safe_json_default)
             except OSError as e:
                 logger.error(f"Erro ao guardar resultado em disco: {e}")
 
