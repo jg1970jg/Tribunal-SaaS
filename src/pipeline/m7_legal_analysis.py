@@ -139,7 +139,7 @@ def analyze_chunks(
                 response.content, chunk.chunk_index
             )
             analysis.model_used = analysis_model
-            analysis.tokens_used = response.tokens_used
+            analysis.tokens_used = response.total_tokens
             analysis.processing_time = time.time() - start_time
 
             logger.info(

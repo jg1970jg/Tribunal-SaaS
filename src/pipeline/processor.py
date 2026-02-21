@@ -1415,21 +1415,70 @@ REVISTO:"""
                     unified_result: UnifiedExtractionResult)
         """
         import hashlib as _hashlib
+        import traceback as _traceback
 
-        from src.pipeline.m1_ingestion import ingest_document
-        from src.pipeline.m2_preprocessing import preprocess_pdf
-        from src.pipeline.m3_ocr_engine import ocr_document
-        from src.pipeline.m3b_multifeature import extract_features
-        from src.pipeline.m4_llm_cleaning import clean_ocr_pages
-        from src.pipeline.m5_entity_lock import lock_entities
-        from src.pipeline.m6_chunking import create_chunks, build_page_boundaries
-        from src.pipeline.m7_legal_analysis import analyze_chunks
-        from src.pipeline.m7b_consolidation import consolidate
-        from src.pipeline.circuit_breaker import CircuitBreaker
+        # v4.2 DIAGNOSTIC: Salvar erro detalhado em Supabase se crash
+        _v42_step = "IMPORTS"
+        try:
+            from src.pipeline.m1_ingestion import ingest_document
+            from src.pipeline.m2_preprocessing import preprocess_pdf
+            from src.pipeline.m3_ocr_engine import ocr_document
+            from src.pipeline.m3b_multifeature import extract_features
+            from src.pipeline.m4_llm_cleaning import clean_ocr_pages
+            from src.pipeline.m5_entity_lock import lock_entities
+            from src.pipeline.m6_chunking import create_chunks, build_page_boundaries
+            from src.pipeline.m7_legal_analysis import analyze_chunks
+            from src.pipeline.m7b_consolidation import consolidate
+            from src.pipeline.circuit_breaker import CircuitBreaker
+        except ImportError as imp_err:
+            logger.error(f"[v4.2] IMPORT FALHOU: {imp_err}\n{_traceback.format_exc()}")
+            self._save_v42_diagnostic(f"IMPORT_ERROR: {imp_err}\n{_traceback.format_exc()}")
+            raise
 
         logger.info("=== FASE 1 Pipeline v4.2: Início ===")
         self._reportar_progresso("fase1", 5, "Pipeline v4.2: Ingestão do documento...")
 
+        try:
+            return self._fase1_pipeline_v42_inner(
+                documento, area, _hashlib, _traceback,
+                ingest_document, preprocess_pdf, ocr_document, extract_features,
+                clean_ocr_pages, lock_entities, create_chunks, build_page_boundaries,
+                analyze_chunks, consolidate, CircuitBreaker,
+            )
+        except Exception as v42_err:
+            tb = _traceback.format_exc()
+            logger.error(f"[v4.2] CRASH em _fase1_pipeline_v42: {v42_err}\n{tb}")
+            self._save_v42_diagnostic(f"CRASH: {v42_err}\n{tb}")
+            raise
+
+    def _save_v42_diagnostic(self, error_detail: str) -> None:
+        """Salvar erro v4.2 no Supabase para diagnóstico remoto."""
+        try:
+            from auth_service import get_supabase_admin
+            sb = get_supabase_admin()
+            aid = getattr(self, '_analysis_id', None)
+            if sb and aid:
+                sb.table("documents").update({
+                    "analysis_result": {
+                        "v42_diagnostic_error": error_detail[:4000],
+                        "pipeline_version": "4.2",
+                        "status": "crash",
+                    }
+                }).eq("analysis_id", aid).execute()
+                logger.info(f"[v4.2] Diagnóstico guardado no Supabase (analysis_id={aid[:8]}...)")
+        except Exception as e:
+            logger.warning(f"[v4.2] Falha ao guardar diagnóstico: {e}")
+
+    def _fase1_pipeline_v42_inner(
+        self,
+        documento: "DocumentContent",
+        area: str,
+        _hashlib, _traceback,
+        ingest_document, preprocess_pdf, ocr_document, extract_features,
+        clean_ocr_pages, lock_entities, create_chunks, build_page_boundaries,
+        analyze_chunks, consolidate, CircuitBreaker,
+    ) -> tuple:
+        """Inner logic of Pipeline v4.2 (separated for error diagnostics)."""
         # --- M1: Ingestão ---
         ingestion = ingest_document(
             file_bytes=documento.metadata.get("file_bytes", b"") if documento.metadata else b"",

@@ -163,7 +163,7 @@ def _clean_text(text: str, model: str) -> tuple[str, list[TextChange], int]:
         # Validação: texto limpo não deve ser drasticamente diferente
         if not cleaned:
             logger.warning("[M4] LLM retornou texto vazio, a usar original")
-            return text, [], response.tokens_used
+            return text, [], response.total_tokens
 
         # Se texto limpo é muito mais curto, provavelmente o LLM resumiu
         if len(cleaned) < len(text) * 0.5:
@@ -171,7 +171,7 @@ def _clean_text(text: str, model: str) -> tuple[str, list[TextChange], int]:
                 f"[M4] Texto limpo muito curto ({len(cleaned)} vs {len(text)}), "
                 f"possível resumo — a usar original"
             )
-            return text, [], response.tokens_used
+            return text, [], response.total_tokens
 
         # Se texto limpo é muito mais longo, LLM adicionou conteúdo
         if len(cleaned) > len(text) * 1.5:
@@ -179,12 +179,12 @@ def _clean_text(text: str, model: str) -> tuple[str, list[TextChange], int]:
                 f"[M4] Texto limpo muito longo ({len(cleaned)} vs {len(text)}), "
                 f"possível adição — a usar original"
             )
-            return text, [], response.tokens_used
+            return text, [], response.total_tokens
 
         # Calcular diff
         changes = _compute_diff(text, cleaned)
 
-        return cleaned, changes, response.tokens_used
+        return cleaned, changes, response.total_tokens
 
     except Exception as e:
         logger.error(f"[M4] Erro na limpeza LLM: {e}")
