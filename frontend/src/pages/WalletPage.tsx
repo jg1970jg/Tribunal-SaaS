@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWallet } from "@/contexts/WalletContext";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Scale, ArrowLeft, Wallet, ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight, Zap, ExternalLink } from "lucide-react";
 import { WalletIndicator } from "@/components/WalletIndicator";
+
+const BACKEND_URL = "https://tribunal-saas.onrender.com";
 
 type TxFilter = "" | "credit" | "debit";
 
@@ -18,16 +21,57 @@ interface Transaction {
   balance_after?: number;
 }
 
+interface ExtBalances {
+  openrouter?: { balance_usd: number; total_credits: number; total_usage: number; last_updated: string; error?: string };
+  eden_ai?: { dashboard_url: string };
+}
+
 const PAGE_SIZE = 50;
 
 const WalletPage = () => {
   const navigate = useNavigate();
-  const { balance, refreshBalance, fetchTransactions, isAdmin, externalBalances, refreshExternalBalances } = useWallet();
+  const { balance, refreshBalance, fetchTransactions } = useWallet();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [txFilter, setTxFilter] = useState<TxFilter>("");
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [extBal, setExtBal] = useState<ExtBalances | null>(null);
+
+  // Check admin role directly (same pattern as Dashboard.tsx)
+  useEffect(() => {
+    const check = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", session.user.id)
+        .eq("role", "admin")
+        .maybeSingle();
+      setIsAdmin(!!roleData);
+    };
+    check();
+  }, []);
+
+  // Fetch external balances when admin
+  useEffect(() => {
+    if (!isAdmin) return;
+    const fetchExt = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const res = await fetch(`${BACKEND_URL}/admin/external-balances`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (res.ok) setExtBal(await res.json());
+      } catch { /* silent */ }
+    };
+    fetchExt();
+    const interval = setInterval(fetchExt, 60_000);
+    return () => clearInterval(interval);
+  }, [isAdmin]);
 
   const loadTx = useCallback(async () => {
     setLoading(true);
@@ -51,7 +95,7 @@ const WalletPage = () => {
   const b = balance?.balance_usd ?? 0;
   const colorClass = b > 5 ? "text-success" : b >= 1 ? "text-warning" : "text-destructive";
 
-  const orData = externalBalances?.openrouter;
+  const orData = extBal?.openrouter;
   const orColor = orData?.balance_usd != null
     ? orData.balance_usd > 10 ? "text-success" : orData.balance_usd >= 2 ? "text-warning" : "text-destructive"
     : "";
@@ -93,7 +137,7 @@ const WalletPage = () => {
           {isAdmin && (
             <div className="bg-card rounded-xl border border-border p-4 mb-6">
               <h3 className="text-sm font-semibold text-foreground mb-3">Saldos Externos (Admin)</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {/* OpenRouter */}
                 <div className="rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between mb-2">
@@ -134,7 +178,28 @@ const WalletPage = () => {
                     Sem API de saldo. Consulte o dashboard.
                   </p>
                   <a
-                    href={externalBalances?.eden_ai?.dashboard_url || "https://app.edenai.run/billing"}
+                    href={extBal?.eden_ai?.dashboard_url || "https://app.edenai.run/billing"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs">
+                      <ExternalLink className="w-3 h-3" />
+                      Abrir Dashboard
+                    </Button>
+                  </a>
+                </div>
+
+                {/* OpenAI */}
+                <div className="rounded-lg border border-border p-3">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <ExternalLink className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-semibold text-foreground">OpenAI</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Sem API de saldo. Consulte o dashboard.
+                  </p>
+                  <a
+                    href="https://platform.openai.com/usage"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
