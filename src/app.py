@@ -405,6 +405,13 @@ def renderizar_sidebar():
             st.error("✗ API Key em falta")
             st.caption("Configure OPENROUTER_API_KEY no .env")
 
+        # Links carteira (wallet) - sempre visíveis
+        st.markdown(
+            "💰 [Carteira OpenAI](https://platform.openai.com/settings/organization/billing/overview)"
+            " · "
+            "[Carteira OpenRouter](https://openrouter.ai/credits)"
+        )
+
         st.markdown("---")
 
         # Modelos configurados - CORRIGIDO: usar LLM_CONFIGS
