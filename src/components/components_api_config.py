@@ -137,9 +137,9 @@ def pagina_api_keys():
     # =================================================================
     
     st.subheader("🔵 OpenAI API Key")
-    
+
     col_oa1, col_oa2 = st.columns([3, 1])
-    
+
     with col_oa1:
         openai_masked = mask_api_key(keys["openai"])
         st.text_input(
@@ -148,16 +148,21 @@ def pagina_api_keys():
             disabled=True,
             help="Key mascarada por segurança"
         )
-    
+
     with col_oa2:
         if keys["openai"]:
             st.metric("Status", "✅ Configurada")
         else:
             st.metric("Status", "❌ Ausente")
-    
+
+    st.markdown(
+        "💰 **Carteira OpenAI:** "
+        "[Ver saldo e adicionar créditos](https://platform.openai.com/settings/organization/billing/overview)"
+    )
+
     # Expandir para editar/apagar
     with st.expander("✏️ Editar / Apagar OpenAI Key"):
-        
+
         st.markdown("**Obter key:** [platform.openai.com/api-keys](https://platform.openai.com/api-keys)")
         
         nova_key_oa = st.text_input(
@@ -213,10 +218,15 @@ def pagina_api_keys():
             st.metric("Status", "✅ Configurada")
         else:
             st.metric("Status", "❌ Ausente")
-    
+
+    st.markdown(
+        "💰 **Carteira OpenRouter:** "
+        "[Ver saldo e adicionar créditos](https://openrouter.ai/credits)"
+    )
+
     # Expandir para editar/apagar
     with st.expander("✏️ Editar / Apagar OpenRouter Key"):
-        
+
         st.markdown("**Obter key:** [openrouter.ai/keys](https://openrouter.ai/keys)")
         
         nova_key_or = st.text_input(
