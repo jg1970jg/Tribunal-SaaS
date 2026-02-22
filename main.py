@@ -1128,9 +1128,9 @@ def export_pdf(request: Request, req: ExportRequest, user: dict = Depends(get_cu
             media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="relatorio_{safe_id}.pdf"'},
         )
-    except Exception:
+    except Exception as e:
         logger.exception("Erro ao gerar PDF")
-        raise HTTPException(status_code=500, detail="Erro ao gerar PDF.")
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF: {type(e).__name__}: {e}")
 
 
 @app.post("/export/docx")
@@ -1146,9 +1146,9 @@ def export_docx(request: Request, req: ExportRequest, user: dict = Depends(get_c
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": f'attachment; filename="relatorio_{safe_id}.docx"'},
         )
-    except Exception:
+    except Exception as e:
         logger.exception("Erro ao gerar DOCX")
-        raise HTTPException(status_code=500, detail="Erro ao gerar DOCX.")
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar DOCX: {type(e).__name__}: {e}")
 
 
 # ============================================================

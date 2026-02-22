@@ -173,17 +173,30 @@ const DocumentDetails = () => {
 
   const handleExport = async (format: "pdf" | "docx") => {
     if (!document) return;
+    const analysisResult = (document as any).analysis_result;
+    if (!analysisResult || typeof analysisResult !== "object") {
+      toast({ title: "Erro", description: "Este documento não tem dados de análise para exportar.", variant: "destructive" });
+      return;
+    }
     try {
       const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        toast({ title: "Erro", description: "Sessão expirada. Faça login novamente.", variant: "destructive" });
+        return;
+      }
       const response = await fetch(`https://tribunal-saas.onrender.com/export/${format}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(session?.access_token ? { "Authorization": `Bearer ${session.access_token}` } : {}),
+          "Authorization": `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ analysis_result: (document as any).analysis_result }),
+        body: JSON.stringify({ analysis_result: analysisResult }),
       });
-      if (!response.ok) throw new Error("Erro ao exportar");
+      if (!response.ok) {
+        const errData = await response.json().catch(() => null);
+        const detail = errData?.detail || `Erro HTTP ${response.status}`;
+        throw new Error(detail);
+      }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = window.document.createElement("a");
@@ -191,8 +204,8 @@ const DocumentDetails = () => {
       a.download = `relatorio_${document.title}.${format}`;
       a.click();
       window.URL.revokeObjectURL(url);
-    } catch {
-      toast({ title: "Erro", description: "Não foi possível exportar o relatório.", variant: "destructive" });
+    } catch (e: any) {
+      toast({ title: "Erro ao exportar", description: e?.message || "Não foi possível exportar o relatório.", variant: "destructive" });
     }
   };
 
